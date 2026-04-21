@@ -95,6 +95,57 @@ In passive mode, the runtime:
 
 If the transcript does not begin with a configured wake phrase, the utterance is ignored and the runtime stays passive.
 
+### 5.2.1 Voice activity detection
+
+The first layer of turn detection is VAD, implemented by `SileroVoiceActivityDetector` in `src/arietta_voice/turn_detection.py`.
+
+Its job is simple: decide whether a small incoming audio chunk sounds like speech or not. The runtime calls VAD on every microphone chunk as audio arrives. If the returned speech probability is above the active threshold, the runtime treats that chunk as part of the user's utterance and keeps buffering. If the probability falls below the threshold, the runtime starts counting silence.
+
+This makes VAD the low-latency gate for the live audio loop:
+
+- it detects speech onset
+- it decides whether the current chunk should be added to the utterance buffer
+- it determines when the system has seen enough silence to consider ending the turn
+
+The silence window is not hard-coded in frames. It is derived from the configured sample rate, chunk size, and `silence_ms` value. With the default configuration, the runtime processes 512-sample chunks at 16 kHz, so each chunk is roughly 32 milliseconds. A `silence_ms` value of 700 therefore means the runtime waits for about 700 milliseconds of silence before treating the utterance as a candidate endpoint.
+
+VAD is intentionally fast and lightweight. It answers the immediate question "is the user speaking right now?" without trying to understand the larger conversational structure of the utterance.
+
+### 5.2.2 Smart Turn endpoint validation
+
+The second layer is Smart Turn, implemented by `SmartTurnEndpointDetector` in `src/arietta_voice/turn_detection.py`.
+
+Smart Turn does not run on every incoming chunk. It only runs after VAD has already detected speech, the runtime has buffered an utterance, and the silence window has elapsed. At that point, Arietta Voice has a candidate end-of-turn, and Smart Turn is used to decide whether that silence really means the user is done.
+
+Instead of looking at one tiny chunk, Smart Turn looks at the broader utterance context. The detector trims the buffered audio to the most recent 8 seconds, converts it into Whisper-style input features, and runs an ONNX model that returns an endpoint probability. That score is interpreted as "how likely is it that the user has actually finished their turn?"
+
+If the endpoint probability is high enough, the runtime accepts the utterance as complete and sends it to STT. If the probability is too low, the runtime assumes the silence was just a pause, clears the silence counter, and keeps listening for more speech on the same turn.
+
+### 5.2.3 Why Arietta Voice uses both
+
+VAD and Smart Turn solve different problems, and using both produces more natural turn-taking than either one alone.
+
+VAD is good at:
+
+- reacting quickly to speech start and stop
+- running continuously in the hot audio loop
+- cheaply deciding whether the system should keep buffering audio
+
+Smart Turn is good at:
+
+- understanding whether a pause is a real conversational endpoint
+- reducing premature cutoffs during natural hesitations
+- validating candidate end-of-turn events after VAD has already narrowed the problem
+
+If Arietta Voice used only VAD, it would be more likely to cut users off when they pause mid-sentence. If it used only Smart Turn, it would be doing a heavier endpoint inference task far more often than necessary. The two-stage design gives the runtime a good balance of responsiveness and conversational tolerance:
+
+1. VAD says whether speech is happening at all.
+2. VAD says when there has been enough silence to consider the turn complete.
+3. Smart Turn decides whether that silence should actually end the turn.
+4. Only then does the runtime transcribe the utterance and continue the assistant flow.
+
+This is especially important for voice-first interactions, where small pauses are common and users often expect the assistant to tolerate a little hesitation without interrupting them.
+
 ### 5.3 Session activation
 
 If the wake detector matches:
@@ -120,6 +171,8 @@ Once a session is active, Arietta Voice answers turns in this order:
 4. optional single model-requested tool execution
 5. final chat response
 6. TTS playback with barge-in support
+
+VAD also has a second role during playback. While the assistant is speaking, the runtime can optionally use acoustic echo cancellation to subtract its own TTS output from the microphone signal, then run VAD on the cleaned audio to detect user interruption. That allows Arietta Voice to stop speaking when the user starts talking over it, which makes the interaction feel much more conversational than a strict speak-then-wait loop.
 
 ## 6. Tooling Model
 
