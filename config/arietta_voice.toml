@@ -1,0 +1,83 @@
+[assistant]
+name = "Bridget"
+identity = "I'm Bridget, a local voice-first assistant built with Arietta Voice. I can answer questions from my local knowledge base, use tools, and optionally route chat turns through AWS Bedrock."
+greeting_variants = [
+  "Yes?",
+  "I'm here.",
+  "How can I help?",
+]
+goodbye_variants = [
+  "Goodbye.",
+  "See you later.",
+  "Talk to you soon.",
+]
+max_history_turns = 8
+
+[wake_word]
+enabled = true
+backend = "transcript"
+phrases = ["bridget"]
+acknowledgement = "Yes?"
+session_timeout_s = 20.0
+allow_inline_commands = true
+
+[audio]
+sample_rate = 16000
+chunk_samples = 512
+silence_ms = 700
+tts_enabled = true
+smart_turn_enabled = true
+aec_enabled = true
+chime_enabled = true
+voice = "af_heart"
+tts_speed = 1.0
+barge_in_threshold_chunks = 5
+
+[models]
+chat_provider = "local"
+chat_model = "mlx-community/gemma-4-E4B-it-4bit"
+bedrock_region = ""
+bedrock_profile = ""
+aws_access_key_id = ""
+aws_secret_access_key = ""
+aws_session_token = ""
+stt_language = "en"
+temperature = 0.7
+max_tokens = 220
+
+[prompts]
+soul_path = "SOUL.md"
+memory_path = "MEMORY.md"
+
+[memory]
+enabled = false
+consolidate_every_turns = 5
+
+[logging]
+directory = "../logs"
+events_file = "../logs/events.jsonl"
+
+[knowledge]
+enabled = true
+backend = "keyword"
+directory = "../knowledge"
+index_directory = "../.knowledge_index"
+embedding_model = "BAAI/bge-small-en-v1.5"
+max_matches = 3
+snippet_char_limit = 420
+min_score = 6.0
+hybrid_alpha = 0.55
+min_vector_score = 0.3
+
+[tools]
+enabled = [
+  "local_time",
+  "assistant_identity",
+  "knowledge_retrieval",
+]
+
+[model_tools]
+enabled = [
+  "search_knowledge",
+  "system_info",
+]

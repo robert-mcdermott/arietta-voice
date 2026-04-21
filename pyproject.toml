@@ -1,0 +1,40 @@
+[project]
+name = "arietta-voice"
+version = "0.1.0"
+description = "Local-first wake-word voice assistant with customizable knowledge, prompts, and tools"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.42.89",
+    "kokoro-onnx>=0.4",
+    "livekit>=1.1.5",
+    "mlx-vlm>=0.4.4",
+    "moonshine-voice>=0.0.40,<0.0.55",
+    "numpy>=2.4.4",
+    "onnxruntime>=1.24.4",
+    "silero-vad>=6.2.1",
+    "sounddevice>=0.5.5",
+    "torch>=2.11.0",
+    "transformers>=4.40",
+]
+
+[project.scripts]
+arietta-voice = "arietta_voice.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+required-environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
