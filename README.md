@@ -6,6 +6,8 @@ It is an open-source project built to be personalized: your own `SOUL.md`, your 
 
 The default assistant persona is named `Bridget`, and the default wake word is also `Bridget`. Both are easy to change in [`config/arietta_voice.toml`](./config/arietta_voice.toml).
 
+For a detailed customization walkthrough, see [GETTING_STARTED.md](./GETTING_STARTED.md).
+
 ## What This Project Includes
 
 - local speech-to-text with Moonshine
