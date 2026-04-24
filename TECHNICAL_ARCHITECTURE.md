@@ -174,6 +174,47 @@ Once a session is active, Arietta Voice answers turns in this order:
 
 VAD also has a second role during playback. While the assistant is speaking, the runtime can optionally use acoustic echo cancellation to subtract its own TTS output from the microphone signal, then run VAD on the cleaned audio to detect user interruption. That allows Arietta Voice to stop speaking when the user starts talking over it, which makes the interaction feel much more conversational than a strict speak-then-wait loop.
 
+### 5.5 Runtime turn sequence
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Mic as MicrophoneStream
+    participant VAD as Silero VAD
+    participant Turn as Smart Turn
+    participant STT as Moonshine STT
+    participant Runtime
+    participant Wake as Wake Detector
+    participant Tools as ToolRegistry
+    participant Prompt as PromptManager
+    participant Chat as Chat model
+    participant TTS as Kokoro TTS
+
+    User->>Mic: speak
+    Mic->>VAD: audio chunks
+    VAD-->>Mic: speech probabilities
+    Mic->>Turn: buffered utterance after silence
+    Turn-->>Mic: endpoint probability
+    Mic->>STT: completed utterance
+    STT-->>Runtime: transcript
+    alt passive wake-word mode
+        Runtime->>Wake: match(transcript)
+        alt wake match
+            Wake-->>Runtime: wake phrase or inline command
+        else wake miss
+            Wake-->>Runtime: no match
+            Runtime-->>User: no response
+        end
+    end
+    Runtime->>Tools: maybe_handle(transcript)
+    Tools-->>Runtime: direct answer or tool context or no-op
+    Runtime->>Prompt: when model path is needed
+    Prompt->>Chat: assembled messages
+    Chat-->>Runtime: reply text or model tool request
+    Runtime->>TTS: final response when speaking
+    TTS-->>User: spoken reply
+```
+
 ## 6. Tooling Model
 
 ### 6.1 Deterministic tools
@@ -202,6 +243,59 @@ Use this category when:
 - the tool is gathering context rather than speaking directly
 - the workflow benefits from a single extra grounded step
 
+### 6.3 Tool routing sequence
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Runtime
+    participant DTools as Deterministic ToolRegistry
+    participant Prompt as PromptManager
+    participant Chat as Chat model
+    participant MTools as ModelToolRegistry
+
+    User->>Runtime: active-session utterance
+    Runtime->>DTools: maybe_handle(user_text)
+    alt direct deterministic match
+        DTools-->>Runtime: ToolResponse(bypass_model=True)
+        Runtime-->>User: direct tool answer
+    else context-enrichment match
+        DTools-->>Runtime: ToolResponse(context=...)
+        Runtime->>Prompt: build_messages(history, user, tool_context)
+        Prompt->>Chat: messages
+        Chat-->>Runtime: plain answer or tool_call JSON
+    else no deterministic match
+        Runtime->>Prompt: build_messages(history, user, no_tool_context)
+        Prompt->>Chat: messages
+        Chat-->>Runtime: plain answer or tool_call JSON
+    end
+    alt model requests one follow-up tool
+        Runtime->>MTools: execute(name, arguments)
+        MTools-->>Runtime: ModelToolExecution(followup_context)
+        Runtime->>Chat: original messages + followup_context
+        Chat-->>Runtime: final answer
+    end
+```
+
+### 6.4 Ordering implications for deterministic tools
+
+Deterministic tools are checked in configuration order and the registry stops at the first match. In practice, exact utility tools should appear earlier in the list, while broad fallback tools such as `knowledge_retrieval` should stay near the end.
+
+This ordering matters because the deterministic registry is intentionally first-match-wins:
+
+- `local_time` should beat broad retrieval for exact time questions
+- custom exact-action tools should usually appear before `knowledge_retrieval`
+- `knowledge_retrieval` works best as a fallback context provider after specific tools have already had their turn
+
+### 6.5 Tool response modes
+
+The deterministic tool layer supports two main response styles:
+
+- direct answer: the tool returns `ToolResponse(bypass_model=True)`, so the runtime answers without calling the model
+- prompt enrichment: the tool returns `ToolResponse(bypass_model=False, context=...)`, so the runtime injects context and still calls the model
+
+Model-requested tools use `ModelToolExecution(followup_context=...)` instead of `ToolResponse`, because they always feed context back into a final model answer rather than bypassing the model directly.
+
 ## 7. Knowledge Architecture
 
 Knowledge is authored as markdown under `knowledge/`.
@@ -215,6 +309,83 @@ Supported backends:
 The default configuration uses `keyword` so a new user can start adding knowledge without immediately building an embedding index.
 
 When semantic search is desired, `knowledge-index` creates derived artifacts under `.knowledge_index/`.
+
+### 7.1 Knowledge authoring and indexing
+
+```mermaid
+flowchart LR
+    AUTHOR["User edits knowledge/*.md"] --> PARSE["Document parser<br/>frontmatter + headings"]
+    PARSE --> SECTIONS["Section records<br/>title, tags, aliases, snippet, text"]
+    SECTIONS --> INDEXCMD["arietta-voice knowledge-index"]
+    INDEXCMD --> EMBED["Local embedding model<br/>BAAI/bge-small-en-v1.5"]
+    EMBED --> VECTORS["vectors.npy"]
+    SECTIONS --> JSONL["sections.jsonl"]
+    INDEXCMD --> MANIFEST["manifest.json<br/>signature + model + version"]
+    VECTORS --> STORE[".knowledge_index"]
+    JSONL --> STORE
+    MANIFEST --> STORE
+```
+
+### 7.2 Knowledge runtime flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Runtime
+    participant Tools as ToolRegistry
+    participant KB as KnowledgeRetriever
+    participant KW as Keyword backend
+    participant VEC as Vector backend
+    participant Prompt as PromptManager
+    participant Chat as Chat model
+    participant MTools as ModelToolRegistry
+
+    User->>Runtime: spoken question
+    Runtime->>Tools: maybe_handle(transcript)
+    Tools->>KB: search(query)
+    alt keyword backend
+        KB->>KW: live lexical scoring
+        KW-->>KB: ranked section candidates
+    else vector backend
+        KB->>VEC: validate manifest + embed query + cosine search
+        VEC-->>KB: ranked section candidates or no match
+    else hybrid backend
+        KB->>KW: live lexical scoring
+        KB->>VEC: semantic candidate search when index is valid
+        KW-->>KB: lexical candidates
+        VEC-->>KB: vector candidates
+        KB-->>KB: merge and rerank
+    end
+    KB-->>Tools: top matching snippets
+    Tools-->>Runtime: ToolResponse(context=...)
+    Runtime->>Prompt: build_messages(history, user, tool_context)
+    Prompt->>Chat: prompt + snippets
+    Chat-->>Runtime: final answer or tool_call JSON
+    alt model requests follow-up search
+        Runtime->>MTools: execute(search_knowledge, arguments)
+        MTools->>KB: search(refined_query)
+        KB-->>MTools: additional snippets or no match
+        MTools-->>Runtime: followup_context
+        Runtime->>Chat: prompt + initial context + followup_context
+        Chat-->>Runtime: grounded final answer
+    end
+```
+
+### 7.3 Knowledge source and backend behavior
+
+Knowledge retrieval has a few important architectural properties:
+
+- source documents are markdown files under `knowledge/`
+- supported source types are `.md`, `.markdown`, and `.txt`
+- files named `README.md` and files beginning with `_` or `.` are ignored
+- documents are parsed into heading-based sections with optional frontmatter metadata
+- the semantic index is derived from the markdown source and validated against a directory signature
+
+The three implemented retrieval modes differ like this:
+
+- `keyword`: live lexical scoring only, no index required
+- `vector`: semantic search against the derived index only
+- `hybrid`: keyword plus vector candidate merging and reranking
 
 ## 8. Chat Provider Seam
 
