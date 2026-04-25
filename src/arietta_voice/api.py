@@ -27,6 +27,7 @@ from arietta_voice.model_tools.base import ModelToolContext
 from arietta_voice.model_tools.registry import _tool_module_name as _model_tool_module_name
 from arietta_voice.models import ConversationTurn
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
+from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.tools.base import ToolContext
 from arietta_voice.tools.registry import _tool_module_name as _assistant_tool_module_name
 
@@ -94,6 +95,7 @@ class AriettaApiService:
                 "events_file": str(self.config.logging.events_file),
                 "events_file_exists": self.config.logging.events_file.exists(),
                 "logs_writable": os.access(log_parent, os.W_OK),
+                "runtime": read_runtime_status(self.config),
                 "diagnostics": diagnostics,
             }
         except Exception as exc:
@@ -108,6 +110,7 @@ class AriettaApiService:
     def state(self) -> dict[str, Any]:
         tools = self.inspect_tools()
         event_count = self._event_file_line_count()
+        runtime_status = read_runtime_status(self.config)
         return {
             "api": {
                 "version": API_VERSION,
@@ -117,12 +120,7 @@ class AriettaApiService:
                 "last_chat_at": self.last_chat_at,
                 "last_error": self.last_error,
             },
-            "runtime": {
-                "mode": "web_api",
-                "voice_runtime_managed": False,
-                "state": "not_started",
-                "note": "The web API exposes control and inspection surfaces; the microphone runtime remains a CLI process.",
-            },
+            "runtime": runtime_status,
             "assistant": {
                 "name": self.config.assistant.name,
                 "wake_words": list(self.config.wake_word.phrases),
@@ -162,6 +160,9 @@ class AriettaApiService:
 
     def diagnostics(self, *, include_hardware: bool) -> dict[str, Any]:
         return run_startup_diagnostics(self.config, include_hardware=include_hardware)
+
+    def runtime_status(self) -> dict[str, Any]:
+        return read_runtime_status(self.config)
 
     def read_events(self, *, limit: int, event: str | None = None) -> dict[str, Any]:
         limit = max(1, min(limit, 1000))
@@ -465,6 +466,10 @@ def create_app(
     @app.get("/api/state")
     def api_state(_user: str = Depends(require_admin)) -> dict[str, Any]:
         return svc().state()
+
+    @app.get("/api/runtime")
+    def api_runtime(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().runtime_status()
 
     @app.get("/api/config")
     def api_config(_user: str = Depends(require_admin)) -> dict[str, Any]:
@@ -916,6 +921,10 @@ ADMIN_HTML = """<!doctype html>
           <div class="metric"><div class="label">Model</div><div id="metric-model" class="value">--</div><div id="metric-provider" class="sub">--</div></div>
           <div class="metric"><div class="label">Knowledge</div><div id="metric-knowledge" class="value">--</div><div id="metric-index" class="sub">--</div></div>
         </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Voice Runtime</h3><button class="button" id="runtime-refresh">Refresh</button></div>
+          <div id="runtime-detail"></div>
+        </div>
         <div class="split">
           <div class="panel">
             <div class="panel-head"><h3>Diagnostics</h3><button class="button" id="diagnostics-run">Run</button></div>
@@ -1045,14 +1054,35 @@ ADMIN_HTML = """<!doctype html>
       setHealth(health);
       $("#metric-assistant").textContent = currentState.assistant.name;
       $("#metric-wake").textContent = currentState.assistant.wake_enabled ? currentState.assistant.wake_words.join(", ") : "wake disabled";
-      $("#metric-runtime").textContent = currentState.runtime.state;
-      $("#metric-uptime").textContent = formatSeconds(currentState.api.uptime_seconds);
+      const runtime = currentState.runtime;
+      $("#metric-runtime").textContent = runtime.state;
+      $("#metric-uptime").textContent = runtime.is_running
+        ? `pid ${runtime.process_id || "--"} · heartbeat ${runtime.heartbeat_age_seconds ?? 0}s`
+        : runtime.note;
       $("#metric-model").textContent = currentState.models.chat_model;
       $("#metric-provider").textContent = currentState.models.chat_provider;
       $("#metric-knowledge").textContent = currentState.knowledge.backend;
       $("#metric-index").textContent = currentState.knowledge.loaded ? "loaded" : currentState.knowledge.directory;
+      renderRuntime(runtime);
       renderDiagnostics(diagnostics);
       renderRecentEvents(logs.items || []);
+    }
+
+    function renderRuntime(runtime) {
+      const rows = [
+        ["State", `<strong>${escapeHtml(runtime.state)}</strong>`],
+        ["Lifecycle", escapeHtml(runtime.lifecycle)],
+        ["Running", runtime.is_running ? "yes" : "no"],
+        ["Last heartbeat", escapeHtml(runtime.last_heartbeat_at || "--")],
+        ["Heartbeat age", runtime.heartbeat_age_seconds === null ? "--" : `${escapeHtml(runtime.heartbeat_age_seconds)}s`],
+        ["Process", escapeHtml(runtime.process_id || "--")],
+        ["Session", runtime.session_active ? `active · ${escapeHtml(runtime.session_turn_count || 0)} turns` : "inactive"],
+        ["Last user", escapeHtml(runtime.last_user_transcript || "--")],
+        ["Last assistant", escapeHtml(runtime.last_assistant_text || "--")],
+        ["Status file", `<code>${escapeHtml(runtime.status_file)}</code>`],
+        ["Note", escapeHtml(runtime.note)]
+      ];
+      $("#runtime-detail").innerHTML = table(["Field", "Value"], rows);
     }
 
     function renderDiagnostics(payload) {
@@ -1192,6 +1222,7 @@ ADMIN_HTML = """<!doctype html>
     $$(".nav-button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
     $$("[data-view-target]").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.viewTarget)));
     $("#refresh").addEventListener("click", () => loadDashboard().catch((error) => setError(error.message)));
+    $("#runtime-refresh").addEventListener("click", () => loadDashboard().catch((error) => setError(error.message)));
     $("#diagnostics-run").addEventListener("click", () => api("/api/diagnostics?include_hardware=true").then(renderDiagnostics).catch((error) => setError(error.message)));
     $("#config-refresh").addEventListener("click", () => loadConfig().catch((error) => setError(error.message)));
     $("#logs-refresh").addEventListener("click", () => loadLogs().catch((error) => setError(error.message)));

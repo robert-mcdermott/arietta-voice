@@ -95,7 +95,18 @@ def test_state_and_config_are_authenticated(tmp_path: Path) -> None:
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
     assert authorized.json()["runtime"]["mode"] == "web_api"
+    assert authorized.json()["runtime"]["state"] == "not_running"
     assert config_response.json()["assistant"]["name"] == "Test Assistant"
+
+
+def test_runtime_endpoint_reports_unmanaged_runtime_status(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+
+    response = client.get("/api/runtime", auth=("admin", "password"))
+
+    assert response.status_code == 200
+    assert response.json()["managed_by_api"] is False
+    assert response.json()["state"] == "not_running"
 
 
 def test_knowledge_search_endpoint(tmp_path: Path) -> None:

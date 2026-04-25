@@ -41,6 +41,7 @@ The architecture is intentionally small and modular, with the runtime centered o
 | Knowledge retrieval | `src/arietta_voice/knowledge.py` | Keyword, vector, or hybrid markdown retrieval |
 | Runtime orchestration | `src/arietta_voice/runtime.py` | Main conversation loop |
 | HTTP API and admin console | `src/arietta_voice/api.py` | Authenticated API, admin UI, health, logs, diagnostics, chat, tools, and knowledge |
+| Runtime status heartbeat | `src/arietta_voice/runtime_status.py` | Shared status file used by the web console to detect a separately running voice process |
 | Diagnostics and logging | `src/arietta_voice/diagnostics.py`, `src/arietta_voice/logging_utils.py` | Startup checks and JSONL event logging |
 
 ## 4. High-Level Flow

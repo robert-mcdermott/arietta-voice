@@ -99,6 +99,11 @@ The admin console is available at `http://127.0.0.1:8765/admin`.
 The initial local credentials are `admin` / `password`; override them with
 `ARIETTA_ADMIN_USERNAME` and `ARIETTA_ADMIN_PASSWORD`.
 
+The voice runtime and web console can run as separate processes. The voice
+runtime publishes a heartbeat to `logs/runtime_status.json`, which lets the
+admin console show whether the separate voice process is running, stopped, or
+stale.
+
 List audio devices:
 
 ```bash
