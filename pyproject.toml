@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "boto3>=1.42.89",
+    "fastapi>=0.136.0",
     "kokoro-onnx>=0.4",
     "livekit>=1.1.5",
     "mlx-vlm>=0.4.4",
@@ -16,6 +17,7 @@ dependencies = [
     "sounddevice>=0.5.5",
     "torch>=2.11.0",
     "transformers>=4.40",
+    "uvicorn>=0.44.0",
 ]
 
 [project.scripts]

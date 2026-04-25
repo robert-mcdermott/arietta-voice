@@ -20,6 +20,7 @@ For a detailed customization walkthrough, see [GETTING_STARTED.md](./GETTING_STA
 - local markdown knowledge retrieval
 - editable `SOUL.md` and optional memory file
 - a wake-word-first runtime designed for an always-on Mac mini
+- authenticated HTTP API and admin console for inspection, chat testing, logs, diagnostics, tools, and knowledge
 
 ## Design Scope
 
@@ -31,12 +32,12 @@ The project is intentionally focused on a voice-first assistant runtime with a s
 - the local/Bedrock LLM adapter seam
 - STT, TTS, VAD, Smart Turn, and audio barge-in handling
 - prompt assembly and optional memory consolidation
+- a local admin/API surface for operational visibility and configuration workflows
 
 It intentionally does not include:
 
 - webcam presence detection
 - camera and vision tools
-- kiosk UI and admin web surface
 
 ## Setup
 
@@ -87,6 +88,16 @@ Run diagnostics:
 ```bash
 uv run arietta-voice doctor
 ```
+
+Run the HTTP API and admin console:
+
+```bash
+uv run arietta-voice serve
+```
+
+The admin console is available at `http://127.0.0.1:8765/admin`.
+The initial local credentials are `admin` / `password`; override them with
+`ARIETTA_ADMIN_USERNAME` and `ARIETTA_ADMIN_PASSWORD`.
 
 List audio devices:
 

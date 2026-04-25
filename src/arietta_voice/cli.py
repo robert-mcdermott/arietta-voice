@@ -55,6 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_index_parser.add_argument("--config", type=Path, help="Path to a TOML config file")
     knowledge_index_parser.add_argument("--json", action="store_true", help="Print JSON output")
 
+    serve_parser = subparsers.add_parser("serve", help="Run the HTTP API and admin console")
+    serve_parser.add_argument("--config", type=Path, help="Path to a TOML config file")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host")
+    serve_parser.add_argument("--port", type=int, default=8765, help="Bind port")
+    serve_parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=("critical", "error", "warning", "info", "debug", "trace"),
+        help="Uvicorn log level",
+    )
+
     subparsers.add_parser("devices", help="List audio devices")
     return parser
 
@@ -102,6 +113,7 @@ def main() -> int:
         "doctor",
         "knowledge-search",
         "knowledge-index",
+        "serve",
         "devices",
         "-h",
         "--help",
@@ -170,6 +182,15 @@ def main() -> int:
         config = load_config(args.config)
         payload = build_knowledge_index(config.knowledge)
         print(json.dumps(payload, indent=2))
+        return 0
+
+    if args.command == "serve":
+        import uvicorn
+
+        from arietta_voice.api import create_app
+
+        app = create_app(args.config)
+        uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
         return 0
 
     from arietta_voice.runtime import AriettaVoiceRuntime, RuntimeOptions

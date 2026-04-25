@@ -40,6 +40,7 @@ The architecture is intentionally small and modular, with the runtime centered o
 | Model-requested tools | `src/arietta_voice/model_tools/` | One model-selected follow-up lookup |
 | Knowledge retrieval | `src/arietta_voice/knowledge.py` | Keyword, vector, or hybrid markdown retrieval |
 | Runtime orchestration | `src/arietta_voice/runtime.py` | Main conversation loop |
+| HTTP API and admin console | `src/arietta_voice/api.py` | Authenticated API, admin UI, health, logs, diagnostics, chat, tools, and knowledge |
 | Diagnostics and logging | `src/arietta_voice/diagnostics.py`, `src/arietta_voice/logging_utils.py` | Startup checks and JSONL event logging |
 
 ## 4. High-Level Flow
