@@ -50,7 +50,7 @@ soul_path = "SOUL.md"
 memory_path = "MEMORY.md"
 
 [memory]
-enabled = false
+enabled = true 
 consolidate_every_turns = 5
 
 [logging]

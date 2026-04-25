@@ -104,6 +104,13 @@ runtime publishes a heartbeat to `logs/runtime_status.json`, which lets the
 admin console show whether the separate voice process is running, stopped, or
 stale.
 
+The admin console can also start, stop, and restart an API-managed voice
+runtime. Managed runtime stdout and stderr are written to
+`logs/managed_runtime.stdout.log` and `logs/managed_runtime.stderr.log`.
+
+The Knowledge page can list, create, edit, delete, search, and re-index local
+knowledge files inside the configured knowledge directory.
+
 List audio devices:
 
 ```bash

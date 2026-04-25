@@ -65,6 +65,42 @@ def _client(config_path: Path) -> TestClient:
     return TestClient(create_app(service=service))
 
 
+class FakeRuntimeSupervisor:
+    def __init__(self) -> None:
+        self.started = False
+
+    def status(self):
+        return {
+            "managed_by_api": self.started,
+            "managed_process_id": 111 if self.started else None,
+            "managed_process_running": self.started,
+            "managed_started_at": "2026-01-01T00:00:00Z" if self.started else None,
+            "managed_exit_code": None,
+            "managed_command": ["fake"],
+            "managed_stdout_log": "/tmp/fake.out",
+            "managed_stderr_log": "/tmp/fake.err",
+            "managed_last_error": None,
+        }
+
+    def start(self):
+        self.started = True
+        return {"changed": True, "message": "started", **self.status()}
+
+    def stop(self):
+        self.started = False
+        return {"changed": True, "message": "stopped", **self.status()}
+
+    def restart(self):
+        self.started = True
+        return {"changed": True, "message": "restarted", **self.status()}
+
+
+def _client_with_service(config_path: Path) -> tuple[TestClient, AriettaApiService]:
+    service = AriettaApiService(config_path)
+    client = TestClient(create_app(service=service))
+    return client, service
+
+
 def test_health_is_public(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
@@ -109,6 +145,21 @@ def test_runtime_endpoint_reports_unmanaged_runtime_status(tmp_path: Path) -> No
     assert response.json()["state"] == "not_running"
 
 
+def test_runtime_control_endpoints_delegate_to_supervisor(tmp_path: Path) -> None:
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    service.runtime_supervisor = FakeRuntimeSupervisor()
+
+    start = client.post("/api/runtime/start", auth=("admin", "password"))
+    state = client.get("/api/state", auth=("admin", "password"))
+    stop = client.post("/api/runtime/stop", auth=("admin", "password"))
+
+    assert start.status_code == 200
+    assert start.json()["managed_process_running"] is True
+    assert state.json()["runtime"]["managed_process_running"] is True
+    assert stop.status_code == 200
+    assert stop.json()["managed_process_running"] is False
+
+
 def test_knowledge_search_endpoint(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
@@ -122,6 +173,37 @@ def test_knowledge_search_endpoint(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert payload["matches"]
     assert payload["matches"][0]["title"] == "Food and Dining"
+
+
+def test_knowledge_file_crud_endpoints(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+
+    created = client.put(
+        "/api/knowledge/files/new-note.md",
+        auth=("admin", "password"),
+        json={"content": "# New Note\n\nThe dashboard can edit knowledge."},
+    )
+    listed = client.get("/api/knowledge/files", auth=("admin", "password"))
+    read = client.get("/api/knowledge/files/new-note.md", auth=("admin", "password"))
+    deleted = client.delete("/api/knowledge/files/new-note.md", auth=("admin", "password"))
+
+    assert created.status_code == 200
+    assert created.json()["created"] is True
+    assert any(file["path"] == "new-note.md" for file in listed.json()["files"])
+    assert "dashboard can edit" in read.json()["content"]
+    assert deleted.json()["deleted"] is True
+
+
+def test_knowledge_file_endpoint_rejects_path_traversal(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+
+    response = client.put(
+        "/api/knowledge/files/%2E%2E/secret.md",
+        auth=("admin", "password"),
+        json={"content": "nope"},
+    )
+
+    assert response.status_code == 400
 
 
 def test_logs_endpoint_reads_latest_events(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ from arietta_voice.model_tools.registry import _tool_module_name as _model_tool_
 from arietta_voice.models import ConversationTurn
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
 from arietta_voice.runtime_status import read_runtime_status
+from arietta_voice.runtime_supervisor import RuntimeSupervisor
 from arietta_voice.tools.base import ToolContext
 from arietta_voice.tools.registry import _tool_module_name as _assistant_tool_module_name
 
@@ -55,6 +56,10 @@ class KnowledgeSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
 
 
+class KnowledgeFileWriteRequest(BaseModel):
+    content: str = Field(max_length=1_000_000)
+
+
 class ToolProbeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
@@ -76,6 +81,7 @@ class AriettaApiService:
         self.event_logger = EventLogger(self.config.logging.events_file)
         self.prompt_manager = PromptManager(self.config)
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
+        self.runtime_supervisor = RuntimeSupervisor(self.config, config_path=config_path)
         self._llm: ChatModel | None = None
         self.chat_turns = 0
         self.last_chat_at: str | None = None
@@ -110,7 +116,7 @@ class AriettaApiService:
     def state(self) -> dict[str, Any]:
         tools = self.inspect_tools()
         event_count = self._event_file_line_count()
-        runtime_status = read_runtime_status(self.config)
+        runtime_status = self.runtime_status()
         return {
             "api": {
                 "version": API_VERSION,
@@ -162,7 +168,52 @@ class AriettaApiService:
         return run_startup_diagnostics(self.config, include_hardware=include_hardware)
 
     def runtime_status(self) -> dict[str, Any]:
-        return read_runtime_status(self.config)
+        observed = read_runtime_status(self.config)
+        supervisor_status = self.runtime_supervisor.status()
+        if supervisor_status["managed_process_running"] and not observed["is_running"]:
+            observed = {
+                **observed,
+                "state": "starting",
+                "lifecycle": "starting",
+                "note": "The API-managed voice runtime has started; waiting for its first heartbeat.",
+            }
+        return {
+            **observed,
+            **supervisor_status,
+            "managed_by_api": bool(supervisor_status["managed_process_running"]),
+        }
+
+    def start_runtime(self) -> dict[str, Any]:
+        payload = self.runtime_supervisor.start()
+        self.event_logger.log(
+            "api_runtime_start",
+            changed=payload.get("changed"),
+            message=payload.get("message"),
+            process_id=payload.get("managed_process_id"),
+        )
+        return payload
+
+    def stop_runtime(self) -> dict[str, Any]:
+        payload = self.runtime_supervisor.stop()
+        self.event_logger.log(
+            "api_runtime_stop",
+            changed=payload.get("changed"),
+            message=payload.get("message"),
+            process_id=payload.get("managed_process_id"),
+            exit_code=payload.get("managed_exit_code"),
+        )
+        return payload
+
+    def restart_runtime(self) -> dict[str, Any]:
+        payload = self.runtime_supervisor.restart()
+        self.event_logger.log(
+            "api_runtime_restart",
+            changed=payload.get("changed"),
+            message=payload.get("message"),
+            process_id=payload.get("managed_process_id"),
+            exit_code=payload.get("managed_exit_code"),
+        )
+        return payload
 
     def read_events(self, *, limit: int, event: str | None = None) -> dict[str, Any]:
         limit = max(1, min(limit, 1000))
@@ -200,7 +251,66 @@ class AriettaApiService:
 
     def build_index(self) -> dict[str, Any]:
         payload = build_knowledge_index(self.config.knowledge)
+        self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.event_logger.log("api_knowledge_index", **payload)
+        return payload
+
+    def list_knowledge_files(self) -> dict[str, Any]:
+        directory = self.config.knowledge.directory
+        directory.mkdir(parents=True, exist_ok=True)
+        files: list[dict[str, Any]] = []
+        for path in sorted(directory.rglob("*")):
+            if not path.is_file():
+                continue
+            relative_path = path.relative_to(directory)
+            if not _is_supported_knowledge_path(relative_path):
+                continue
+            stat = path.stat()
+            files.append(
+                {
+                    "path": relative_path.as_posix(),
+                    "name": path.name,
+                    "size_bytes": stat.st_size,
+                    "updated_at": datetime.fromtimestamp(
+                        stat.st_mtime,
+                        tz=timezone.utc,
+                    ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                }
+            )
+        return {"directory": str(directory), "files": files}
+
+    def read_knowledge_file(self, file_path: str) -> dict[str, Any]:
+        path = _resolve_knowledge_file(self.config, file_path)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(file_path)
+        return {
+            "path": path.relative_to(self.config.knowledge.directory).as_posix(),
+            "content": path.read_text(encoding="utf-8"),
+        }
+
+    def write_knowledge_file(self, file_path: str, content: str) -> dict[str, Any]:
+        path = _resolve_knowledge_file(self.config, file_path)
+        created = not path.exists()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        self.knowledge = KnowledgeRetriever(self.config.knowledge)
+        payload = {
+            "path": path.relative_to(self.config.knowledge.directory).as_posix(),
+            "created": created,
+            "size_bytes": path.stat().st_size,
+        }
+        self.event_logger.log("api_knowledge_file_saved", **payload)
+        return payload
+
+    def delete_knowledge_file(self, file_path: str) -> dict[str, Any]:
+        path = _resolve_knowledge_file(self.config, file_path)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(file_path)
+        relative_path = path.relative_to(self.config.knowledge.directory).as_posix()
+        path.unlink()
+        self.knowledge = KnowledgeRetriever(self.config.knowledge)
+        payload = {"path": relative_path, "deleted": True}
+        self.event_logger.log("api_knowledge_file_deleted", **payload)
         return payload
 
     def inspect_tools(self) -> dict[str, Any]:
@@ -471,6 +581,36 @@ def create_app(
     def api_runtime(_user: str = Depends(require_admin)) -> dict[str, Any]:
         return svc().runtime_status()
 
+    @app.post("/api/runtime/start")
+    def api_runtime_start(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        try:
+            return svc().start_runtime()
+        except Exception as exc:
+            service_obj = svc()
+            service_obj.last_error = f"{type(exc).__name__}: {exc}"
+            service_obj.event_logger.log("api_error", route="/api/runtime/start", error=service_obj.last_error)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=service_obj.last_error,
+            ) from exc
+
+    @app.post("/api/runtime/stop")
+    def api_runtime_stop(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().stop_runtime()
+
+    @app.post("/api/runtime/restart")
+    def api_runtime_restart(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        try:
+            return svc().restart_runtime()
+        except Exception as exc:
+            service_obj = svc()
+            service_obj.last_error = f"{type(exc).__name__}: {exc}"
+            service_obj.event_logger.log("api_error", route="/api/runtime/restart", error=service_obj.last_error)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=service_obj.last_error,
+            ) from exc
+
     @app.get("/api/config")
     def api_config(_user: str = Depends(require_admin)) -> dict[str, Any]:
         return svc().config_payload()
@@ -511,6 +651,45 @@ def create_app(
     @app.post("/api/knowledge/index")
     def api_knowledge_index(_user: str = Depends(require_admin)) -> dict[str, Any]:
         return svc().build_index()
+
+    @app.get("/api/knowledge/files")
+    def api_knowledge_files(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().list_knowledge_files()
+
+    @app.get("/api/knowledge/files/{file_path:path}")
+    def api_knowledge_file_read(
+        file_path: str,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().read_knowledge_file(file_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/knowledge/files/{file_path:path}")
+    def api_knowledge_file_write(
+        file_path: str,
+        payload: KnowledgeFileWriteRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().write_knowledge_file(file_path, payload.content)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.delete("/api/knowledge/files/{file_path:path}")
+    def api_knowledge_file_delete(
+        file_path: str,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().delete_knowledge_file(file_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.post("/api/chat")
     def api_chat(payload: ChatRequest, _user: str = Depends(require_admin)) -> dict[str, Any]:
@@ -555,6 +734,32 @@ def _knowledge_match_payload(match: Any) -> dict[str, Any]:
         "score": match.score,
         "snippet": match.snippet,
     }
+
+
+def _is_supported_knowledge_path(path: Path) -> bool:
+    if any(part.startswith(".") for part in path.parts):
+        return False
+    return path.suffix.lower() in {".md", ".markdown", ".txt"}
+
+
+def _resolve_knowledge_file(config: AppConfig, file_path: str) -> Path:
+    normalized = Path(file_path)
+    if not str(file_path).strip():
+        raise ValueError("Knowledge file path is required.")
+    if normalized.is_absolute() or ".." in normalized.parts:
+        raise ValueError("Knowledge file path must stay inside the knowledge directory.")
+    if any(part.startswith(".") for part in normalized.parts):
+        raise ValueError("Hidden knowledge files are not supported.")
+    if normalized.suffix.lower() not in {".md", ".markdown", ".txt"}:
+        raise ValueError("Knowledge files must use .md, .markdown, or .txt.")
+
+    root = config.knowledge.directory.resolve()
+    target = (root / normalized).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Knowledge file path must stay inside the knowledge directory.") from exc
+    return target
 
 
 ADMIN_HTML = """<!doctype html>
@@ -697,6 +902,11 @@ ADMIN_HTML = """<!doctype html>
       font-weight: 650;
     }
     .button.primary:hover { background: var(--accent-strong); }
+    .button.danger {
+      border-color: #e4aaa5;
+      color: var(--bad);
+    }
+    .button.danger:hover { background: #fff3f1; }
     .view { display: none; }
     .view.active { display: block; }
     .grid {
@@ -840,6 +1050,11 @@ ADMIN_HTML = """<!doctype html>
       display: grid;
       gap: 10px;
     }
+    .knowledge-editor {
+      min-height: 360px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
     .row-card {
       padding: 12px;
       box-shadow: none;
@@ -922,7 +1137,15 @@ ADMIN_HTML = """<!doctype html>
           <div class="metric"><div class="label">Knowledge</div><div id="metric-knowledge" class="value">--</div><div id="metric-index" class="sub">--</div></div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h3>Voice Runtime</h3><button class="button" id="runtime-refresh">Refresh</button></div>
+          <div class="panel-head">
+            <h3>Voice Runtime</h3>
+            <div class="form-row" style="margin:0">
+              <button class="button primary" id="runtime-start">Start</button>
+              <button class="button" id="runtime-stop">Stop</button>
+              <button class="button" id="runtime-restart">Restart</button>
+              <button class="button" id="runtime-refresh">Refresh</button>
+            </div>
+          </div>
           <div id="runtime-detail"></div>
         </div>
         <div class="split">
@@ -955,6 +1178,26 @@ ADMIN_HTML = """<!doctype html>
       </section>
 
       <section id="knowledge" class="view">
+        <div class="split">
+          <div class="panel">
+            <div class="panel-head"><h3>Knowledge Files</h3><button class="button" id="knowledge-files-refresh">Refresh</button></div>
+            <div class="form-row">
+              <input id="knowledge-file-path" placeholder="notes/example.md">
+              <button class="button primary" id="knowledge-file-new">New</button>
+            </div>
+            <div id="knowledge-file-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Editor</h3>
+              <div class="form-row" style="margin:0">
+                <button class="button primary" id="knowledge-file-save">Save</button>
+                <button class="button danger" id="knowledge-file-delete">Delete</button>
+              </div>
+            </div>
+            <textarea id="knowledge-file-content" class="knowledge-editor" placeholder="Open or create a knowledge file"></textarea>
+          </div>
+        </div>
         <div class="panel">
           <div class="panel-head"><h3>Knowledge Search</h3><button class="button" id="knowledge-index">Build Index</button></div>
           <div class="form-row">
@@ -989,7 +1232,7 @@ ADMIN_HTML = """<!doctype html>
     </main>
   </div>
   <script>
-    const state = { chatHistory: [] };
+    const state = { chatHistory: [], currentKnowledgeFile: null };
     const viewTitles = {
       dashboard: "Dashboard",
       chat: "Chat",
@@ -1073,6 +1316,8 @@ ADMIN_HTML = """<!doctype html>
         ["State", `<strong>${escapeHtml(runtime.state)}</strong>`],
         ["Lifecycle", escapeHtml(runtime.lifecycle)],
         ["Running", runtime.is_running ? "yes" : "no"],
+        ["Managed by API", runtime.managed_process_running ? "yes" : "no"],
+        ["Managed logs", `<code>${escapeHtml(runtime.managed_stdout_log || "--")}</code>`],
         ["Last heartbeat", escapeHtml(runtime.last_heartbeat_at || "--")],
         ["Heartbeat age", runtime.heartbeat_age_seconds === null ? "--" : `${escapeHtml(runtime.heartbeat_age_seconds)}s`],
         ["Process", escapeHtml(runtime.process_id || "--")],
@@ -1083,6 +1328,12 @@ ADMIN_HTML = """<!doctype html>
         ["Note", escapeHtml(runtime.note)]
       ];
       $("#runtime-detail").innerHTML = table(["Field", "Value"], rows);
+    }
+
+    async function runtimeAction(action) {
+      const payload = await api(`/api/runtime/${action}`, { method: "POST" });
+      $("#health-text").textContent = payload.message || `Runtime ${action} requested`;
+      await loadDashboard();
     }
 
     function renderDiagnostics(payload) {
@@ -1175,6 +1426,71 @@ ADMIN_HTML = """<!doctype html>
       await loadDashboard();
     }
 
+    function knowledgeFileUrl(path) {
+      return `/api/knowledge/files/${path.split("/").map(encodeURIComponent).join("/")}`;
+    }
+
+    async function loadKnowledgeFiles() {
+      const payload = await api("/api/knowledge/files");
+      const rows = (payload.files || []).map((file) => [
+        `<button class="button" data-knowledge-file="${escapeHtml(file.path)}">Open</button>`,
+        `<strong>${escapeHtml(file.path)}</strong>`,
+        escapeHtml(file.size_bytes),
+        escapeHtml(file.updated_at)
+      ]);
+      $("#knowledge-file-list").innerHTML = rows.length
+        ? table(["", "Path", "Bytes", "Updated"], rows)
+        : `<p class="muted">No knowledge files yet.</p>`;
+    }
+
+    async function openKnowledgeFile(path) {
+      const payload = await api(knowledgeFileUrl(path));
+      state.currentKnowledgeFile = payload.path;
+      $("#knowledge-file-path").value = payload.path;
+      $("#knowledge-file-content").value = payload.content;
+      $("#knowledge-meta").textContent = JSON.stringify({ opened: payload.path }, null, 2);
+    }
+
+    function newKnowledgeFile() {
+      const path = $("#knowledge-file-path").value.trim();
+      if (!path) {
+        $("#knowledge-meta").textContent = JSON.stringify({ error: "Enter a file path first." }, null, 2);
+        return;
+      }
+      state.currentKnowledgeFile = path;
+      if (!$("#knowledge-file-content").value.trim()) {
+        const title = path.split("/").pop().replace(/\\.(md|markdown|txt)$/i, "").replace(/[-_]+/g, " ");
+        $("#knowledge-file-content").value = `---\\ntitle: ${title}\\ntags: \\n---\\n\\n## Notes\\n\\n`;
+      }
+      $("#knowledge-meta").textContent = JSON.stringify({ editing: path }, null, 2);
+    }
+
+    async function saveKnowledgeFile() {
+      const path = ($("#knowledge-file-path").value || state.currentKnowledgeFile || "").trim();
+      if (!path) return;
+      const payload = await api(knowledgeFileUrl(path), {
+        method: "PUT",
+        body: JSON.stringify({ content: $("#knowledge-file-content").value })
+      });
+      state.currentKnowledgeFile = payload.path;
+      $("#knowledge-file-path").value = payload.path;
+      $("#knowledge-meta").textContent = JSON.stringify(payload, null, 2);
+      await loadKnowledgeFiles();
+      await loadDashboard();
+    }
+
+    async function deleteKnowledgeFile() {
+      const path = ($("#knowledge-file-path").value || state.currentKnowledgeFile || "").trim();
+      if (!path) return;
+      const payload = await api(knowledgeFileUrl(path), { method: "DELETE" });
+      state.currentKnowledgeFile = null;
+      $("#knowledge-file-path").value = "";
+      $("#knowledge-file-content").value = "";
+      $("#knowledge-meta").textContent = JSON.stringify(payload, null, 2);
+      await loadKnowledgeFiles();
+      await loadDashboard();
+    }
+
     function renderChat() {
       $("#chat-log").innerHTML = state.chatHistory.map((message) => `
         <div class="bubble"><strong>${escapeHtml(message.role)}</strong>${escapeHtml(message.content)}</div>
@@ -1217,12 +1533,16 @@ ADMIN_HTML = """<!doctype html>
       if (view === "config") loadConfig().catch((error) => setError(error.message));
       if (view === "logs") loadLogs().catch((error) => setError(error.message));
       if (view === "tools") loadTools().catch((error) => setError(error.message));
+      if (view === "knowledge") loadKnowledgeFiles().catch((error) => setError(error.message));
     }
 
     $$(".nav-button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
     $$("[data-view-target]").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.viewTarget)));
     $("#refresh").addEventListener("click", () => loadDashboard().catch((error) => setError(error.message)));
     $("#runtime-refresh").addEventListener("click", () => loadDashboard().catch((error) => setError(error.message)));
+    $("#runtime-start").addEventListener("click", () => runtimeAction("start").catch((error) => setError(error.message)));
+    $("#runtime-stop").addEventListener("click", () => runtimeAction("stop").catch((error) => setError(error.message)));
+    $("#runtime-restart").addEventListener("click", () => runtimeAction("restart").catch((error) => setError(error.message)));
     $("#diagnostics-run").addEventListener("click", () => api("/api/diagnostics?include_hardware=true").then(renderDiagnostics).catch((error) => setError(error.message)));
     $("#config-refresh").addEventListener("click", () => loadConfig().catch((error) => setError(error.message)));
     $("#logs-refresh").addEventListener("click", () => loadLogs().catch((error) => setError(error.message)));
@@ -1230,6 +1550,14 @@ ADMIN_HTML = """<!doctype html>
     $("#knowledge-search").addEventListener("click", () => searchKnowledge().catch((error) => setError(error.message)));
     $("#knowledge-query").addEventListener("keydown", (event) => { if (event.key === "Enter") searchKnowledge().catch((error) => setError(error.message)); });
     $("#knowledge-index").addEventListener("click", () => buildKnowledgeIndex().catch((error) => setError(error.message)));
+    $("#knowledge-files-refresh").addEventListener("click", () => loadKnowledgeFiles().catch((error) => setError(error.message)));
+    $("#knowledge-file-new").addEventListener("click", newKnowledgeFile);
+    $("#knowledge-file-save").addEventListener("click", () => saveKnowledgeFile().catch((error) => setError(error.message)));
+    $("#knowledge-file-delete").addEventListener("click", () => deleteKnowledgeFile().catch((error) => setError(error.message)));
+    $("#knowledge-file-list").addEventListener("click", (event) => {
+      const target = event.target.closest("[data-knowledge-file]");
+      if (target) openKnowledgeFile(target.dataset.knowledgeFile).catch((error) => setError(error.message));
+    });
     $("#chat-send").addEventListener("click", () => sendChat().catch((error) => setError(error.message)));
     $("#tool-probe").addEventListener("click", () => probeTools().catch((error) => setError(error.message)));
     $("#chat-clear").addEventListener("click", () => { state.chatHistory = []; renderChat(); $("#chat-meta").textContent = "{}"; });
