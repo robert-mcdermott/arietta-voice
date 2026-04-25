@@ -806,22 +806,64 @@ ADMIN_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Arietta Voice Admin</title>
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem("arietta-theme") || "light";
+  </script>
   <style>
     :root {
       --bg: #f7f8f5;
       --panel: #ffffff;
       --panel-strong: #f0f4f2;
+      --sidebar: #fbfcfa;
+      --field: #ffffff;
+      --active-bg: #e7f2ef;
+      --active-border: #9bc5bd;
+      --active-ink: #064d47;
+      --code-bg: #20241f;
+      --code-ink: #f3f7ef;
+      --focus: rgba(8, 127, 117, 0.12);
       --ink: #222520;
       --muted: #667065;
       --line: #d9dfd7;
       --accent: #087f75;
       --accent-strong: #05665d;
+      --button-info: #2f5f78;
+      --button-info-strong: #244b5f;
       --warn: #a76300;
       --bad: #b42318;
       --good: #197344;
+      --disabled-bg: #eef1ed;
+      --disabled-ink: #8b9489;
       --shadow: 0 16px 34px rgba(31, 37, 28, 0.10);
       color-scheme: light;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    :root[data-theme="dark"] {
+      --bg: #161914;
+      --panel: #20261f;
+      --panel-strong: #2a3128;
+      --sidebar: #1b2019;
+      --field: #151a14;
+      --active-bg: #123f3b;
+      --active-border: #2f9d90;
+      --active-ink: #d8fff8;
+      --code-bg: #0f130e;
+      --code-ink: #edf5ea;
+      --focus: rgba(45, 170, 155, 0.22);
+      --ink: #eef3ec;
+      --muted: #a9b5a6;
+      --line: #3b4538;
+      --accent: #11a99c;
+      --accent-strong: #35c1b4;
+      --button-info: #4a8fb1;
+      --button-info-strong: #61a6c8;
+      --warn: #d58b21;
+      --bad: #de4f45;
+      --good: #34a56b;
+      --disabled-bg: #30382d;
+      --disabled-ink: #788475;
+      --shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
+      color-scheme: dark;
     }
     * { box-sizing: border-box; }
     body {
@@ -837,7 +879,7 @@ ADMIN_HTML = """<!doctype html>
       min-height: 100vh;
     }
     aside {
-      background: #fbfcfa;
+      background: var(--sidebar);
       border-right: 1px solid var(--line);
       padding: 24px 18px;
       position: sticky;
@@ -879,14 +921,18 @@ ADMIN_HTML = """<!doctype html>
     }
     .nav-button:hover { background: var(--panel-strong); }
     .nav-button.active {
-      border-color: #9bc5bd;
-      background: #e7f2ef;
-      color: #064d47;
+      border-color: var(--active-border);
+      background: var(--active-bg);
+      color: var(--active-ink);
       font-weight: 650;
+    }
+    .sidebar-footer {
+      display: grid;
+      gap: 10px;
+      margin-top: auto;
     }
     .sidebar-link {
       display: block;
-      margin-top: auto;
       border: 1px solid var(--line);
       border-radius: 7px;
       padding: 10px 12px;
@@ -898,6 +944,56 @@ ADMIN_HTML = """<!doctype html>
       border-color: #aab5a7;
       background: var(--panel-strong);
       color: var(--ink);
+    }
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .theme-toggle:hover {
+      border-color: #aab5a7;
+      background: var(--panel-strong);
+      color: var(--ink);
+    }
+    .theme-toggle input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .theme-slider {
+      position: relative;
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      background: #c5cec2;
+      flex: 0 0 auto;
+      transition: background 160ms ease;
+    }
+    .theme-slider::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+      transition: transform 160ms ease;
+    }
+    .theme-toggle input:checked + .theme-slider {
+      background: var(--accent);
+    }
+    .theme-toggle input:checked + .theme-slider::after {
+      transform: translateX(18px);
     }
     main {
       padding: 28px;
@@ -980,17 +1076,17 @@ ADMIN_HTML = """<!doctype html>
     }
     .button.warn:hover { background: #835000; }
     .button.info {
-      background: #2f5f78;
-      border-color: #2f5f78;
+      background: var(--button-info);
+      border-color: var(--button-info);
       color: #ffffff;
       font-weight: 650;
     }
-    .button.info:hover { background: #244b5f; }
+    .button.info:hover { background: var(--button-info-strong); }
     .button:disabled,
     .button:disabled:hover {
-      background: #eef1ed;
+      background: var(--disabled-bg);
       border-color: var(--line);
-      color: #8b9489;
+      color: var(--disabled-ink);
       cursor: not-allowed;
       opacity: 0.8;
       font-weight: 500;
@@ -1071,7 +1167,7 @@ ADMIN_HTML = """<!doctype html>
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 7px;
-      background: #ffffff;
+      background: var(--field);
       color: var(--ink);
       font: inherit;
       padding: 10px 12px;
@@ -1083,8 +1179,8 @@ ADMIN_HTML = """<!doctype html>
       line-height: 1.45;
     }
     input:focus, textarea:focus {
-      border-color: #67aaa0;
-      box-shadow: 0 0 0 3px rgba(8, 127, 117, 0.12);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--focus);
     }
     table {
       width: 100%;
@@ -1100,7 +1196,7 @@ ADMIN_HTML = """<!doctype html>
     th {
       color: var(--muted);
       font-weight: 750;
-      background: #fafbf8;
+      background: var(--panel-strong);
     }
     code, pre {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -1109,8 +1205,8 @@ ADMIN_HTML = """<!doctype html>
     pre {
       margin: 0;
       padding: 14px;
-      background: #20241f;
-      color: #f3f7ef;
+      background: var(--code-bg);
+      color: var(--code-ink);
       border-radius: 8px;
       overflow: auto;
       max-height: 620px;
@@ -1137,7 +1233,7 @@ ADMIN_HTML = """<!doctype html>
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 10px 12px;
-      background: #fbfcfa;
+      background: var(--panel-strong);
       line-height: 1.45;
       white-space: pre-wrap;
     }
@@ -1169,7 +1265,7 @@ ADMIN_HTML = """<!doctype html>
       padding: 10px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #fbfcfa;
+      background: var(--panel-strong);
     }
     .file-item strong {
       display: block;
@@ -1208,7 +1304,7 @@ ADMIN_HTML = """<!doctype html>
       padding: 2px 8px;
       font-size: 12px;
       color: var(--muted);
-      background: #fafbf8;
+      background: var(--panel-strong);
       margin-right: 6px;
       margin-bottom: 4px;
     }
@@ -1251,7 +1347,14 @@ ADMIN_HTML = """<!doctype html>
         <button class="nav-button" data-view="logs">Logs</button>
         <button class="nav-button" data-view="config">Config</button>
       </nav>
-      <a class="sidebar-link" href="https://github.com/robert-mcdermott/arietta-voice" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+      <div class="sidebar-footer">
+        <label class="theme-toggle" for="theme-toggle">
+          <span>Dark Mode</span>
+          <input id="theme-toggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
+          <span class="theme-slider" aria-hidden="true"></span>
+        </label>
+        <a class="sidebar-link" href="https://github.com/robert-mcdermott/arietta-voice" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+      </div>
     </aside>
     <main>
       <div class="topbar">
@@ -1450,6 +1553,19 @@ ADMIN_HTML = """<!doctype html>
       return String(value ?? "").replace(/[&<>"']/g, (char) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
       })[char]);
+    }
+
+    function applyTheme(theme) {
+      const normalized = theme === "dark" ? "dark" : "light";
+      document.documentElement.dataset.theme = normalized;
+      localStorage.setItem("arietta-theme", normalized);
+      $("#theme-toggle").checked = normalized === "dark";
+    }
+
+    function initThemeToggle() {
+      const toggle = $("#theme-toggle");
+      applyTheme(document.documentElement.dataset.theme || "light");
+      toggle.addEventListener("change", () => applyTheme(toggle.checked ? "dark" : "light"));
     }
 
     async function loadDashboard(options = {}) {
@@ -1863,6 +1979,7 @@ ADMIN_HTML = """<!doctype html>
       }
     });
 
+    initThemeToggle();
     loadDashboard().catch((error) => setError(error.message));
   </script>
 </body>
