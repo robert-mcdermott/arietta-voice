@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from arietta_voice.api import AriettaApiService, create_app
+from arietta_voice.config import load_config
 
 
 def _write_api_config(tmp_path: Path) -> Path:
@@ -276,3 +277,107 @@ def test_chat_endpoint_can_answer_with_deterministic_tool(tmp_path: Path) -> Non
     assert payload["source"] == "tool"
     assert payload["used_tool"] == "get_assistant_identity"
     assert "Test Assistant" in payload["response"]
+
+
+def test_tools_endpoint_lists_registry_inventory(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+
+    response = client.get("/api/tools", auth=("admin", "password"))
+
+    payload = response.json()
+    assistant_tools = payload["assistant_tools"]["tools"]
+    assert response.status_code == 200
+    assert any(
+        tool["configured_name"] == "assistant_identity" and tool["enabled"] and tool["valid"]
+        for tool in assistant_tools
+    )
+    assert any(
+        tool["configured_name"] == "local_time" and not tool["enabled"] and tool["valid"]
+        for tool in assistant_tools
+    )
+    assert payload["assistant_tools"]["load_errors"] == []
+
+    validated = client.post("/api/tools/assistant_identity/validate", auth=("admin", "password"))
+    assert validated.status_code == 200
+    assert validated.json()["enabled"] is True
+
+
+def test_tools_endpoint_reports_load_errors(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    (tools_dir / "broken_tool.py").write_text("BROKEN = True\n", encoding="utf-8")
+    service.tool_admin.tools_directory = tools_dir
+
+    response = client.get("/api/tools", auth=("admin", "password"))
+
+    load_errors = response.json()["assistant_tools"]["load_errors"]
+    assert response.status_code == 200
+    assert any(error["configured_name"] == "broken_tool" for error in load_errors)
+
+
+def test_tools_enabled_endpoint_persists_config(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client = _client(config_path)
+
+    response = client.post(
+        "/api/tools/enabled",
+        auth=("admin", "password"),
+        json={"enabled": ["local_time"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] == ["local_time"]
+    assert load_config(config_path).tools.enabled == ("local_time",)
+
+
+def test_specific_tool_probe_can_run_disabled_tool(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+
+    response = client.post(
+        "/api/tools/local_time/probe",
+        auth=("admin", "password"),
+        json={"text": "What time is it?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["matched"] is True
+    assert response.json()["enabled"] is False
+    assert response.json()["tool"] == "get_local_time"
+
+
+def test_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    service.tool_admin.tools_directory = tmp_path / "generated_tools"
+
+    created = client.post(
+        "/api/tools/create",
+        auth=("admin", "password"),
+        json={
+            "module_name": "Demo Tool",
+            "trigger_phrase": "banana checkout",
+            "response": "Banana checkout handled.",
+            "enable": True,
+        },
+    )
+    probe = client.post(
+        "/api/tools/demo_tool/probe",
+        auth=("admin", "password"),
+        json={"text": "please run banana checkout"},
+    )
+    validated = client.post("/api/tools/demo_tool/validate", auth=("admin", "password"))
+
+    assert created.status_code == 200
+    assert created.json()["module_name"] == "demo_tool"
+    assert (tmp_path / "generated_tools" / "demo_tool.py").exists()
+    assert created.json()["tool"]["valid"] is True
+    assert "demo_tool" in load_config(config_path).tools.enabled
+    assert probe.status_code == 200
+    assert probe.json()["matched"] is True
+    assert probe.json()["enabled"] is True
+    assert probe.json()["content"] == "Banana checkout handled."
+    assert validated.status_code == 200
+    assert validated.json()["valid"] is True
+    assert validated.json()["enabled"] is True

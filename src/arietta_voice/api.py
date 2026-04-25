@@ -29,8 +29,7 @@ from arietta_voice.models import ConversationTurn
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
-from arietta_voice.tools.base import ToolContext
-from arietta_voice.tools.registry import _tool_module_name as _assistant_tool_module_name
+from arietta_voice.tool_admin import ToolAdmin
 
 
 API_VERSION = "0.1.0"
@@ -64,6 +63,21 @@ class ToolProbeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class ToolEnabledRequest(BaseModel):
+    enabled: list[str] = Field(default_factory=list, max_length=200)
+
+
+class ToolCreateRequest(BaseModel):
+    module_name: str = Field(min_length=1, max_length=80)
+    trigger_phrase: str = Field(default="example custom tool", min_length=1, max_length=240)
+    response: str = Field(
+        default="The custom tool is wired up. Replace this response with your real behavior.",
+        min_length=1,
+        max_length=4000,
+    )
+    enable: bool = True
+
+
 @dataclass(slots=True)
 class ChatResult:
     response: str
@@ -74,14 +88,19 @@ class ChatResult:
 
 class AriettaApiService:
     def __init__(self, config_path: Path | None = None, *, config: AppConfig | None = None) -> None:
-        self.config_path = config_path
+        self.config_path = config_path.resolve() if config_path is not None else None
         self.config = config or load_config(config_path)
         self.started_at = _now_iso()
         self.started_monotonic = time.monotonic()
         self.event_logger = EventLogger(self.config.logging.events_file)
         self.prompt_manager = PromptManager(self.config)
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
-        self.runtime_supervisor = RuntimeSupervisor(self.config, config_path=config_path)
+        self.runtime_supervisor = RuntimeSupervisor(self.config, config_path=self.config_path)
+        self.tool_admin = ToolAdmin(
+            self.config,
+            config_path=self.config_path,
+            knowledge_retriever=self.knowledge,
+        )
         self._llm: ChatModel | None = None
         self.chat_turns = 0
         self.last_chat_at: str | None = None
@@ -288,6 +307,7 @@ class AriettaApiService:
     def build_index(self) -> dict[str, Any]:
         payload = build_knowledge_index(self.config.knowledge)
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
+        self.tool_admin.knowledge_retriever = self.knowledge
         self.event_logger.log("api_knowledge_index", **payload)
         return payload
 
@@ -330,6 +350,7 @@ class AriettaApiService:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
+        self.tool_admin.knowledge_retriever = self.knowledge
         payload = {
             "path": path.relative_to(self.config.knowledge.directory).as_posix(),
             "created": created,
@@ -345,39 +366,13 @@ class AriettaApiService:
         relative_path = path.relative_to(self.config.knowledge.directory).as_posix()
         path.unlink()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
+        self.tool_admin.knowledge_retriever = self.knowledge
         payload = {"path": relative_path, "deleted": True}
         self.event_logger.log("api_knowledge_file_deleted", **payload)
         return payload
 
     def inspect_tools(self) -> dict[str, Any]:
-        assistant_loaded: list[dict[str, Any]] = []
-        assistant_errors: list[dict[str, str]] = []
-        assistant_context = ToolContext(
-            config=self.config,
-            knowledge_retriever=self.knowledge if self.config.knowledge.enabled else None,
-        )
-        for tool_name in self.config.tools.enabled:
-            try:
-                module_name = _assistant_tool_module_name(tool_name)
-                module = importlib.import_module(module_name)
-                factory = getattr(module, "create_tool")
-                tool = factory(assistant_context)
-                assistant_loaded.append(
-                    {
-                        "configured_name": tool_name,
-                        "name": tool.name,
-                        "module": module_name,
-                        "class": type(tool).__name__,
-                    }
-                )
-            except Exception as exc:
-                assistant_errors.append(
-                    {
-                        "configured_name": tool_name,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-
+        assistant_tools = self.tool_admin.inventory()
         model_loaded: list[dict[str, Any]] = []
         model_errors: list[dict[str, str]] = []
         model_context = ModelToolContext(
@@ -411,11 +406,7 @@ class AriettaApiService:
                 )
 
         return {
-            "assistant_tools": {
-                "enabled": list(self.config.tools.enabled),
-                "loaded": assistant_loaded,
-                "errors": assistant_errors,
-            },
+            "assistant_tools": assistant_tools,
             "model_tools": {
                 "enabled": list(self.config.model_tools.enabled),
                 "loaded": model_loaded,
@@ -425,25 +416,42 @@ class AriettaApiService:
 
     def probe_tools(self, text: str) -> dict[str, Any]:
         text = text.strip()
-        assistant_context = ToolContext(
-            config=self.config,
-            knowledge_retriever=self.knowledge if self.config.knowledge.enabled else None,
-        )
         for tool_name in self.config.tools.enabled:
-            module_name = _assistant_tool_module_name(tool_name)
-            module = importlib.import_module(module_name)
-            tool = getattr(module, "create_tool")(assistant_context)
-            response = tool.maybe_handle(text)
-            if response is None:
-                continue
-            return {
-                "matched": True,
-                "tool": response.name,
-                "content": response.content,
-                "bypass_model": response.bypass_model,
-                "context": response.context,
-            }
+            probe = self.tool_admin.probe_tool(tool_name, text)
+            if probe["matched"]:
+                return probe
         return {"matched": False, "tool": None, "content": None, "bypass_model": None, "context": None}
+
+    def set_enabled_tools(self, enabled: list[str]) -> dict[str, Any]:
+        payload = self.tool_admin.set_enabled(enabled)
+        self.event_logger.log("api_tools_enabled_updated", enabled=payload["enabled"])
+        return payload
+
+    def probe_tool(self, tool_name: str, text: str) -> dict[str, Any]:
+        return self.tool_admin.probe_tool(tool_name, text)
+
+    def validate_tool(self, tool_name: str) -> dict[str, Any]:
+        return self.tool_admin.validate_tool(tool_name)
+
+    def create_tool(self, payload: ToolCreateRequest) -> dict[str, Any]:
+        result = self.tool_admin.create_tool(
+            module_name=payload.module_name,
+            trigger_phrase=payload.trigger_phrase,
+            response=payload.response,
+            enable=payload.enable,
+        )
+        self.event_logger.log(
+            "api_tool_created",
+            module_name=result["module_name"],
+            file=result["file"],
+            enabled=result["enabled"],
+        )
+        return result
+
+    def reload_tools(self) -> dict[str, Any]:
+        payload = self.tool_admin.reload()
+        self.event_logger.log("api_tools_reloaded", enabled=payload["enabled"])
+        return payload
 
     def chat(self, request: ChatRequest) -> ChatResult:
         message = request.message.strip()
@@ -678,6 +686,50 @@ def create_app(
         _user: str = Depends(require_admin),
     ) -> dict[str, Any]:
         return svc().probe_tools(payload.text)
+
+    @app.post("/api/tools/enabled")
+    def api_tools_enabled(
+        payload: ToolEnabledRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().set_enabled_tools(payload.enabled)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/tools/create")
+    def api_tool_create(
+        payload: ToolCreateRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().create_tool(payload)
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/tools/reload")
+    def api_tools_reload(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().reload_tools()
+
+    @app.post("/api/tools/{tool_name}/probe")
+    def api_probe_tool(
+        tool_name: str,
+        payload: ToolProbeRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().probe_tool(tool_name, payload.text)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/tools/{tool_name}/validate")
+    def api_validate_tool(
+        tool_name: str,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        return svc().validate_tool(tool_name)
 
     @app.post("/api/knowledge/search")
     def api_knowledge_search(
@@ -1140,6 +1192,7 @@ ADMIN_HTML = """<!doctype html>
       justify-content: space-between;
       gap: 12px;
       margin-bottom: 14px;
+      flex-wrap: wrap;
     }
     .panel h3 {
       margin: 0;
@@ -1172,6 +1225,10 @@ ADMIN_HTML = """<!doctype html>
       font: inherit;
       padding: 10px 12px;
       outline: none;
+    }
+    input[type="checkbox"] {
+      width: auto;
+      accent-color: var(--accent);
     }
     textarea {
       min-height: 112px;
@@ -1221,6 +1278,132 @@ ADMIN_HTML = """<!doctype html>
     }
     .knowledge-layout {
       grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+    }
+    .tools-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+      gap: 18px;
+      align-items: start;
+    }
+    .tool-toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .tool-list {
+      display: grid;
+      gap: 10px;
+    }
+    .tool-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-strong);
+      padding: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+    }
+    .tool-item.enabled {
+      border-color: var(--active-border);
+      background: var(--active-bg);
+    }
+    .tool-item.invalid {
+      border-color: rgba(180, 35, 24, 0.45);
+    }
+    .tool-title {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 5px;
+    }
+    .tool-title strong {
+      font-size: 14px;
+    }
+    .tool-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .tool-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .tool-toggle {
+      display: inline-flex;
+      min-height: 38px;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      padding: 8px 10px;
+      font-size: 13px;
+      color: var(--ink);
+    }
+    .tool-error {
+      margin-top: 10px;
+      border: 1px solid rgba(180, 35, 24, 0.35);
+      border-radius: 7px;
+      padding: 10px;
+      color: var(--bad);
+      background: rgba(180, 35, 24, 0.08);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .status-pill.ok {
+      border-color: rgba(25, 115, 68, 0.35);
+      color: var(--good);
+    }
+    .status-pill.bad {
+      border-color: rgba(180, 35, 24, 0.35);
+      color: var(--bad);
+    }
+    .status-pill.warn {
+      border-color: rgba(167, 99, 0, 0.35);
+      color: var(--warn);
+    }
+    .tool-create-form {
+      display: grid;
+      gap: 12px;
+    }
+    .tool-create-form label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    #tools-create-response {
+      min-height: 140px;
+    }
+    #tools-result {
+      margin-top: 8px;
+      margin-bottom: 14px;
+      max-height: 260px;
+    }
+    #tools-result-title {
+      margin-top: 12px;
+      min-height: 22px;
     }
     .chat-log {
       display: grid;
@@ -1322,6 +1505,7 @@ ADMIN_HTML = """<!doctype html>
       nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .split { grid-template-columns: 1fr; }
+      .tools-layout { grid-template-columns: 1fr; }
     }
     @media (max-width: 620px) {
       main { padding: 18px; }
@@ -1329,6 +1513,9 @@ ADMIN_HTML = """<!doctype html>
       nav { grid-template-columns: 1fr 1fr; }
       .grid { grid-template-columns: 1fr; }
       .form-row { flex-direction: column; }
+      .tool-item { grid-template-columns: 1fr; }
+      .tool-actions,
+      .tool-toolbar { justify-content: flex-start; }
     }
   </style>
 </head>
@@ -1446,9 +1633,51 @@ ADMIN_HTML = """<!doctype html>
       </section>
 
       <section id="tools" class="view">
+        <div class="tools-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Tool Registry</h3>
+              <div class="tool-toolbar">
+                <button class="button primary" id="tools-save-enabled">Save Enabled</button>
+                <button class="button info" id="tools-reload">Reload API</button>
+                <button class="button warn" id="tools-restart-runtime">Restart Runtime</button>
+                <button class="button" id="tools-refresh">Refresh</button>
+              </div>
+            </div>
+            <div class="status-row" id="tools-summary">No registry loaded.</div>
+            <div class="form-row" style="margin-top:14px">
+              <input id="tools-probe-text" placeholder="Sample text to probe against a tool">
+              <button class="button primary" id="tools-probe-enabled">Probe Enabled</button>
+            </div>
+            <div class="status-row" id="tools-result-title">No action result yet.</div>
+            <pre id="tools-result">{}</pre>
+            <div id="tools-content"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>New Tool</h3><button class="button primary" id="tools-create">Create</button></div>
+            <div class="tool-create-form">
+              <label>
+                Module Name
+                <input id="tools-create-name" placeholder="my_custom_tool">
+              </label>
+              <label>
+                Trigger Phrase
+                <input id="tools-create-trigger" value="example custom tool">
+              </label>
+              <label>
+                Response
+                <textarea id="tools-create-response">The custom tool is wired up. Replace this response with your real behavior.</textarea>
+              </label>
+              <label class="tool-toggle" style="justify-content:flex-start;text-transform:none;font-weight:500;color:var(--ink)">
+                <input id="tools-create-enable" type="checkbox" checked>
+                Enable after creation
+              </label>
+            </div>
+          </div>
+        </div>
         <div class="panel">
-          <div class="panel-head"><h3>Registered Tools</h3><button class="button" id="tools-refresh">Refresh</button></div>
-          <div id="tools-content"></div>
+          <div class="panel-head"><h3>Model Requested Tools</h3><span class="muted">Read-only for now</span></div>
+          <div id="tools-model-content"></div>
         </div>
       </section>
 
@@ -1489,6 +1718,7 @@ ADMIN_HTML = """<!doctype html>
       logsOffset: 0,
       logsLimit: 50,
       logsTotal: 0,
+      lastToolsPayload: null,
       lastDashboardRefreshAt: null
     };
     const DASHBOARD_POLL_MS = 3000;
@@ -1740,27 +1970,180 @@ ADMIN_HTML = """<!doctype html>
 
     async function loadTools() {
       const payload = await api("/api/tools");
-      const assistantRows = payload.assistant_tools.loaded.map((tool) => [
-        `<strong>${escapeHtml(tool.name)}</strong>`,
-        escapeHtml(tool.configured_name),
-        `<code>${escapeHtml(tool.module)}</code>`
-      ]);
-      const modelRows = payload.model_tools.loaded.map((tool) => [
+      renderTools(payload);
+    }
+
+    function renderTools(payload) {
+      state.lastToolsPayload = payload;
+      const assistant = payload.assistant_tools || { enabled: [], available: [], tools: [], load_errors: [] };
+      const records = assistant.tools || [];
+      const enabledCount = (assistant.enabled || []).length;
+      const availableCount = (assistant.available || []).length;
+      const invalidCount = (assistant.load_errors || []).length;
+      $("#tools-summary").innerHTML = `
+        <span class="status-pill ok">${enabledCount} enabled</span>
+        <span class="status-pill">${availableCount} available</span>
+        <span class="status-pill ${invalidCount ? "bad" : "ok"}">${invalidCount} load errors</span>
+        <span class="muted">Directory: <code>${escapeHtml(assistant.tools_directory || "")}</code></span>
+      `;
+
+      $("#tools-content").innerHTML = records.length
+        ? `<div class="tool-list">${records.map(renderToolCard).join("")}</div>`
+        : `<p class="muted">No deterministic tools found.</p>`;
+
+      const modelRows = (payload.model_tools?.loaded || []).map((tool) => [
         `<strong>${escapeHtml(tool.name)}</strong>`,
         escapeHtml(tool.configured_name),
         escapeHtml(tool.description)
       ]);
-      const errors = [...payload.assistant_tools.errors, ...payload.model_tools.errors];
-      const errorHtml = errors.length ? `<h3>Errors</h3>` + table(["Tool", "Error"], errors.map((err) => [
+      const modelErrors = payload.model_tools?.errors || [];
+      const modelErrorHtml = modelErrors.length ? `<h3 style="margin-top:18px">Errors</h3>` + table(["Tool", "Error"], modelErrors.map((err) => [
         escapeHtml(err.configured_name), `<span class="error">${escapeHtml(err.error)}</span>`
       ])) : "";
-      $("#tools-content").innerHTML = `
-        <h3>Deterministic</h3>
-        ${assistantRows.length ? table(["Name", "Config", "Module"], assistantRows) : `<p class="muted">No deterministic tools loaded.</p>`}
-        <h3 style="margin-top:18px">Model Requested</h3>
+      $("#tools-model-content").innerHTML = `
         ${modelRows.length ? table(["Name", "Config", "Description"], modelRows) : `<p class="muted">No model-requested tools loaded.</p>`}
-        ${errorHtml}
+        ${modelErrorHtml}
       `;
+      markToolsClean();
+    }
+
+    function renderToolCard(tool) {
+      const statusClass = tool.valid ? "ok" : "bad";
+      const enabled = Boolean(tool.enabled);
+      const checkboxDisabled = tool.valid ? "" : "disabled";
+      const statusText = tool.valid ? "valid" : "load error";
+      const availableText = tool.available ? "available" : "configured only";
+      const errorHtml = tool.error ? `<div class="tool-error">${escapeHtml(tool.error)}</div>` : "";
+      return `
+        <div class="tool-item ${enabled ? "enabled" : ""} ${tool.valid ? "" : "invalid"}">
+          <div>
+            <div class="tool-title">
+              <strong>${escapeHtml(tool.configured_name)}</strong>
+              <span class="status-pill ${statusClass}">${statusText}</span>
+              <span class="status-pill ${enabled ? "ok" : ""}">${enabled ? "enabled" : "disabled"}</span>
+              <span class="status-pill">${escapeHtml(availableText)}</span>
+            </div>
+            <div class="tool-meta">
+              Runtime: <code>${escapeHtml(tool.tool_name || "--")}</code><br>
+              Module: <code>${escapeHtml(tool.module || "--")}</code><br>
+              Class: <code>${escapeHtml(tool.class || "--")}</code>
+            </div>
+            ${errorHtml}
+          </div>
+          <div class="tool-actions">
+            <label class="tool-toggle">
+              <input class="tool-enabled" type="checkbox" data-tool="${escapeHtml(tool.configured_name)}" ${enabled ? "checked" : ""} ${checkboxDisabled}>
+              <span>${enabled ? "Enabled" : "Disabled"}</span>
+            </label>
+            <button class="button" data-tool-action="probe" data-tool-name="${escapeHtml(tool.configured_name)}">Probe</button>
+            <button class="button info" data-tool-action="validate" data-tool-name="${escapeHtml(tool.configured_name)}">Validate</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function markToolsDirty() {
+      const button = $("#tools-save-enabled");
+      button.classList.remove("primary");
+      button.classList.add("warn");
+      button.textContent = "Save Changes";
+    }
+
+    function markToolsClean() {
+      const button = $("#tools-save-enabled");
+      button.classList.remove("warn");
+      button.classList.add("primary");
+      button.textContent = "Save Enabled";
+    }
+
+    function toolPathName(name) {
+      return encodeURIComponent(name);
+    }
+
+    function setToolsResult(label, payload) {
+      $("#tools-result-title").textContent = label;
+      $("#tools-result").textContent = JSON.stringify(payload, null, 2);
+    }
+
+    async function saveToolEnabled() {
+      const enabled = $$(".tool-enabled").filter((input) => input.checked).map((input) => input.dataset.tool);
+      const button = $("#tools-save-enabled");
+      button.disabled = true;
+      button.textContent = "Saving...";
+      try {
+        const payload = await api("/api/tools/enabled", {
+          method: "POST",
+          body: JSON.stringify({ enabled })
+        });
+        setToolsResult("Save result", { saved: true, enabled: payload.enabled });
+        await loadTools();
+        await loadDashboard({ silent: true });
+      } finally {
+        button.disabled = false;
+        if (button.textContent === "Saving...") markToolsDirty();
+      }
+    }
+
+    async function probeEnabledToolsFromRegistry() {
+      const text = $("#tools-probe-text").value.trim();
+      if (!text) {
+        setToolsResult("Probe result", { error: "Enter sample text before probing." });
+        return;
+      }
+      const payload = await api("/api/tools/probe", {
+        method: "POST",
+        body: JSON.stringify({ text })
+      });
+      setToolsResult("Probe enabled tools result", payload);
+    }
+
+    async function probeSingleTool(name) {
+      const text = $("#tools-probe-text").value.trim();
+      if (!text) {
+        setToolsResult("Probe result", { error: "Enter sample text before probing.", tool: name });
+        return;
+      }
+      const payload = await api(`/api/tools/${toolPathName(name)}/probe`, {
+        method: "POST",
+        body: JSON.stringify({ text })
+      });
+      setToolsResult(`Probe result: ${name}`, payload);
+    }
+
+    async function validateSingleTool(name) {
+      const payload = await api(`/api/tools/${toolPathName(name)}/validate`, { method: "POST" });
+      setToolsResult(`Validation result: ${name}`, payload);
+      await loadTools();
+    }
+
+    async function createTool() {
+      const button = $("#tools-create");
+      button.disabled = true;
+      button.textContent = "Creating...";
+      try {
+        const payload = await api("/api/tools/create", {
+          method: "POST",
+          body: JSON.stringify({
+            module_name: $("#tools-create-name").value.trim(),
+            trigger_phrase: $("#tools-create-trigger").value.trim(),
+            response: $("#tools-create-response").value,
+            enable: $("#tools-create-enable").checked
+          })
+        });
+        setToolsResult(`Create result: ${payload.module_name}`, payload);
+        $("#tools-create-name").value = "";
+        await loadTools();
+        await loadDashboard({ silent: true });
+      } finally {
+        button.disabled = false;
+        button.textContent = "Create";
+      }
+    }
+
+    async function reloadTools() {
+      const payload = await api("/api/tools/reload", { method: "POST" });
+      setToolsResult("Reload result", payload);
+      await loadTools();
     }
 
     async function searchKnowledge() {
@@ -1948,6 +2331,21 @@ ADMIN_HTML = """<!doctype html>
     $("#logs-search").addEventListener("keydown", (event) => { if (event.key === "Enter") loadLogs({ reset: true }).catch((error) => setError(error.message)); });
     $("#logs-event").addEventListener("keydown", (event) => { if (event.key === "Enter") loadLogs({ reset: true }).catch((error) => setError(error.message)); });
     $("#tools-refresh").addEventListener("click", () => loadTools().catch((error) => setError(error.message)));
+    $("#tools-save-enabled").addEventListener("click", () => saveToolEnabled().catch((error) => setError(error.message)));
+    $("#tools-reload").addEventListener("click", () => reloadTools().catch((error) => setError(error.message)));
+    $("#tools-restart-runtime").addEventListener("click", () => runtimeAction("restart").catch((error) => setError(error.message)));
+    $("#tools-probe-enabled").addEventListener("click", () => probeEnabledToolsFromRegistry().catch((error) => setError(error.message)));
+    $("#tools-create").addEventListener("click", () => createTool().catch((error) => setError(error.message)));
+    $("#tools-probe-text").addEventListener("keydown", (event) => { if (event.key === "Enter") probeEnabledToolsFromRegistry().catch((error) => setError(error.message)); });
+    $("#tools-content").addEventListener("change", (event) => {
+      if (event.target.classList.contains("tool-enabled")) markToolsDirty();
+    });
+    $("#tools-content").addEventListener("click", (event) => {
+      const target = event.target.closest("[data-tool-action]");
+      if (!target) return;
+      if (target.dataset.toolAction === "probe") probeSingleTool(target.dataset.toolName).catch((error) => setError(error.message));
+      if (target.dataset.toolAction === "validate") validateSingleTool(target.dataset.toolName).catch((error) => setError(error.message));
+    });
     $("#knowledge-search").addEventListener("click", () => searchKnowledge().catch((error) => setError(error.message)));
     $("#knowledge-query").addEventListener("keydown", (event) => { if (event.key === "Enter") searchKnowledge().catch((error) => setError(error.message)); });
     $("#knowledge-index").addEventListener("click", () => buildKnowledgeIndex().catch((error) => setError(error.message)));
