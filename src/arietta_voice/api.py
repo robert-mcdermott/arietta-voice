@@ -843,6 +843,8 @@ ADMIN_HTML = """<!doctype html>
       position: sticky;
       top: 0;
       height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
     .brand {
       display: grid;
@@ -881,6 +883,21 @@ ADMIN_HTML = """<!doctype html>
       background: #e7f2ef;
       color: #064d47;
       font-weight: 650;
+    }
+    .sidebar-link {
+      display: block;
+      margin-top: auto;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px 12px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .sidebar-link:hover {
+      border-color: #aab5a7;
+      background: var(--panel-strong);
+      color: var(--ink);
     }
     main {
       padding: 28px;
@@ -1234,6 +1251,7 @@ ADMIN_HTML = """<!doctype html>
         <button class="nav-button" data-view="logs">Logs</button>
         <button class="nav-button" data-view="config">Config</button>
       </nav>
+      <a class="sidebar-link" href="https://github.com/robert-mcdermott/arietta-voice" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
     </aside>
     <main>
       <div class="topbar">
