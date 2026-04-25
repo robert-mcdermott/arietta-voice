@@ -225,6 +225,41 @@ def test_logs_endpoint_reads_latest_events(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["items"][0]["event"] == "newer"
+    assert response.json()["total"] == 2
+    assert response.json()["has_next"] is True
+
+
+def test_logs_endpoint_paginates_and_filters(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    events_path = tmp_path / "logs" / "events.jsonl"
+    events_path.write_text(
+        "\n".join(
+            [
+                '{"ts":"2026-01-01T00:00:00Z","event":"alpha","text":"first apple"}',
+                '{"ts":"2026-01-01T00:00:01Z","event":"beta","text":"second banana"}',
+                '{"ts":"2026-01-01T00:00:02Z","event":"alpha","text":"third apricot"}',
+                '{"ts":"2026-01-01T00:00:03Z","event":"gamma","text":"fourth grape"}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = _client(config_path)
+
+    first_page = client.get("/api/logs?limit=2", auth=("admin", "password"))
+    second_page = client.get("/api/logs?limit=2&offset=2", auth=("admin", "password"))
+    event_filtered = client.get("/api/logs?limit=10&event=alpha", auth=("admin", "password"))
+    search_filtered = client.get("/api/logs?limit=10&q=banana", auth=("admin", "password"))
+
+    assert [item["event"] for item in first_page.json()["items"]] == ["gamma", "alpha"]
+    assert first_page.json()["has_next"] is True
+    assert first_page.json()["has_previous"] is False
+    assert [item["event"] for item in second_page.json()["items"]] == ["beta", "alpha"]
+    assert second_page.json()["has_previous"] is True
+    assert event_filtered.json()["total"] == 2
+    assert [item["text"] for item in event_filtered.json()["items"]] == ["third apricot", "first apple"]
+    assert search_filtered.json()["total"] == 1
+    assert search_filtered.json()["items"][0]["event"] == "beta"
 
 
 def test_chat_endpoint_can_answer_with_deterministic_tool(tmp_path: Path) -> None:

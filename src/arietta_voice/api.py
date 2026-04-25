@@ -215,13 +215,34 @@ class AriettaApiService:
         )
         return payload
 
-    def read_events(self, *, limit: int, event: str | None = None) -> dict[str, Any]:
+    def read_events(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        event: str | None = None,
+        query: str | None = None,
+    ) -> dict[str, Any]:
         limit = max(1, min(limit, 1000))
+        offset = max(0, offset)
+        event_filter = None if event is None else event.strip()
+        query_filter = "" if query is None else query.strip().lower()
         path = self.config.logging.events_file
         if not path.exists():
-            return {"events_file": str(path), "items": [], "count": 0}
+            return {
+                "events_file": str(path),
+                "items": [],
+                "count": 0,
+                "total": 0,
+                "offset": offset,
+                "limit": limit,
+                "has_next": False,
+                "has_previous": False,
+                "event": event_filter,
+                "query": query_filter,
+            }
 
-        items: deque[dict[str, Any]] = deque(maxlen=limit)
+        matched: list[dict[str, Any]] = []
         with path.open("r", encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 raw = line.strip()
@@ -231,11 +252,26 @@ class AriettaApiService:
                     payload = json.loads(raw)
                 except json.JSONDecodeError:
                     payload = {"event": "unparsed_log_line", "line_number": line_number, "raw": raw}
-                if event and payload.get("event") != event:
+                if event_filter and payload.get("event") != event_filter:
                     continue
-                items.append(payload)
-        ordered = list(reversed(items))
-        return {"events_file": str(path), "items": ordered, "count": len(ordered)}
+                if query_filter and query_filter not in json.dumps(payload, sort_keys=True).lower():
+                    continue
+                matched.append(payload)
+        ordered = list(reversed(matched))
+        page = ordered[offset : offset + limit]
+        total = len(ordered)
+        return {
+            "events_file": str(path),
+            "items": page,
+            "count": len(page),
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_next": offset + limit < total,
+            "has_previous": offset > 0,
+            "event": event_filter,
+            "query": query_filter,
+        }
 
     def search_knowledge(self, query: str) -> dict[str, Any]:
         query = query.strip()
@@ -626,9 +662,11 @@ def create_app(
     def api_logs(
         _user: str = Depends(require_admin),
         limit: int = Query(default=100, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
         event: str | None = Query(default=None),
+        q: str | None = Query(default=None),
     ) -> dict[str, Any]:
-        return svc().read_events(limit=limit, event=event)
+        return svc().read_events(limit=limit, offset=offset, event=event, query=q)
 
     @app.get("/api/tools")
     def api_tools(_user: str = Depends(require_admin)) -> dict[str, Any]:
@@ -1001,6 +1039,17 @@ ADMIN_HTML = """<!doctype html>
       align-items: stretch;
       margin-bottom: 14px;
     }
+    .compact-row {
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .compact-row input {
+      min-width: 180px;
+      flex: 1 1 220px;
+    }
+    .compact-row .button {
+      flex: 0 0 auto;
+    }
     input, textarea {
       width: 100%;
       border: 1px solid var(--line);
@@ -1284,7 +1333,18 @@ ADMIN_HTML = """<!doctype html>
 
       <section id="logs" class="view">
         <div class="panel">
-          <div class="panel-head"><h3>Event Log</h3><button class="button" id="logs-refresh">Refresh</button></div>
+          <div class="panel-head"><h3>Event Log</h3><button class="button info" id="logs-refresh">Refresh</button></div>
+          <div class="form-row compact-row">
+            <input id="logs-search" placeholder="Search logs">
+            <input id="logs-event" placeholder="Filter by event">
+            <button class="button primary" id="logs-apply">Apply</button>
+            <button class="button" id="logs-clear">Clear</button>
+          </div>
+          <div class="form-row compact-row">
+            <button class="button" id="logs-prev">Previous</button>
+            <button class="button" id="logs-next">Next</button>
+            <span class="muted" id="logs-page-info">No log page loaded.</span>
+          </div>
           <div id="logs-content"></div>
         </div>
       </section>
@@ -1305,6 +1365,9 @@ ADMIN_HTML = """<!doctype html>
       dashboardLoading: false,
       activeViewLoading: false,
       runtimeActionPending: null,
+      logsOffset: 0,
+      logsLimit: 50,
+      logsTotal: 0,
       lastDashboardRefreshAt: null
     };
     const DASHBOARD_POLL_MS = 3000;
@@ -1513,14 +1576,32 @@ ADMIN_HTML = """<!doctype html>
       $("#config-json").textContent = JSON.stringify(await api("/api/config"), null, 2);
     }
 
-    async function loadLogs() {
-      const payload = await api("/api/logs?limit=150");
+    function logsQueryString() {
+      const params = new URLSearchParams();
+      params.set("limit", String(state.logsLimit));
+      params.set("offset", String(state.logsOffset));
+      const event = $("#logs-event").value.trim();
+      const query = $("#logs-search").value.trim();
+      if (event) params.set("event", event);
+      if (query) params.set("q", query);
+      return params.toString();
+    }
+
+    async function loadLogs(options = {}) {
+      if (options.reset) state.logsOffset = 0;
+      const payload = await api(`/api/logs?${logsQueryString()}`);
+      state.logsTotal = payload.total || 0;
       const rows = (payload.items || []).map((item) => [
         escapeHtml(item.ts || ""),
         `<strong>${escapeHtml(item.event || "")}</strong>`,
         `<code>${escapeHtml(JSON.stringify(item))}</code>`
       ]);
       $("#logs-content").innerHTML = rows.length ? table(["Time", "Event", "Payload"], rows) : `<p class="muted">No events recorded.</p>`;
+      const start = payload.total ? payload.offset + 1 : 0;
+      const end = payload.offset + payload.count;
+      $("#logs-page-info").textContent = `${start}-${end} of ${payload.total} matching events`;
+      $("#logs-prev").disabled = !payload.has_previous;
+      $("#logs-next").disabled = !payload.has_next;
     }
 
     async function loadTools() {
@@ -1686,7 +1767,7 @@ ADMIN_HTML = """<!doctype html>
       $$(".view").forEach((section) => section.classList.toggle("active", section.id === view));
       $("#view-title").textContent = viewTitles[view] || "Dashboard";
       if (view === "config") loadConfig().catch((error) => setError(error.message));
-      if (view === "logs") loadLogs().catch((error) => setError(error.message));
+      if (view === "logs") loadLogs({ reset: true }).catch((error) => setError(error.message));
       if (view === "tools") loadTools().catch((error) => setError(error.message));
       if (view === "knowledge") loadKnowledgeFiles().catch((error) => setError(error.message));
     }
@@ -1716,6 +1797,22 @@ ADMIN_HTML = """<!doctype html>
     $("#diagnostics-run").addEventListener("click", () => api("/api/diagnostics?include_hardware=true").then(renderDiagnostics).catch((error) => setError(error.message)));
     $("#config-refresh").addEventListener("click", () => loadConfig().catch((error) => setError(error.message)));
     $("#logs-refresh").addEventListener("click", () => loadLogs().catch((error) => setError(error.message)));
+    $("#logs-apply").addEventListener("click", () => loadLogs({ reset: true }).catch((error) => setError(error.message)));
+    $("#logs-clear").addEventListener("click", () => {
+      $("#logs-search").value = "";
+      $("#logs-event").value = "";
+      loadLogs({ reset: true }).catch((error) => setError(error.message));
+    });
+    $("#logs-prev").addEventListener("click", () => {
+      state.logsOffset = Math.max(0, state.logsOffset - state.logsLimit);
+      loadLogs().catch((error) => setError(error.message));
+    });
+    $("#logs-next").addEventListener("click", () => {
+      state.logsOffset += state.logsLimit;
+      loadLogs().catch((error) => setError(error.message));
+    });
+    $("#logs-search").addEventListener("keydown", (event) => { if (event.key === "Enter") loadLogs({ reset: true }).catch((error) => setError(error.message)); });
+    $("#logs-event").addEventListener("keydown", (event) => { if (event.key === "Enter") loadLogs({ reset: true }).catch((error) => setError(error.message)); });
     $("#tools-refresh").addEventListener("click", () => loadTools().catch((error) => setError(error.message)));
     $("#knowledge-search").addEventListener("click", () => searchKnowledge().catch((error) => setError(error.message)));
     $("#knowledge-query").addEventListener("keydown", (event) => { if (event.key === "Enter") searchKnowledge().catch((error) => setError(error.message)); });
