@@ -11,11 +11,15 @@ from typing import Any
 
 from arietta_voice.config import AppConfig
 from arietta_voice.knowledge import KnowledgeRetriever
+from arietta_voice.model_tools.base import ModelInvokedTool, ModelToolContext
+from arietta_voice.model_tools.registry import ModelToolRegistry
+from arietta_voice.model_tools.registry import _tool_module_name as _model_tool_module_name
 from arietta_voice.tools.base import AssistantTool, ToolContext
 from arietta_voice.tools.registry import _tool_module_name
 
 
 EXCLUDED_TOOL_MODULES = {"__init__", "base", "registry", "tool_template"}
+EXCLUDED_MODEL_TOOL_MODULES = {"__init__", "base", "registry", "tool_template"}
 MODULE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 NEW_TOOL_NAME_PATTERN = re.compile(r"[^a-z0-9_]+")
 
@@ -258,6 +262,304 @@ class ToolAdmin:
         _persist_tools_enabled(path, enabled)
 
 
+class ModelToolAdmin:
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        config_path: Path | None = None,
+        knowledge_retriever: KnowledgeRetriever | None = None,
+        tools_directory: Path | None = None,
+    ) -> None:
+        self.config = config
+        self.config_path = config_path
+        self.knowledge_retriever = knowledge_retriever
+        self.tools_directory = tools_directory or Path(__file__).resolve().parent / "model_tools"
+
+    def inventory(self) -> dict[str, Any]:
+        enabled = _unique_tool_names(self.config.model_tools.enabled)
+        enabled_set = set(enabled)
+        available = self.available_tool_names()
+        configured_or_available = [
+            *enabled,
+            *(name for name in available if name not in enabled_set),
+        ]
+
+        records = [self.validate_tool(name) for name in configured_or_available]
+        for record in records:
+            record["enabled"] = record["configured_name"] in enabled_set
+
+        enabled_errors = [
+            {
+                "configured_name": record["configured_name"],
+                "error": str(record["error"]),
+            }
+            for record in records
+            if record["enabled"] and record["error"]
+        ]
+        load_errors = [
+            {
+                "configured_name": record["configured_name"],
+                "error": str(record["error"]),
+            }
+            for record in records
+            if record["error"]
+        ]
+        loaded = [
+            {
+                "configured_name": record["configured_name"],
+                "name": record["tool_name"],
+                "module": record["module"],
+                "class": record["class"],
+                "file": record["file"],
+                "description": record["description"],
+                "arguments_example": record["arguments_example"],
+            }
+            for record in records
+            if record["enabled"] and record["valid"] and record["active"]
+        ]
+        instruction_text = None
+        instruction_error = None
+        try:
+            instruction_text = self.instruction_text()
+        except Exception as exc:
+            instruction_error = f"{type(exc).__name__}: {exc}"
+        return {
+            "enabled": enabled,
+            "available": available,
+            "tools_directory": str(self.tools_directory),
+            "tools": records,
+            "loaded": loaded,
+            "errors": enabled_errors,
+            "load_errors": load_errors,
+            "instruction_text": instruction_text,
+            "instruction_error": instruction_error,
+        }
+
+    def available_tool_names(self) -> list[str]:
+        if not self.tools_directory.exists():
+            return []
+        names = []
+        for path in self.tools_directory.glob("*.py"):
+            name = path.stem
+            if name in EXCLUDED_MODEL_TOOL_MODULES or name.startswith("_"):
+                continue
+            names.append(name)
+        return sorted(names)
+
+    def validate_tool(self, tool_name: str) -> dict[str, Any]:
+        record = {
+            "configured_name": str(tool_name).strip(),
+            "enabled": False,
+            "available": False,
+            "valid": False,
+            "active": False,
+            "module": None,
+            "file": None,
+            "class": None,
+            "tool_name": None,
+            "description": None,
+            "arguments_example": None,
+            "source": "external" if "." in str(tool_name) else "local",
+            "error": None,
+        }
+        try:
+            normalized = _normalize_configured_tool_name(tool_name)
+            record["enabled"] = normalized in _unique_tool_names(self.config.model_tools.enabled)
+            module, module_name, file_path = self._load_module(normalized)
+            record["configured_name"] = normalized
+            record["module"] = module_name
+            record["file"] = str(file_path) if file_path is not None else None
+            record["available"] = file_path is not None or "." in normalized
+            tool = self._create_tool(module, normalized)
+            record["valid"] = True
+            if tool is None:
+                return record
+            record["active"] = True
+            record["class"] = type(tool).__name__
+            record["tool_name"] = tool.name
+            record["description"] = tool.description
+            record["arguments_example"] = tool.arguments_example
+        except Exception as exc:
+            record["error"] = f"{type(exc).__name__}: {exc}"
+        return record
+
+    def set_enabled(self, enabled_tools: list[str]) -> dict[str, Any]:
+        enabled = _unique_tool_names(enabled_tools)
+        available = set(self.available_tool_names())
+        for tool_name in enabled:
+            if "." not in tool_name and tool_name not in available:
+                raise ValueError(
+                    f"Model tool '{tool_name}' is not available in {self.tools_directory}."
+                )
+            record = self.validate_tool(tool_name)
+            if not record["valid"]:
+                raise ValueError(f"Model tool '{tool_name}' is not valid: {record['error']}")
+
+        self.config.model_tools.enabled = tuple(enabled)
+        self._persist_enabled_tools(enabled)
+        return self.inventory()
+
+    def invoke_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        normalized = _normalize_configured_tool_name(tool_name)
+        module, module_name, file_path = self._load_module(normalized)
+        tool = self._create_tool(module, normalized)
+        enabled = normalized in _unique_tool_names(self.config.model_tools.enabled)
+        if tool is None:
+            return {
+                "configured_name": normalized,
+                "enabled": enabled,
+                "active": False,
+                "module": module_name,
+                "file": str(file_path) if file_path is not None else None,
+                "invoked": False,
+                "tool": None,
+                "arguments": arguments,
+                "arguments_example": {},
+                "followup_context": None,
+                "details": {},
+                "error": "Tool factory returned None for the current configuration.",
+            }
+        result = tool.invoke(arguments)
+        if result is None:
+            return {
+                "configured_name": normalized,
+                "enabled": enabled,
+                "active": True,
+                "module": module_name,
+                "file": str(file_path) if file_path is not None else None,
+                "invoked": False,
+                "tool": tool.name,
+                "arguments": arguments,
+                "arguments_example": tool.arguments_example,
+                "followup_context": None,
+                "details": {},
+                "error": None,
+            }
+        return {
+            "configured_name": normalized,
+            "enabled": enabled,
+            "active": True,
+            "module": module_name,
+            "file": str(file_path) if file_path is not None else None,
+            "invoked": True,
+            "tool": tool.name,
+            "arguments": arguments,
+            "arguments_example": tool.arguments_example,
+            "followup_context": result.followup_context,
+            "details": result.details,
+            "error": None,
+        }
+
+    def create_tool(
+        self,
+        *,
+        module_name: str,
+        description: str,
+        arguments_example: dict[str, Any],
+        followup_context: str,
+        enable: bool = True,
+    ) -> dict[str, Any]:
+        normalized = normalize_new_tool_module_name(module_name)
+        self.tools_directory.mkdir(parents=True, exist_ok=True)
+        path = self.tools_directory / f"{normalized}.py"
+        if path.exists():
+            raise FileExistsError(f"Model tool module '{normalized}' already exists.")
+
+        path.write_text(
+            _render_model_tool_template(
+                module_name=normalized,
+                description=description.strip()
+                or "you need a custom model-called tool result before answering",
+                arguments_example=arguments_example,
+                followup_context=followup_context.strip()
+                or "Custom model tool result. Use this result when composing the final answer.",
+            ),
+            encoding="utf-8",
+        )
+        importlib.invalidate_caches()
+
+        enabled = list(self.config.model_tools.enabled)
+        if enable and normalized not in enabled:
+            enabled.append(normalized)
+            self.config.model_tools.enabled = tuple(enabled)
+            self._persist_enabled_tools(enabled)
+
+        record = self.validate_tool(normalized)
+        return {
+            "created": True,
+            "module_name": normalized,
+            "file": str(path),
+            "enabled": normalized in self.config.model_tools.enabled,
+            "tool": record,
+            "inventory": self.inventory(),
+        }
+
+    def reload(self) -> dict[str, Any]:
+        importlib.invalidate_caches()
+        return self.inventory()
+
+    def instruction_text(self) -> str | None:
+        registry = ModelToolRegistry(
+            self.config,
+            knowledge_retriever=self.knowledge_retriever if self.config.knowledge.enabled else None,
+        )
+        return registry.instruction_text()
+
+    def _load_module(self, tool_name: str) -> tuple[ModuleType, str, Path | None]:
+        module_name = _model_tool_module_name(tool_name)
+        file_path = None
+        if "." not in tool_name:
+            candidate = self.tools_directory / f"{tool_name}.py"
+            if candidate.exists():
+                file_path = candidate
+                module = _load_module_from_file(module_name, candidate)
+                return module, module_name, file_path
+
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name == module_name:
+                raise ValueError(
+                    f"Model tool '{tool_name}' could not be imported from '{module_name}'."
+                ) from exc
+            raise
+        module_file = getattr(module, "__file__", None)
+        return module, module_name, Path(module_file) if module_file else None
+
+    def _create_tool(self, module: ModuleType, tool_name: str) -> ModelInvokedTool | None:
+        factory = getattr(module, "create_tool", None)
+        if not callable(factory):
+            raise ValueError(f"Model tool '{tool_name}' must expose a callable create_tool(context).")
+
+        tool = factory(
+            ModelToolContext(
+                config=self.config,
+                knowledge_retriever=self.knowledge_retriever
+                if self.config.knowledge.enabled
+                else None,
+            )
+        )
+        if tool is None:
+            return None
+        if not callable(getattr(tool, "invoke", None)):
+            raise ValueError(f"Model tool '{tool_name}' must define invoke(arguments).")
+        if not isinstance(getattr(tool, "name", None), str) or not tool.name.strip():
+            raise ValueError(f"Model tool '{tool_name}' must define a non-empty name.")
+        if not isinstance(getattr(tool, "description", None), str) or not tool.description.strip():
+            raise ValueError(f"Model tool '{tool_name}' must define a description.")
+        arguments_example = getattr(tool, "arguments_example", None)
+        if not isinstance(arguments_example, dict):
+            raise ValueError(f"Model tool '{tool_name}' must define arguments_example as a dict.")
+        return tool
+
+    def _persist_enabled_tools(self, enabled: list[str]) -> None:
+        path = self.config_path
+        if path is None:
+            path = self.config.project_root / "config" / "arietta_voice.toml"
+        _persist_model_tools_enabled(path, enabled)
+
+
 def normalize_new_tool_module_name(value: str) -> str:
     normalized = NEW_TOOL_NAME_PATTERN.sub("_", value.strip().lower()).strip("_")
     normalized = re.sub(r"_+", "_", normalized)
@@ -305,13 +607,21 @@ def _load_module_from_file(module_name: str, path: Path) -> ModuleType:
 
 
 def _persist_tools_enabled(path: Path, enabled: list[str]) -> None:
+    _persist_enabled_list(path, section="tools", enabled=enabled)
+
+
+def _persist_model_tools_enabled(path: Path, enabled: list[str]) -> None:
+    _persist_enabled_list(path, section="model_tools", enabled=enabled)
+
+
+def _persist_enabled_list(path: Path, *, section: str, enabled: list[str]) -> None:
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     replacement = _format_tools_enabled(enabled)
-    section_start = _find_section(lines, "tools")
+    section_start = _find_section(lines, section)
     if section_start is None:
         if lines and lines[-1].strip():
             lines.append("")
-        lines.append("[tools]")
+        lines.append(f"[{section}]")
         lines.extend(replacement)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -401,6 +711,49 @@ class {class_name}:
 
 
 def create_tool(context: ToolContext) -> {class_name}:
+    del context
+    return {class_name}()
+'''
+
+
+def _render_model_tool_template(
+    *,
+    module_name: str,
+    description: str,
+    arguments_example: dict[str, Any],
+    followup_context: str,
+) -> str:
+    class_name = "".join(part.capitalize() for part in module_name.split("_") if part) + "ModelTool"
+    name_literal = json.dumps(module_name, ensure_ascii=True)
+    description_literal = json.dumps(description, ensure_ascii=True)
+    arguments_literal = json.dumps(arguments_example, ensure_ascii=True, indent=4)
+    context_literal = json.dumps(followup_context, ensure_ascii=True)
+    return f'''from __future__ import annotations
+
+import json
+
+from arietta_voice.model_tools.base import ModelToolContext, ModelToolExecution
+
+
+FOLLOWUP_CONTEXT = {context_literal}
+
+
+class {class_name}:
+    name = {name_literal}
+    description = {description_literal}
+    arguments_example = {arguments_literal}
+
+    def invoke(self, arguments: dict[str, object]) -> ModelToolExecution | None:
+        return ModelToolExecution(
+            followup_context=(
+                f"{{FOLLOWUP_CONTEXT}}\\n"
+                f"Tool arguments: {{json.dumps(arguments, sort_keys=True, ensure_ascii=True)}}"
+            ),
+            details={{"arguments": arguments}},
+        )
+
+
+def create_tool(context: ModelToolContext) -> {class_name}:
     del context
     return {class_name}()
 '''

@@ -381,3 +381,100 @@ def test_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
     assert validated.status_code == 200
     assert validated.json()["valid"] is True
     assert validated.json()["enabled"] is True
+
+
+def test_model_tools_endpoint_lists_registry_inventory(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+
+    response = client.get("/api/tools", auth=("admin", "password"))
+
+    payload = response.json()
+    model_tools = payload["model_tools"]["tools"]
+    assert response.status_code == 200
+    assert any(
+        tool["configured_name"] == "system_info"
+        and not tool["enabled"]
+        and tool["valid"]
+        and tool["active"]
+        for tool in model_tools
+    )
+    assert payload["model_tools"]["load_errors"] == []
+
+
+def test_model_tools_enabled_endpoint_persists_config_and_instructions(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client = _client(config_path)
+
+    enabled = client.post(
+        "/api/model-tools/enabled",
+        auth=("admin", "password"),
+        json={"enabled": ["system_info"]},
+    )
+    instructions = client.get("/api/model-tools/instructions", auth=("admin", "password"))
+
+    assert enabled.status_code == 200
+    assert enabled.json()["enabled"] == ["system_info"]
+    assert load_config(config_path).model_tools.enabled == ("system_info",)
+    assert instructions.status_code == 200
+    assert "get_system_info" in instructions.json()["instruction_text"]
+
+
+def test_model_tool_invoke_can_run_disabled_tool(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+
+    response = client.post(
+        "/api/model-tools/system_info/invoke",
+        auth=("admin", "password"),
+        json={"arguments": {}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["invoked"] is True
+    assert response.json()["enabled"] is False
+    assert response.json()["tool"] == "get_system_info"
+    assert response.json()["arguments"] == {}
+    assert response.json()["arguments_example"] == {}
+    assert "System information requested" in response.json()["followup_context"]
+
+
+def test_model_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    service.model_tool_admin.tools_directory = tmp_path / "generated_model_tools"
+
+    created = client.post(
+        "/api/model-tools/create",
+        auth=("admin", "password"),
+        json={
+            "module_name": "Demo Model Tool",
+            "description": "you need a demo model tool result",
+            "arguments_example": {"topic": "<topic>"},
+            "followup_context": "Demo model tool follow-up.",
+            "enable": True,
+        },
+    )
+    invoked = client.post(
+        "/api/model-tools/demo_model_tool/invoke",
+        auth=("admin", "password"),
+        json={"arguments": {"topic": "widgets"}},
+    )
+    validated = client.post(
+        "/api/model-tools/demo_model_tool/validate",
+        auth=("admin", "password"),
+    )
+
+    assert created.status_code == 200
+    assert created.json()["module_name"] == "demo_model_tool"
+    assert (tmp_path / "generated_model_tools" / "demo_model_tool.py").exists()
+    assert created.json()["tool"]["valid"] is True
+    assert "demo_model_tool" in load_config(config_path).model_tools.enabled
+    assert invoked.status_code == 200
+    assert invoked.json()["invoked"] is True
+    assert invoked.json()["enabled"] is True
+    assert invoked.json()["arguments"] == {"topic": "widgets"}
+    assert invoked.json()["arguments_example"] == {"topic": "<topic>"}
+    assert "Demo model tool follow-up." in invoked.json()["followup_context"]
+    assert invoked.json()["details"]["arguments"] == {"topic": "widgets"}
+    assert validated.status_code == 200
+    assert validated.json()["valid"] is True
+    assert validated.json()["enabled"] is True

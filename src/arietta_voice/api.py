@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import importlib
 import json
 import os
 from pathlib import Path
@@ -23,13 +22,11 @@ from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
 from arietta_voice.llm import ChatModel, build_chat_model
 from arietta_voice.logging_utils import EventLogger
 from arietta_voice.model_tooling import maybe_generate_with_model_tools
-from arietta_voice.model_tools.base import ModelToolContext
-from arietta_voice.model_tools.registry import _tool_module_name as _model_tool_module_name
 from arietta_voice.models import ConversationTurn
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
-from arietta_voice.tool_admin import ToolAdmin
+from arietta_voice.tool_admin import ModelToolAdmin, ToolAdmin
 
 
 API_VERSION = "0.1.0"
@@ -78,6 +75,26 @@ class ToolCreateRequest(BaseModel):
     enable: bool = True
 
 
+class ModelToolInvokeRequest(BaseModel):
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelToolCreateRequest(BaseModel):
+    module_name: str = Field(min_length=1, max_length=80)
+    description: str = Field(
+        default="you need a custom model-called tool result before answering",
+        min_length=1,
+        max_length=600,
+    )
+    arguments_example: dict[str, Any] = Field(default_factory=dict)
+    followup_context: str = Field(
+        default="Custom model tool result. Use this result when composing the final answer.",
+        min_length=1,
+        max_length=4000,
+    )
+    enable: bool = True
+
+
 @dataclass(slots=True)
 class ChatResult:
     response: str
@@ -97,6 +114,11 @@ class AriettaApiService:
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.runtime_supervisor = RuntimeSupervisor(self.config, config_path=self.config_path)
         self.tool_admin = ToolAdmin(
+            self.config,
+            config_path=self.config_path,
+            knowledge_retriever=self.knowledge,
+        )
+        self.model_tool_admin = ModelToolAdmin(
             self.config,
             config_path=self.config_path,
             knowledge_retriever=self.knowledge,
@@ -308,6 +330,7 @@ class AriettaApiService:
         payload = build_knowledge_index(self.config.knowledge)
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
+        self.model_tool_admin.knowledge_retriever = self.knowledge
         self.event_logger.log("api_knowledge_index", **payload)
         return payload
 
@@ -351,6 +374,7 @@ class AriettaApiService:
         path.write_text(content, encoding="utf-8")
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
+        self.model_tool_admin.knowledge_retriever = self.knowledge
         payload = {
             "path": path.relative_to(self.config.knowledge.directory).as_posix(),
             "created": created,
@@ -367,51 +391,16 @@ class AriettaApiService:
         path.unlink()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
+        self.model_tool_admin.knowledge_retriever = self.knowledge
         payload = {"path": relative_path, "deleted": True}
         self.event_logger.log("api_knowledge_file_deleted", **payload)
         return payload
 
     def inspect_tools(self) -> dict[str, Any]:
         assistant_tools = self.tool_admin.inventory()
-        model_loaded: list[dict[str, Any]] = []
-        model_errors: list[dict[str, str]] = []
-        model_context = ModelToolContext(
-            config=self.config,
-            knowledge_retriever=self.knowledge if self.config.knowledge.enabled else None,
-        )
-        for tool_name in self.config.model_tools.enabled:
-            try:
-                module_name = _model_tool_module_name(tool_name)
-                module = importlib.import_module(module_name)
-                factory = getattr(module, "create_tool")
-                tool = factory(model_context)
-                if tool is None:
-                    continue
-                model_loaded.append(
-                    {
-                        "configured_name": tool_name,
-                        "name": tool.name,
-                        "module": module_name,
-                        "class": type(tool).__name__,
-                        "description": tool.description,
-                        "arguments_example": tool.arguments_example,
-                    }
-                )
-            except Exception as exc:
-                model_errors.append(
-                    {
-                        "configured_name": tool_name,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-
         return {
             "assistant_tools": assistant_tools,
-            "model_tools": {
-                "enabled": list(self.config.model_tools.enabled),
-                "loaded": model_loaded,
-                "errors": model_errors,
-            },
+            "model_tools": self.model_tool_admin.inventory(),
         }
 
     def probe_tools(self, text: str) -> dict[str, Any]:
@@ -452,6 +441,44 @@ class AriettaApiService:
         payload = self.tool_admin.reload()
         self.event_logger.log("api_tools_reloaded", enabled=payload["enabled"])
         return payload
+
+    def set_enabled_model_tools(self, enabled: list[str]) -> dict[str, Any]:
+        payload = self.model_tool_admin.set_enabled(enabled)
+        self.event_logger.log("api_model_tools_enabled_updated", enabled=payload["enabled"])
+        return payload
+
+    def invoke_model_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self.model_tool_admin.invoke_tool(tool_name, arguments)
+
+    def validate_model_tool(self, tool_name: str) -> dict[str, Any]:
+        return self.model_tool_admin.validate_tool(tool_name)
+
+    def create_model_tool(self, payload: ModelToolCreateRequest) -> dict[str, Any]:
+        result = self.model_tool_admin.create_tool(
+            module_name=payload.module_name,
+            description=payload.description,
+            arguments_example=payload.arguments_example,
+            followup_context=payload.followup_context,
+            enable=payload.enable,
+        )
+        self.event_logger.log(
+            "api_model_tool_created",
+            module_name=result["module_name"],
+            file=result["file"],
+            enabled=result["enabled"],
+        )
+        return result
+
+    def reload_model_tools(self) -> dict[str, Any]:
+        payload = self.model_tool_admin.reload()
+        self.event_logger.log("api_model_tools_reloaded", enabled=payload["enabled"])
+        return payload
+
+    def model_tool_instructions(self) -> dict[str, Any]:
+        return {
+            "enabled": list(self.config.model_tools.enabled),
+            "instruction_text": self.model_tool_admin.instruction_text(),
+        }
 
     def chat(self, request: ChatRequest) -> ChatResult:
         message = request.message.strip()
@@ -730,6 +757,67 @@ def create_app(
         _user: str = Depends(require_admin),
     ) -> dict[str, Any]:
         return svc().validate_tool(tool_name)
+
+    @app.post("/api/model-tools/enabled")
+    def api_model_tools_enabled(
+        payload: ToolEnabledRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().set_enabled_model_tools(payload.enabled)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/model-tools/create")
+    def api_model_tool_create(
+        payload: ModelToolCreateRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().create_model_tool(payload)
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/model-tools/reload")
+    def api_model_tools_reload(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().reload_model_tools()
+
+    @app.get("/api/model-tools/instructions")
+    def api_model_tool_instructions(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        try:
+            return svc().model_tool_instructions()
+        except Exception as exc:
+            service_obj = svc()
+            service_obj.last_error = f"{type(exc).__name__}: {exc}"
+            service_obj.event_logger.log(
+                "api_error",
+                route="/api/model-tools/instructions",
+                error=service_obj.last_error,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=service_obj.last_error,
+            ) from exc
+
+    @app.post("/api/model-tools/{tool_name}/invoke")
+    def api_invoke_model_tool(
+        tool_name: str,
+        payload: ModelToolInvokeRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().invoke_model_tool(tool_name, payload.arguments)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/model-tools/{tool_name}/validate")
+    def api_validate_model_tool(
+        tool_name: str,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        return svc().validate_model_tool(tool_name)
 
     @app.post("/api/knowledge/search")
     def api_knowledge_search(
@@ -1393,15 +1481,20 @@ ADMIN_HTML = """<!doctype html>
       font-weight: 700;
       text-transform: uppercase;
     }
-    #tools-create-response {
+    #tools-create-response,
+    #model-tools-create-context,
+    #model-tools-create-args,
+    #model-tools-arguments {
       min-height: 140px;
     }
-    #tools-result {
+    #tools-result,
+    #model-tools-result {
       margin-top: 8px;
       margin-bottom: 14px;
       max-height: 260px;
     }
-    #tools-result-title {
+    #tools-result-title,
+    #model-tools-result-title {
       margin-top: 12px;
       min-height: 22px;
     }
@@ -1676,8 +1769,51 @@ ADMIN_HTML = """<!doctype html>
           </div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h3>Model Requested Tools</h3><span class="muted">Read-only for now</span></div>
-          <div id="tools-model-content"></div>
+          <div class="tools-layout">
+            <div>
+              <div class="panel-head">
+                <h3>Model-Called Tools</h3>
+                <div class="tool-toolbar">
+                  <button class="button primary" id="model-tools-save-enabled">Save Enabled</button>
+                  <button class="button info" id="model-tools-reload">Reload API</button>
+                  <button class="button" id="model-tools-instructions">Preview Instructions</button>
+                </div>
+              </div>
+              <div class="status-row" id="model-tools-summary">No model tool registry loaded.</div>
+              <label class="tool-create-form" style="margin-top:14px">
+                <span>Invocation Arguments JSON</span>
+                <textarea id="model-tools-arguments">{}</textarea>
+              </label>
+              <div class="status-row" id="model-tools-result-title">No model tool action result yet.</div>
+              <pre id="model-tools-result">{}</pre>
+              <div id="tools-model-content"></div>
+            </div>
+            <div>
+              <div class="panel-head"><h3>New Model Tool</h3><button class="button primary" id="model-tools-create">Create</button></div>
+              <div class="tool-create-form">
+                <label>
+                  Module Name
+                  <input id="model-tools-create-name" placeholder="my_model_tool">
+                </label>
+                <label>
+                  Description
+                  <input id="model-tools-create-description" value="you need a custom model-called tool result before answering">
+                </label>
+                <label>
+                  Arguments Example JSON
+                  <textarea id="model-tools-create-args">{"topic":"<short topic>"}</textarea>
+                </label>
+                <label>
+                  Follow-up Context
+                  <textarea id="model-tools-create-context">Custom model tool result. Use this result when composing the final answer.</textarea>
+                </label>
+                <label class="tool-toggle" style="justify-content:flex-start;text-transform:none;font-weight:500;color:var(--ink)">
+                  <input id="model-tools-create-enable" type="checkbox" checked>
+                  Enable after creation
+                </label>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1991,19 +2127,7 @@ ADMIN_HTML = """<!doctype html>
         ? `<div class="tool-list">${records.map(renderToolCard).join("")}</div>`
         : `<p class="muted">No deterministic tools found.</p>`;
 
-      const modelRows = (payload.model_tools?.loaded || []).map((tool) => [
-        `<strong>${escapeHtml(tool.name)}</strong>`,
-        escapeHtml(tool.configured_name),
-        escapeHtml(tool.description)
-      ]);
-      const modelErrors = payload.model_tools?.errors || [];
-      const modelErrorHtml = modelErrors.length ? `<h3 style="margin-top:18px">Errors</h3>` + table(["Tool", "Error"], modelErrors.map((err) => [
-        escapeHtml(err.configured_name), `<span class="error">${escapeHtml(err.error)}</span>`
-      ])) : "";
-      $("#tools-model-content").innerHTML = `
-        ${modelRows.length ? table(["Name", "Config", "Description"], modelRows) : `<p class="muted">No model-requested tools loaded.</p>`}
-        ${modelErrorHtml}
-      `;
+      renderModelTools(payload.model_tools || { enabled: [], available: [], tools: [], load_errors: [] });
       markToolsClean();
     }
 
@@ -2042,6 +2166,62 @@ ADMIN_HTML = """<!doctype html>
       `;
     }
 
+    function renderModelTools(modelTools) {
+      const records = modelTools.tools || [];
+      const enabledCount = (modelTools.enabled || []).length;
+      const availableCount = (modelTools.available || []).length;
+      const invalidCount = (modelTools.load_errors || []).length;
+      $("#model-tools-summary").innerHTML = `
+        <span class="status-pill ok">${enabledCount} enabled</span>
+        <span class="status-pill">${availableCount} available</span>
+        <span class="status-pill ${invalidCount ? "bad" : "ok"}">${invalidCount} load errors</span>
+        <span class="muted">Directory: <code>${escapeHtml(modelTools.tools_directory || "")}</code></span>
+      `;
+      $("#tools-model-content").innerHTML = records.length
+        ? `<div class="tool-list">${records.map(renderModelToolCard).join("")}</div>`
+        : `<p class="muted">No model-called tools found.</p>`;
+      markModelToolsClean();
+    }
+
+    function renderModelToolCard(tool) {
+      const statusClass = tool.valid ? (tool.active ? "ok" : "warn") : "bad";
+      const enabled = Boolean(tool.enabled);
+      const checkboxDisabled = tool.valid ? "" : "disabled";
+      const statusText = tool.valid ? (tool.active ? "active" : "inactive") : "load error";
+      const availableText = tool.available ? "available" : "configured only";
+      const errorHtml = tool.error ? `<div class="tool-error">${escapeHtml(tool.error)}</div>` : "";
+      const args = tool.arguments_example ? JSON.stringify(tool.arguments_example) : "{}";
+      return `
+        <div class="tool-item ${enabled ? "enabled" : ""} ${tool.valid ? "" : "invalid"}">
+          <div>
+            <div class="tool-title">
+              <strong>${escapeHtml(tool.configured_name)}</strong>
+              <span class="status-pill ${statusClass}">${statusText}</span>
+              <span class="status-pill ${enabled ? "ok" : ""}">${enabled ? "enabled" : "disabled"}</span>
+              <span class="status-pill">${escapeHtml(availableText)}</span>
+            </div>
+            <div class="tool-meta">
+              Runtime: <code>${escapeHtml(tool.tool_name || "--")}</code><br>
+              Module: <code>${escapeHtml(tool.module || "--")}</code><br>
+              Class: <code>${escapeHtml(tool.class || "--")}</code><br>
+              Expected Args: <code>${escapeHtml(args)}</code><br>
+              ${escapeHtml(tool.description || "No description available.")}
+            </div>
+            ${errorHtml}
+          </div>
+          <div class="tool-actions">
+            <label class="tool-toggle">
+              <input class="model-tool-enabled" type="checkbox" data-tool="${escapeHtml(tool.configured_name)}" ${enabled ? "checked" : ""} ${checkboxDisabled}>
+              <span>${enabled ? "Enabled" : "Disabled"}</span>
+            </label>
+            <button class="button" data-model-tool-action="use-args" data-tool-name="${escapeHtml(tool.configured_name)}">Use Args</button>
+            <button class="button" data-model-tool-action="invoke" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.active ? "" : "disabled"}>Invoke</button>
+            <button class="button info" data-model-tool-action="validate" data-tool-name="${escapeHtml(tool.configured_name)}">Validate</button>
+          </div>
+        </div>
+      `;
+    }
+
     function markToolsDirty() {
       const button = $("#tools-save-enabled");
       button.classList.remove("primary");
@@ -2056,13 +2236,74 @@ ADMIN_HTML = """<!doctype html>
       button.textContent = "Save Enabled";
     }
 
+    function markModelToolsDirty() {
+      const button = $("#model-tools-save-enabled");
+      button.classList.remove("primary");
+      button.classList.add("warn");
+      button.textContent = "Save Changes";
+    }
+
+    function markModelToolsClean() {
+      const button = $("#model-tools-save-enabled");
+      button.classList.remove("warn");
+      button.classList.add("primary");
+      button.textContent = "Save Enabled";
+    }
+
     function toolPathName(name) {
       return encodeURIComponent(name);
+    }
+
+    function modelToolRecord(name) {
+      const records = state.lastToolsPayload?.model_tools?.tools || [];
+      return records.find((tool) => tool.configured_name === name) || null;
     }
 
     function setToolsResult(label, payload) {
       $("#tools-result-title").textContent = label;
       $("#tools-result").textContent = JSON.stringify(payload, null, 2);
+    }
+
+    function setModelToolsResult(label, payload) {
+      $("#model-tools-result-title").textContent = label;
+      $("#model-tools-result").textContent = typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload, null, 2);
+    }
+
+    function readJsonTextarea(selector) {
+      const text = $(selector).value.trim();
+      if (!text) return {};
+      return JSON.parse(text);
+    }
+
+    function writeJsonTextarea(selector, value) {
+      $(selector).value = JSON.stringify(value || {}, null, 2);
+    }
+
+    function argumentKeyMismatch(tool, argumentsPayload) {
+      const expected = tool?.arguments_example || {};
+      const expectedKeys = Object.keys(expected);
+      const providedKeys = Object.keys(argumentsPayload || {});
+      if (!expectedKeys.length && providedKeys.length) {
+        return {
+          tool: tool.configured_name,
+          expected_arguments: expected,
+          provided_arguments: argumentsPayload,
+          error: "This tool expects no arguments. Click Use Args to load {} before invoking."
+        };
+      }
+      const missingKeys = expectedKeys.filter((key) => !Object.prototype.hasOwnProperty.call(argumentsPayload, key));
+      if (missingKeys.length) {
+        return {
+          tool: tool.configured_name,
+          expected_arguments: expected,
+          provided_arguments: argumentsPayload,
+          missing_keys: missingKeys,
+          error: `This tool expects ${missingKeys.join(", ")} in the arguments JSON. Click Use Args to load the expected shape.`
+        };
+      }
+      return null;
     }
 
     async function saveToolEnabled() {
@@ -2144,6 +2385,105 @@ ADMIN_HTML = """<!doctype html>
       const payload = await api("/api/tools/reload", { method: "POST" });
       setToolsResult("Reload result", payload);
       await loadTools();
+    }
+
+    async function saveModelToolEnabled() {
+      const enabled = $$(".model-tool-enabled").filter((input) => input.checked).map((input) => input.dataset.tool);
+      const button = $("#model-tools-save-enabled");
+      button.disabled = true;
+      button.textContent = "Saving...";
+      try {
+        const payload = await api("/api/model-tools/enabled", {
+          method: "POST",
+          body: JSON.stringify({ enabled })
+        });
+        setModelToolsResult("Save result", { saved: true, enabled: payload.enabled });
+        await loadTools();
+        await loadDashboard({ silent: true });
+      } finally {
+        button.disabled = false;
+        if (button.textContent === "Saving...") markModelToolsDirty();
+      }
+    }
+
+    async function invokeModelTool(name) {
+      let argumentsPayload;
+      try {
+        argumentsPayload = readJsonTextarea("#model-tools-arguments");
+      } catch (error) {
+        setModelToolsResult("Invoke result", { error: `Invalid arguments JSON: ${error.message}`, tool: name });
+        return;
+      }
+      const tool = modelToolRecord(name);
+      const mismatch = argumentKeyMismatch(tool, argumentsPayload);
+      if (mismatch) {
+        setModelToolsResult(`Invoke check: ${name}`, mismatch);
+        return;
+      }
+      const payload = await api(`/api/model-tools/${toolPathName(name)}/invoke`, {
+        method: "POST",
+        body: JSON.stringify({ arguments: argumentsPayload })
+      });
+      setModelToolsResult(`Invoke result: ${name}`, payload);
+    }
+
+    function useModelToolArgs(name) {
+      const tool = modelToolRecord(name);
+      const args = tool?.arguments_example || {};
+      writeJsonTextarea("#model-tools-arguments", args);
+      setModelToolsResult(`Arguments loaded: ${name}`, {
+        tool: name,
+        arguments: args
+      });
+    }
+
+    async function validateModelTool(name) {
+      const payload = await api(`/api/model-tools/${toolPathName(name)}/validate`, { method: "POST" });
+      setModelToolsResult(`Validation result: ${name}`, payload);
+      await loadTools();
+    }
+
+    async function createModelTool() {
+      const button = $("#model-tools-create");
+      button.disabled = true;
+      button.textContent = "Creating...";
+      try {
+        let argumentsExample;
+        try {
+          argumentsExample = readJsonTextarea("#model-tools-create-args");
+        } catch (error) {
+          setModelToolsResult("Create result", { error: `Invalid arguments example JSON: ${error.message}` });
+          return;
+        }
+        const payload = await api("/api/model-tools/create", {
+          method: "POST",
+          body: JSON.stringify({
+            module_name: $("#model-tools-create-name").value.trim(),
+            description: $("#model-tools-create-description").value.trim(),
+            arguments_example: argumentsExample,
+            followup_context: $("#model-tools-create-context").value,
+            enable: $("#model-tools-create-enable").checked
+          })
+        });
+        setModelToolsResult(`Create result: ${payload.module_name}`, payload);
+        $("#model-tools-create-name").value = "";
+        await loadTools();
+        await loadDashboard({ silent: true });
+      } finally {
+        button.disabled = false;
+        button.textContent = "Create";
+      }
+    }
+
+    async function reloadModelTools() {
+      const payload = await api("/api/model-tools/reload", { method: "POST" });
+      setModelToolsResult("Reload result", payload);
+      await loadTools();
+    }
+
+    async function previewModelToolInstructions() {
+      const payload = await api("/api/model-tools/instructions");
+      setModelToolsResult("Instruction preview", payload.instruction_text || "No model-called tools are enabled.");
     }
 
     async function searchKnowledge() {
@@ -2345,6 +2685,20 @@ ADMIN_HTML = """<!doctype html>
       if (!target) return;
       if (target.dataset.toolAction === "probe") probeSingleTool(target.dataset.toolName).catch((error) => setError(error.message));
       if (target.dataset.toolAction === "validate") validateSingleTool(target.dataset.toolName).catch((error) => setError(error.message));
+    });
+    $("#model-tools-save-enabled").addEventListener("click", () => saveModelToolEnabled().catch((error) => setError(error.message)));
+    $("#model-tools-reload").addEventListener("click", () => reloadModelTools().catch((error) => setError(error.message)));
+    $("#model-tools-instructions").addEventListener("click", () => previewModelToolInstructions().catch((error) => setError(error.message)));
+    $("#model-tools-create").addEventListener("click", () => createModelTool().catch((error) => setError(error.message)));
+    $("#tools-model-content").addEventListener("change", (event) => {
+      if (event.target.classList.contains("model-tool-enabled")) markModelToolsDirty();
+    });
+    $("#tools-model-content").addEventListener("click", (event) => {
+      const target = event.target.closest("[data-model-tool-action]");
+      if (!target) return;
+      if (target.dataset.modelToolAction === "use-args") useModelToolArgs(target.dataset.toolName);
+      if (target.dataset.modelToolAction === "invoke") invokeModelTool(target.dataset.toolName).catch((error) => setError(error.message));
+      if (target.dataset.modelToolAction === "validate") validateModelTool(target.dataset.toolName).catch((error) => setError(error.message));
     });
     $("#knowledge-search").addEventListener("click", () => searchKnowledge().catch((error) => setError(error.message)));
     $("#knowledge-query").addEventListener("keydown", (event) => { if (event.key === "Enter") searchKnowledge().catch((error) => setError(error.message)); });
