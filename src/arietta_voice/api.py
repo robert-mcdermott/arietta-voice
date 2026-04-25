@@ -866,6 +866,7 @@ ADMIN_HTML = """<!doctype html>
       gap: 10px;
       color: var(--muted);
       font-size: 13px;
+      flex-wrap: wrap;
     }
     .dot {
       width: 9px;
@@ -902,11 +903,43 @@ ADMIN_HTML = """<!doctype html>
       font-weight: 650;
     }
     .button.primary:hover { background: var(--accent-strong); }
-    .button.danger {
-      border-color: #e4aaa5;
-      color: var(--bad);
+    .button.success {
+      background: var(--good);
+      border-color: var(--good);
+      color: #ffffff;
+      font-weight: 650;
     }
-    .button.danger:hover { background: #fff3f1; }
+    .button.success:hover { background: #115d35; }
+    .button.danger {
+      background: var(--bad);
+      border-color: var(--bad);
+      color: #ffffff;
+      font-weight: 650;
+    }
+    .button.danger:hover { background: #8f1d14; }
+    .button.warn {
+      background: var(--warn);
+      border-color: var(--warn);
+      color: #ffffff;
+      font-weight: 650;
+    }
+    .button.warn:hover { background: #835000; }
+    .button.info {
+      background: #2f5f78;
+      border-color: #2f5f78;
+      color: #ffffff;
+      font-weight: 650;
+    }
+    .button.info:hover { background: #244b5f; }
+    .button:disabled,
+    .button:disabled:hover {
+      background: #eef1ed;
+      border-color: var(--line);
+      color: #8b9489;
+      cursor: not-allowed;
+      opacity: 0.8;
+      font-weight: 500;
+    }
     .view { display: none; }
     .view.active { display: block; }
     .grid {
@@ -1024,6 +1057,9 @@ ADMIN_HTML = """<!doctype html>
       gap: 18px;
       align-items: start;
     }
+    .knowledge-layout {
+      grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+    }
     .chat-log {
       display: grid;
       gap: 10px;
@@ -1051,9 +1087,38 @@ ADMIN_HTML = """<!doctype html>
       gap: 10px;
     }
     .knowledge-editor {
-      min-height: 360px;
+      min-height: 460px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 13px;
+    }
+    .file-list {
+      display: grid;
+      gap: 8px;
+    }
+    .file-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfa;
+    }
+    .file-item strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px;
+    }
+    .file-item .meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .row-card {
       padding: 12px;
@@ -1083,6 +1148,7 @@ ADMIN_HTML = """<!doctype html>
     }
     .muted { color: var(--muted); }
     .error { color: var(--bad); }
+    #poll-status { color: var(--muted); }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
       aside {
@@ -1124,9 +1190,9 @@ ADMIN_HTML = """<!doctype html>
       <div class="topbar">
         <div>
           <h2 id="view-title">Dashboard</h2>
-          <div class="status-row"><span id="health-dot" class="dot"></span><span id="health-text">Checking</span></div>
+          <div class="status-row"><span id="health-dot" class="dot"></span><span id="health-text">Checking</span><span id="poll-status">Auto-refresh on</span></div>
         </div>
-        <button class="button" id="refresh">Refresh</button>
+        <button class="button info" id="refresh">Refresh</button>
       </div>
 
       <section id="dashboard" class="view active">
@@ -1140,10 +1206,10 @@ ADMIN_HTML = """<!doctype html>
           <div class="panel-head">
             <h3>Voice Runtime</h3>
             <div class="form-row" style="margin:0">
-              <button class="button primary" id="runtime-start">Start</button>
-              <button class="button" id="runtime-stop">Stop</button>
-              <button class="button" id="runtime-restart">Restart</button>
-              <button class="button" id="runtime-refresh">Refresh</button>
+              <button class="button success" id="runtime-start">Start</button>
+              <button class="button danger" id="runtime-stop">Stop</button>
+              <button class="button warn" id="runtime-restart">Restart</button>
+              <button class="button info" id="runtime-refresh">Refresh</button>
             </div>
           </div>
           <div id="runtime-detail"></div>
@@ -1178,7 +1244,7 @@ ADMIN_HTML = """<!doctype html>
       </section>
 
       <section id="knowledge" class="view">
-        <div class="split">
+        <div class="split knowledge-layout">
           <div class="panel">
             <div class="panel-head"><h3>Knowledge Files</h3><button class="button" id="knowledge-files-refresh">Refresh</button></div>
             <div class="form-row">
@@ -1232,7 +1298,17 @@ ADMIN_HTML = """<!doctype html>
     </main>
   </div>
   <script>
-    const state = { chatHistory: [], currentKnowledgeFile: null };
+    const state = {
+      chatHistory: [],
+      currentKnowledgeFile: null,
+      currentView: "dashboard",
+      dashboardLoading: false,
+      activeViewLoading: false,
+      runtimeActionPending: null,
+      lastDashboardRefreshAt: null
+    };
+    const DASHBOARD_POLL_MS = 3000;
+    const ACTIVE_VIEW_POLL_MS = 9000;
     const viewTitles = {
       dashboard: "Dashboard",
       chat: "Chat",
@@ -1268,6 +1344,14 @@ ADMIN_HTML = """<!doctype html>
       $("#health-text").textContent = message;
     }
 
+    function setPollStatus(message) {
+      $("#poll-status").textContent = message;
+    }
+
+    function currentTimeLabel() {
+      return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
     function formatSeconds(seconds) {
       const value = Number(seconds || 0);
       if (value < 90) return `${value}s`;
@@ -1287,31 +1371,42 @@ ADMIN_HTML = """<!doctype html>
       })[char]);
     }
 
-    async function loadDashboard() {
-      const [health, currentState, diagnostics, logs] = await Promise.all([
-        api("/api/health"),
-        api("/api/state"),
-        api("/api/diagnostics"),
-        api("/api/logs?limit=6")
-      ]);
-      setHealth(health);
-      $("#metric-assistant").textContent = currentState.assistant.name;
-      $("#metric-wake").textContent = currentState.assistant.wake_enabled ? currentState.assistant.wake_words.join(", ") : "wake disabled";
-      const runtime = currentState.runtime;
-      $("#metric-runtime").textContent = runtime.state;
-      $("#metric-uptime").textContent = runtime.is_running
-        ? `pid ${runtime.process_id || "--"} · heartbeat ${runtime.heartbeat_age_seconds ?? 0}s`
-        : runtime.note;
-      $("#metric-model").textContent = currentState.models.chat_model;
-      $("#metric-provider").textContent = currentState.models.chat_provider;
-      $("#metric-knowledge").textContent = currentState.knowledge.backend;
-      $("#metric-index").textContent = currentState.knowledge.loaded ? "loaded" : currentState.knowledge.directory;
-      renderRuntime(runtime);
-      renderDiagnostics(diagnostics);
-      renderRecentEvents(logs.items || []);
+    async function loadDashboard(options = {}) {
+      if (state.dashboardLoading) return;
+      state.dashboardLoading = true;
+      const silent = Boolean(options.silent);
+      if (!silent) setPollStatus("Refreshing...");
+      try {
+        const [health, currentState, diagnostics, logs] = await Promise.all([
+          api("/api/health"),
+          api("/api/state"),
+          api("/api/diagnostics"),
+          api("/api/logs?limit=6")
+        ]);
+        setHealth(health);
+        $("#metric-assistant").textContent = currentState.assistant.name;
+        $("#metric-wake").textContent = currentState.assistant.wake_enabled ? currentState.assistant.wake_words.join(", ") : "wake disabled";
+        const runtime = currentState.runtime;
+        $("#metric-runtime").textContent = runtime.state;
+        $("#metric-uptime").textContent = runtime.is_running
+          ? `pid ${runtime.process_id || "--"} · heartbeat ${runtime.heartbeat_age_seconds ?? 0}s`
+          : runtime.note;
+        $("#metric-model").textContent = currentState.models.chat_model;
+        $("#metric-provider").textContent = currentState.models.chat_provider;
+        $("#metric-knowledge").textContent = currentState.knowledge.backend;
+        $("#metric-index").textContent = currentState.knowledge.loaded ? "loaded" : currentState.knowledge.directory;
+        renderRuntime(runtime);
+        renderDiagnostics(diagnostics);
+        renderRecentEvents(logs.items || []);
+        state.lastDashboardRefreshAt = new Date();
+        setPollStatus(`Updated ${currentTimeLabel()}`);
+      } finally {
+        state.dashboardLoading = false;
+      }
     }
 
     function renderRuntime(runtime) {
+      updateRuntimeControls(runtime);
       const rows = [
         ["State", `<strong>${escapeHtml(runtime.state)}</strong>`],
         ["Lifecycle", escapeHtml(runtime.lifecycle)],
@@ -1330,10 +1425,66 @@ ADMIN_HTML = """<!doctype html>
       $("#runtime-detail").innerHTML = table(["Field", "Value"], rows);
     }
 
+    function setButtonTone(button, tone) {
+      button.className = `button ${tone || ""}`.trim();
+    }
+
+    function updateRuntimeControls(runtime) {
+      const start = $("#runtime-start");
+      const stop = $("#runtime-stop");
+      const restart = $("#runtime-restart");
+      const refresh = $("#runtime-refresh");
+      if (state.runtimeActionPending) {
+        setButtonTone(start, "");
+        setButtonTone(stop, "");
+        setButtonTone(restart, "");
+        setButtonTone(refresh, "info");
+        start.disabled = true;
+        stop.disabled = true;
+        restart.disabled = true;
+        refresh.disabled = false;
+        start.textContent = state.runtimeActionPending === "start" ? "Starting..." : "Start";
+        stop.textContent = state.runtimeActionPending === "stop" ? "Stopping..." : "Stop";
+        restart.textContent = state.runtimeActionPending === "restart" ? "Restarting..." : "Restart";
+        return;
+      }
+      const managedRunning = Boolean(runtime.managed_process_running);
+      const starting = runtime.lifecycle === "starting" || (managedRunning && !runtime.is_running);
+      const canStart = !managedRunning && (!runtime.is_running || runtime.is_stale || runtime.lifecycle === "stopped");
+      const canStop = managedRunning;
+      const canRestart = managedRunning && !starting;
+
+      setButtonTone(start, canStart ? "success" : "");
+      setButtonTone(stop, canStop ? "danger" : "");
+      setButtonTone(restart, canRestart ? "warn" : "");
+      setButtonTone(refresh, "info");
+
+      start.disabled = !canStart;
+      stop.disabled = !canStop;
+      restart.disabled = !canRestart;
+      refresh.disabled = false;
+
+      start.textContent = starting ? "Starting" : "Start";
+      stop.textContent = managedRunning ? "Stop" : "Stop";
+      restart.textContent = "Restart";
+
+      start.title = canStart ? "Start an API-managed voice runtime" : "A voice runtime is already running";
+      stop.title = canStop ? "Stop the API-managed voice runtime" : "Only API-managed runtimes can be stopped here";
+      restart.title = canRestart ? "Restart the API-managed voice runtime" : "Restart is available after the API starts the runtime";
+      refresh.title = "Refresh runtime status now";
+    }
+
     async function runtimeAction(action) {
-      const payload = await api(`/api/runtime/${action}`, { method: "POST" });
-      $("#health-text").textContent = payload.message || `Runtime ${action} requested`;
-      await loadDashboard();
+      state.runtimeActionPending = action;
+      ["runtime-start", "runtime-stop", "runtime-restart"].forEach((id) => { $("#" + id).disabled = true; });
+      setPollStatus(`${action} requested...`);
+      try {
+        const payload = await api(`/api/runtime/${action}`, { method: "POST" });
+        $("#health-text").textContent = payload.message || `Runtime ${action} requested`;
+      } finally {
+        state.runtimeActionPending = null;
+        await loadDashboard({ silent: true });
+      }
     }
 
     function renderDiagnostics(payload) {
@@ -1432,14 +1583,17 @@ ADMIN_HTML = """<!doctype html>
 
     async function loadKnowledgeFiles() {
       const payload = await api("/api/knowledge/files");
-      const rows = (payload.files || []).map((file) => [
-        `<button class="button" data-knowledge-file="${escapeHtml(file.path)}">Open</button>`,
-        `<strong>${escapeHtml(file.path)}</strong>`,
-        escapeHtml(file.size_bytes),
-        escapeHtml(file.updated_at)
-      ]);
-      $("#knowledge-file-list").innerHTML = rows.length
-        ? table(["", "Path", "Bytes", "Updated"], rows)
+      const items = (payload.files || []).map((file) => `
+        <div class="file-item">
+          <div>
+            <strong title="${escapeHtml(file.path)}">${escapeHtml(file.path)}</strong>
+            <div class="meta">${escapeHtml(file.size_bytes)} bytes · ${escapeHtml(file.updated_at)}</div>
+          </div>
+          <button class="button" data-knowledge-file="${escapeHtml(file.path)}">Open</button>
+        </div>
+      `).join("");
+      $("#knowledge-file-list").innerHTML = items
+        ? `<div class="file-list">${items}</div>`
         : `<p class="muted">No knowledge files yet.</p>`;
     }
 
@@ -1527,6 +1681,7 @@ ADMIN_HTML = """<!doctype html>
     }
 
     function switchView(view) {
+      state.currentView = view;
       $$(".nav-button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
       $$(".view").forEach((section) => section.classList.toggle("active", section.id === view));
       $("#view-title").textContent = viewTitles[view] || "Dashboard";
@@ -1534,6 +1689,21 @@ ADMIN_HTML = """<!doctype html>
       if (view === "logs") loadLogs().catch((error) => setError(error.message));
       if (view === "tools") loadTools().catch((error) => setError(error.message));
       if (view === "knowledge") loadKnowledgeFiles().catch((error) => setError(error.message));
+    }
+
+    async function refreshActiveView() {
+      if (state.activeViewLoading) return;
+      state.activeViewLoading = true;
+      try {
+        if (state.currentView === "logs") await loadLogs();
+        if (state.currentView === "tools") await loadTools();
+        if (state.currentView === "config") await loadConfig();
+        if (state.currentView === "knowledge" && !state.currentKnowledgeFile) await loadKnowledgeFiles();
+      } catch (error) {
+        setError(error.message);
+      } finally {
+        state.activeViewLoading = false;
+      }
     }
 
     $$(".nav-button").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
@@ -1563,6 +1733,19 @@ ADMIN_HTML = """<!doctype html>
     $("#chat-clear").addEventListener("click", () => { state.chatHistory = []; renderChat(); $("#chat-meta").textContent = "{}"; });
     $("#chat-message").addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendChat().catch((error) => setError(error.message));
+    });
+
+    setInterval(() => {
+      if (!document.hidden) loadDashboard({ silent: true }).catch((error) => setError(error.message));
+    }, DASHBOARD_POLL_MS);
+    setInterval(() => {
+      if (!document.hidden) refreshActiveView();
+    }, ACTIVE_VIEW_POLL_MS);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        loadDashboard({ silent: true }).catch((error) => setError(error.message));
+        refreshActiveView();
+      }
     });
 
     loadDashboard().catch((error) => setError(error.message));
