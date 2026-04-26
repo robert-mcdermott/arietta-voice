@@ -114,9 +114,14 @@ class ToolAdmin:
         }
         try:
             normalized = _normalize_configured_tool_name(tool_name)
-            record["enabled"] = normalized in _unique_tool_names(self.config.tools.enabled)
-            module, module_name, file_path = self._load_module(normalized)
             record["configured_name"] = normalized
+            record["enabled"] = normalized in _unique_tool_names(self.config.tools.enabled)
+            if "." not in normalized:
+                candidate = self.tools_directory / f"{normalized}.py"
+                if candidate.exists():
+                    record["available"] = True
+                    record["file"] = str(candidate.resolve())
+            module, module_name, file_path = self._load_module(normalized)
             record["module"] = module_name
             record["file"] = str(file_path) if file_path is not None else None
             record["available"] = file_path is not None or "." in normalized
@@ -215,6 +220,28 @@ class ToolAdmin:
     def reload(self) -> dict[str, Any]:
         importlib.invalidate_caches()
         return self.inventory()
+
+    def read_source(self, tool_name: str) -> dict[str, Any]:
+        normalized, path = _resolve_local_tool_source(self.tools_directory, tool_name)
+        return {
+            "configured_name": normalized,
+            "enabled": normalized in _unique_tool_names(self.config.tools.enabled),
+            "file": str(path),
+            "content": path.read_text(encoding="utf-8"),
+            "tool": self.validate_tool(normalized),
+        }
+
+    def write_source(self, tool_name: str, content: str) -> dict[str, Any]:
+        normalized, path = _resolve_local_tool_source(self.tools_directory, tool_name)
+        path.write_text(content, encoding="utf-8")
+        importlib.invalidate_caches()
+        return {
+            "saved": True,
+            "configured_name": normalized,
+            "enabled": normalized in _unique_tool_names(self.config.tools.enabled),
+            "file": str(path),
+            "tool": self.validate_tool(normalized),
+        }
 
     def _load_module(self, tool_name: str) -> tuple[ModuleType, str, Path | None]:
         module_name = _tool_module_name(tool_name)
@@ -365,9 +392,14 @@ class ModelToolAdmin:
         }
         try:
             normalized = _normalize_configured_tool_name(tool_name)
-            record["enabled"] = normalized in _unique_tool_names(self.config.model_tools.enabled)
-            module, module_name, file_path = self._load_module(normalized)
             record["configured_name"] = normalized
+            record["enabled"] = normalized in _unique_tool_names(self.config.model_tools.enabled)
+            if "." not in normalized:
+                candidate = self.tools_directory / f"{normalized}.py"
+                if candidate.exists():
+                    record["available"] = True
+                    record["file"] = str(candidate.resolve())
+            module, module_name, file_path = self._load_module(normalized)
             record["module"] = module_name
             record["file"] = str(file_path) if file_path is not None else None
             record["available"] = file_path is not None or "." in normalized
@@ -499,6 +531,28 @@ class ModelToolAdmin:
         importlib.invalidate_caches()
         return self.inventory()
 
+    def read_source(self, tool_name: str) -> dict[str, Any]:
+        normalized, path = _resolve_local_tool_source(self.tools_directory, tool_name)
+        return {
+            "configured_name": normalized,
+            "enabled": normalized in _unique_tool_names(self.config.model_tools.enabled),
+            "file": str(path),
+            "content": path.read_text(encoding="utf-8"),
+            "tool": self.validate_tool(normalized),
+        }
+
+    def write_source(self, tool_name: str, content: str) -> dict[str, Any]:
+        normalized, path = _resolve_local_tool_source(self.tools_directory, tool_name)
+        path.write_text(content, encoding="utf-8")
+        importlib.invalidate_caches()
+        return {
+            "saved": True,
+            "configured_name": normalized,
+            "enabled": normalized in _unique_tool_names(self.config.model_tools.enabled),
+            "file": str(path),
+            "tool": self.validate_tool(normalized),
+        }
+
     def instruction_text(self) -> str | None:
         registry = ModelToolRegistry(
             self.config,
@@ -595,6 +649,21 @@ def _unique_tool_names(values: list[str] | tuple[str, ...]) -> list[str]:
         names.append(name)
         seen.add(name)
     return names
+
+
+def _resolve_local_tool_source(tools_directory: Path, tool_name: str) -> tuple[str, Path]:
+    normalized = _normalize_configured_tool_name(tool_name)
+    if "." in normalized:
+        raise ValueError("Only local tool modules can be edited from the admin console.")
+    root = tools_directory.resolve()
+    path = (root / f"{normalized}.py").resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Tool source path must stay inside the tool directory.") from exc
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"Tool source for '{normalized}' was not found.")
+    return normalized, path
 
 
 def _load_module_from_file(module_name: str, path: Path) -> ModuleType:

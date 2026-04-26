@@ -75,6 +75,10 @@ class ToolCreateRequest(BaseModel):
     enable: bool = True
 
 
+class ToolSourceWriteRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=1_000_000)
+
+
 class ModelToolInvokeRequest(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
@@ -442,6 +446,19 @@ class AriettaApiService:
         self.event_logger.log("api_tools_reloaded", enabled=payload["enabled"])
         return payload
 
+    def read_tool_source(self, tool_name: str) -> dict[str, Any]:
+        return self.tool_admin.read_source(tool_name)
+
+    def write_tool_source(self, tool_name: str, content: str) -> dict[str, Any]:
+        payload = self.tool_admin.write_source(tool_name, content)
+        self.event_logger.log(
+            "api_tool_source_saved",
+            configured_name=payload["configured_name"],
+            file=payload["file"],
+            valid=payload["tool"].get("valid"),
+        )
+        return payload
+
     def set_enabled_model_tools(self, enabled: list[str]) -> dict[str, Any]:
         payload = self.model_tool_admin.set_enabled(enabled)
         self.event_logger.log("api_model_tools_enabled_updated", enabled=payload["enabled"])
@@ -472,6 +489,19 @@ class AriettaApiService:
     def reload_model_tools(self) -> dict[str, Any]:
         payload = self.model_tool_admin.reload()
         self.event_logger.log("api_model_tools_reloaded", enabled=payload["enabled"])
+        return payload
+
+    def read_model_tool_source(self, tool_name: str) -> dict[str, Any]:
+        return self.model_tool_admin.read_source(tool_name)
+
+    def write_model_tool_source(self, tool_name: str, content: str) -> dict[str, Any]:
+        payload = self.model_tool_admin.write_source(tool_name, content)
+        self.event_logger.log(
+            "api_model_tool_source_saved",
+            configured_name=payload["configured_name"],
+            file=payload["file"],
+            valid=payload["tool"].get("valid"),
+        )
         return payload
 
     def model_tool_instructions(self) -> dict[str, Any]:
@@ -740,6 +770,31 @@ def create_app(
     def api_tools_reload(_user: str = Depends(require_admin)) -> dict[str, Any]:
         return svc().reload_tools()
 
+    @app.get("/api/tools/{tool_name}/source")
+    def api_tool_source_read(
+        tool_name: str,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().read_tool_source(tool_name)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/tools/{tool_name}/source")
+    def api_tool_source_write(
+        tool_name: str,
+        payload: ToolSourceWriteRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().write_tool_source(tool_name, payload.content)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     @app.post("/api/tools/{tool_name}/probe")
     def api_probe_tool(
         tool_name: str,
@@ -783,6 +838,31 @@ def create_app(
     @app.post("/api/model-tools/reload")
     def api_model_tools_reload(_user: str = Depends(require_admin)) -> dict[str, Any]:
         return svc().reload_model_tools()
+
+    @app.get("/api/model-tools/{tool_name}/source")
+    def api_model_tool_source_read(
+        tool_name: str,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().read_model_tool_source(tool_name)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.put("/api/model-tools/{tool_name}/source")
+    def api_model_tool_source_write(
+        tool_name: str,
+        payload: ToolSourceWriteRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().write_model_tool_source(tool_name, payload.content)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/api/model-tools/instructions")
     def api_model_tool_instructions(_user: str = Depends(require_admin)) -> dict[str, Any]:
@@ -1498,6 +1578,30 @@ ADMIN_HTML = """<!doctype html>
       margin-top: 12px;
       min-height: 22px;
     }
+    .source-editor {
+      min-height: 520px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      tab-size: 4;
+    }
+    .source-test-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+      gap: 14px;
+      align-items: start;
+      margin-bottom: 14px;
+    }
+    .source-test-grid label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .source-test-grid textarea {
+      min-height: 90px;
+    }
     .chat-log {
       display: grid;
       gap: 10px;
@@ -1599,6 +1703,7 @@ ADMIN_HTML = """<!doctype html>
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .split { grid-template-columns: 1fr; }
       .tools-layout { grid-template-columns: 1fr; }
+      .source-test-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 620px) {
       main { padding: 18px; }
@@ -1815,6 +1920,32 @@ ADMIN_HTML = """<!doctype html>
             </div>
           </div>
         </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Advanced Source Editor</h3>
+            <div class="tool-toolbar">
+              <button class="button primary" id="tool-source-save">Save Source</button>
+              <button class="button info" id="tool-source-validate">Validate</button>
+              <button class="button" id="tool-source-test">Probe / Invoke</button>
+              <button class="button info" id="tool-source-reload">Reload API</button>
+              <button class="button warn" id="tool-source-restart-runtime">Restart Runtime</button>
+            </div>
+          </div>
+          <div class="status-row" id="tool-source-meta">Open a tool source file from a tool card.</div>
+          <div class="source-test-grid">
+            <label>
+              Deterministic Probe Text
+              <input id="tool-source-test-text" placeholder="Sample text for deterministic tools">
+            </label>
+            <label>
+              Model Tool Arguments JSON
+              <textarea id="tool-source-test-args">{}</textarea>
+            </label>
+          </div>
+          <textarea id="tool-source-content" class="source-editor" spellcheck="false" placeholder="Click Edit Source on a deterministic or model-called tool."></textarea>
+          <div class="status-row" id="tool-source-result-title">No source action result yet.</div>
+          <pre id="tool-source-result">{}</pre>
+        </div>
       </section>
 
       <section id="logs" class="view">
@@ -1855,6 +1986,12 @@ ADMIN_HTML = """<!doctype html>
       logsLimit: 50,
       logsTotal: 0,
       lastToolsPayload: null,
+      sourceEditor: {
+        kind: null,
+        tool: null,
+        file: null,
+        dirty: false
+      },
       lastDashboardRefreshAt: null
     };
     const DASHBOARD_POLL_MS = 3000;
@@ -2161,6 +2298,7 @@ ADMIN_HTML = """<!doctype html>
             </label>
             <button class="button" data-tool-action="probe" data-tool-name="${escapeHtml(tool.configured_name)}">Probe</button>
             <button class="button info" data-tool-action="validate" data-tool-name="${escapeHtml(tool.configured_name)}">Validate</button>
+            <button class="button" data-tool-action="edit-source" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.source === "local" && tool.available ? "" : "disabled"}>Edit Source</button>
           </div>
         </div>
       `;
@@ -2217,6 +2355,7 @@ ADMIN_HTML = """<!doctype html>
             <button class="button" data-model-tool-action="use-args" data-tool-name="${escapeHtml(tool.configured_name)}">Use Args</button>
             <button class="button" data-model-tool-action="invoke" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.active ? "" : "disabled"}>Invoke</button>
             <button class="button info" data-model-tool-action="validate" data-tool-name="${escapeHtml(tool.configured_name)}">Validate</button>
+            <button class="button" data-model-tool-action="edit-source" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.source === "local" && tool.available ? "" : "disabled"}>Edit Source</button>
           </div>
         </div>
       `;
@@ -2279,6 +2418,130 @@ ADMIN_HTML = """<!doctype html>
 
     function writeJsonTextarea(selector, value) {
       $(selector).value = JSON.stringify(value || {}, null, 2);
+    }
+
+    function sourceEndpoint(kind, tool, suffix = "source") {
+      const base = kind === "model" ? "/api/model-tools" : "/api/tools";
+      return `${base}/${toolPathName(tool)}/${suffix}`;
+    }
+
+    function setSourceResult(label, payload) {
+      $("#tool-source-result-title").textContent = label;
+      $("#tool-source-result").textContent = typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload, null, 2);
+    }
+
+    function updateSourceControls() {
+      const hasSource = Boolean(state.sourceEditor.kind && state.sourceEditor.tool);
+      $("#tool-source-save").disabled = !hasSource;
+      $("#tool-source-validate").disabled = !hasSource;
+      $("#tool-source-test").disabled = !hasSource;
+      $("#tool-source-reload").disabled = !hasSource;
+      $("#tool-source-restart-runtime").disabled = !hasSource;
+      const label = hasSource
+        ? `${state.sourceEditor.kind === "model" ? "Model-called" : "Deterministic"} tool: ${state.sourceEditor.tool}`
+        : "Open a tool source file from a tool card.";
+      const dirty = state.sourceEditor.dirty ? " · unsaved changes" : "";
+      const file = state.sourceEditor.file ? ` · ${state.sourceEditor.file}` : "";
+      $("#tool-source-meta").innerHTML = `${escapeHtml(label)}${escapeHtml(dirty)}${file ? ` · <code>${escapeHtml(state.sourceEditor.file)}</code>` : ""}`;
+    }
+
+    async function openToolSource(kind, name) {
+      const payload = await api(sourceEndpoint(kind, name));
+      state.sourceEditor = {
+        kind,
+        tool: name,
+        file: payload.file,
+        dirty: false
+      };
+      $("#tool-source-content").value = payload.content;
+      if (kind === "tool") {
+        $("#tool-source-test-text").value = $("#tools-probe-text").value || "";
+      } else {
+        writeJsonTextarea("#tool-source-test-args", payload.tool?.arguments_example || {});
+      }
+      updateSourceControls();
+      setSourceResult(`Source loaded: ${name}`, {
+        configured_name: payload.configured_name,
+        enabled: payload.enabled,
+        file: payload.file,
+        valid: payload.tool?.valid,
+        active: payload.tool?.active,
+        error: payload.tool?.error
+      });
+      $("#tool-source-content").focus();
+    }
+
+    async function saveToolSource() {
+      const editor = state.sourceEditor;
+      if (!editor.kind || !editor.tool) return;
+      const payload = await api(sourceEndpoint(editor.kind, editor.tool), {
+        method: "PUT",
+        body: JSON.stringify({ content: $("#tool-source-content").value })
+      });
+      state.sourceEditor.dirty = false;
+      updateSourceControls();
+      setSourceResult(`Source saved: ${editor.tool}`, payload);
+      await loadTools();
+    }
+
+    async function validateToolSource() {
+      const editor = state.sourceEditor;
+      if (!editor.kind || !editor.tool) return;
+      const endpoint = editor.kind === "model"
+        ? `/api/model-tools/${toolPathName(editor.tool)}/validate`
+        : `/api/tools/${toolPathName(editor.tool)}/validate`;
+      const payload = await api(endpoint, { method: "POST" });
+      setSourceResult(`Validation result: ${editor.tool}`, payload);
+      await loadTools();
+    }
+
+    async function testToolSource() {
+      const editor = state.sourceEditor;
+      if (!editor.kind || !editor.tool) return;
+      if (editor.kind === "model") {
+        let argumentsPayload;
+        try {
+          argumentsPayload = readJsonTextarea("#tool-source-test-args");
+        } catch (error) {
+          setSourceResult("Invoke result", { error: `Invalid arguments JSON: ${error.message}`, tool: editor.tool });
+          return;
+        }
+        const tool = modelToolRecord(editor.tool);
+        const mismatch = argumentKeyMismatch(tool, argumentsPayload);
+        if (mismatch) {
+          setSourceResult(`Invoke check: ${editor.tool}`, mismatch);
+          return;
+        }
+        const payload = await api(`/api/model-tools/${toolPathName(editor.tool)}/invoke`, {
+          method: "POST",
+          body: JSON.stringify({ arguments: argumentsPayload })
+        });
+        setSourceResult(`Invoke result: ${editor.tool}`, payload);
+        return;
+      }
+
+      const text = $("#tool-source-test-text").value.trim();
+      if (!text) {
+        setSourceResult("Probe result", { error: "Enter sample text before probing.", tool: editor.tool });
+        return;
+      }
+      const payload = await api(`/api/tools/${toolPathName(editor.tool)}/probe`, {
+        method: "POST",
+        body: JSON.stringify({ text })
+      });
+      setSourceResult(`Probe result: ${editor.tool}`, payload);
+    }
+
+    async function reloadSourceToolFamily() {
+      const editor = state.sourceEditor;
+      if (!editor.kind || !editor.tool) return;
+      const payload = editor.kind === "model"
+        ? await api("/api/model-tools/reload", { method: "POST" })
+        : await api("/api/tools/reload", { method: "POST" });
+      setSourceResult(`Reload result: ${editor.kind === "model" ? "model-called tools" : "deterministic tools"}`, payload);
+      await loadTools();
     }
 
     function argumentKeyMismatch(tool, argumentsPayload) {
@@ -2685,6 +2948,7 @@ ADMIN_HTML = """<!doctype html>
       if (!target) return;
       if (target.dataset.toolAction === "probe") probeSingleTool(target.dataset.toolName).catch((error) => setError(error.message));
       if (target.dataset.toolAction === "validate") validateSingleTool(target.dataset.toolName).catch((error) => setError(error.message));
+      if (target.dataset.toolAction === "edit-source") openToolSource("tool", target.dataset.toolName).catch((error) => setError(error.message));
     });
     $("#model-tools-save-enabled").addEventListener("click", () => saveModelToolEnabled().catch((error) => setError(error.message)));
     $("#model-tools-reload").addEventListener("click", () => reloadModelTools().catch((error) => setError(error.message)));
@@ -2699,7 +2963,18 @@ ADMIN_HTML = """<!doctype html>
       if (target.dataset.modelToolAction === "use-args") useModelToolArgs(target.dataset.toolName);
       if (target.dataset.modelToolAction === "invoke") invokeModelTool(target.dataset.toolName).catch((error) => setError(error.message));
       if (target.dataset.modelToolAction === "validate") validateModelTool(target.dataset.toolName).catch((error) => setError(error.message));
+      if (target.dataset.modelToolAction === "edit-source") openToolSource("model", target.dataset.toolName).catch((error) => setError(error.message));
     });
+    $("#tool-source-content").addEventListener("input", () => {
+      if (!state.sourceEditor.kind) return;
+      state.sourceEditor.dirty = true;
+      updateSourceControls();
+    });
+    $("#tool-source-save").addEventListener("click", () => saveToolSource().catch((error) => setError(error.message)));
+    $("#tool-source-validate").addEventListener("click", () => validateToolSource().catch((error) => setError(error.message)));
+    $("#tool-source-test").addEventListener("click", () => testToolSource().catch((error) => setError(error.message)));
+    $("#tool-source-reload").addEventListener("click", () => reloadSourceToolFamily().catch((error) => setError(error.message)));
+    $("#tool-source-restart-runtime").addEventListener("click", () => runtimeAction("restart").catch((error) => setError(error.message)));
     $("#knowledge-search").addEventListener("click", () => searchKnowledge().catch((error) => setError(error.message)));
     $("#knowledge-query").addEventListener("keydown", (event) => { if (event.key === "Enter") searchKnowledge().catch((error) => setError(error.message)); });
     $("#knowledge-index").addEventListener("click", () => buildKnowledgeIndex().catch((error) => setError(error.message)));
@@ -2732,6 +3007,7 @@ ADMIN_HTML = """<!doctype html>
     });
 
     initThemeToggle();
+    updateSourceControls();
     loadDashboard().catch((error) => setError(error.message));
   </script>
 </body>

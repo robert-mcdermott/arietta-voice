@@ -383,6 +383,46 @@ def test_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
     assert validated.json()["enabled"] is True
 
 
+def test_tool_source_endpoints_read_write_and_validate(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    service.tool_admin.tools_directory = tmp_path / "generated_tools"
+
+    created = client.post(
+        "/api/tools/create",
+        auth=("admin", "password"),
+        json={
+            "module_name": "Source Demo",
+            "trigger_phrase": "source demo",
+            "response": "Original source response.",
+            "enable": True,
+        },
+    )
+    read = client.get("/api/tools/source_demo/source", auth=("admin", "password"))
+    updated_content = read.json()["content"].replace(
+        "Original source response.",
+        "Edited source response.",
+    )
+    saved = client.put(
+        "/api/tools/source_demo/source",
+        auth=("admin", "password"),
+        json={"content": updated_content},
+    )
+    probe = client.post(
+        "/api/tools/source_demo/probe",
+        auth=("admin", "password"),
+        json={"text": "please run source demo"},
+    )
+
+    assert created.status_code == 200
+    assert read.status_code == 200
+    assert read.json()["file"].endswith("source_demo.py")
+    assert saved.status_code == 200
+    assert saved.json()["saved"] is True
+    assert saved.json()["tool"]["valid"] is True
+    assert probe.json()["content"] == "Edited source response."
+
+
 def test_model_tools_endpoint_lists_registry_inventory(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
@@ -478,3 +518,45 @@ def test_model_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
     assert validated.status_code == 200
     assert validated.json()["valid"] is True
     assert validated.json()["enabled"] is True
+
+
+def test_model_tool_source_endpoints_read_write_and_invoke(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    service.model_tool_admin.tools_directory = tmp_path / "generated_model_tools"
+
+    created = client.post(
+        "/api/model-tools/create",
+        auth=("admin", "password"),
+        json={
+            "module_name": "Source Model Tool",
+            "description": "you need a source model tool result",
+            "arguments_example": {"topic": "<topic>"},
+            "followup_context": "Original model follow-up.",
+            "enable": True,
+        },
+    )
+    read = client.get("/api/model-tools/source_model_tool/source", auth=("admin", "password"))
+    updated_content = read.json()["content"].replace(
+        "Original model follow-up.",
+        "Edited model follow-up.",
+    )
+    saved = client.put(
+        "/api/model-tools/source_model_tool/source",
+        auth=("admin", "password"),
+        json={"content": updated_content},
+    )
+    invoked = client.post(
+        "/api/model-tools/source_model_tool/invoke",
+        auth=("admin", "password"),
+        json={"arguments": {"topic": "source"}},
+    )
+
+    assert created.status_code == 200
+    assert read.status_code == 200
+    assert read.json()["file"].endswith("source_model_tool.py")
+    assert saved.status_code == 200
+    assert saved.json()["saved"] is True
+    assert saved.json()["tool"]["valid"] is True
+    assert invoked.status_code == 200
+    assert "Edited model follow-up." in invoked.json()["followup_context"]
