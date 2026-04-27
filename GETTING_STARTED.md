@@ -546,7 +546,247 @@ Practical checks:
 - if you changed the wake word, say it at the start of the utterance
 - if you switched to `hybrid` or `vector`, rebuild the index
 
-## 9. Common Customization Patterns
+## 9. Run Automatically on macOS With launchd
+
+For an always-on Mac mini, use macOS `launchd` so Arietta Voice starts again
+after a reboot. The recommended setup is two user LaunchAgents:
+
+- one LaunchAgent for the voice runtime
+- one LaunchAgent for the HTTP API and admin console
+
+This matches the normal two-terminal development workflow:
+
+```bash
+uv run arietta-voice
+uv run arietta-voice serve
+```
+
+### Important Mac mini considerations
+
+Use a user LaunchAgent under `~/Library/LaunchAgents`, not a root LaunchDaemon
+under `/Library/LaunchDaemons`, for the voice runtime. The voice runtime needs
+microphone/audio access, and macOS privacy permissions are tied to the logged-in
+user session. A root LaunchDaemon is more likely to run into microphone,
+speaker, keychain, or environment issues.
+
+For a headless Mac mini:
+
+- create or choose the macOS user that should own Arietta
+- log into that user once
+- run `uv run arietta-voice` manually once and grant microphone/audio prompts
+- make sure the user session exists after reboot, for example with automatic
+  login or your normal remote-login workflow
+- keep the Mac awake enough for an always-on assistant
+- access the machine through Screen Sharing, SSH, Tailscale, or another private
+  remote-access method
+
+Keep the admin console bound to `127.0.0.1` unless it is behind SSH tunneling,
+Tailscale, a VPN, or a properly secured reverse proxy. The built-in admin auth
+is intentionally simple and should not be exposed directly to the public
+internet.
+
+### Before creating LaunchAgents
+
+From the project directory, verify the app works manually:
+
+```bash
+uv run arietta-voice doctor
+uv run arietta-voice
+```
+
+In another terminal, verify the admin console:
+
+```bash
+uv run arietta-voice serve
+```
+
+Open `http://127.0.0.1:8765/admin` and confirm the console loads.
+
+Find the full path to `uv`:
+
+```bash
+command -v uv
+```
+
+On Apple Silicon Homebrew installs this is often `/opt/homebrew/bin/uv`. Use
+the path from your machine in the plist files below.
+
+Create the logs directory if it does not already exist:
+
+```bash
+mkdir -p logs
+mkdir -p ~/Library/LaunchAgents
+```
+
+### Voice runtime LaunchAgent
+
+Create `~/Library/LaunchAgents/com.arietta.voice.plist`.
+
+Replace:
+
+- `/Users/your-user/mycode/arietta-voice` with your project path
+- `/opt/homebrew/bin/uv` with the output from `command -v uv`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.arietta.voice</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/your-user/mycode/arietta-voice</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/opt/homebrew/bin/uv</string>
+      <string>run</string>
+      <string>--frozen</string>
+      <string>arietta-voice</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/your-user/mycode/arietta-voice/logs/launchd.voice.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/your-user/mycode/arietta-voice/logs/launchd.voice.err.log</string>
+  </dict>
+</plist>
+```
+
+If you use a custom config path, include it in `ProgramArguments`:
+
+```xml
+<string>--config</string>
+<string>config/arietta_voice.toml</string>
+```
+
+### Admin console LaunchAgent
+
+Create `~/Library/LaunchAgents/com.arietta.admin.plist`.
+
+Replace the same paths, and set a real admin password:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.arietta.admin</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/your-user/mycode/arietta-voice</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>ARIETTA_ADMIN_USERNAME</key>
+      <string>admin</string>
+      <key>ARIETTA_ADMIN_PASSWORD</key>
+      <string>change-this-password</string>
+    </dict>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/opt/homebrew/bin/uv</string>
+      <string>run</string>
+      <string>--frozen</string>
+      <string>arietta-voice</string>
+      <string>serve</string>
+      <string>--host</string>
+      <string>127.0.0.1</string>
+      <string>--port</string>
+      <string>8765</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/your-user/mycode/arietta-voice/logs/launchd.admin.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/your-user/mycode/arietta-voice/logs/launchd.admin.err.log</string>
+  </dict>
+</plist>
+```
+
+If the voice runtime uses `--config`, give the admin console the same config
+path:
+
+```xml
+<string>--config</string>
+<string>config/arietta_voice.toml</string>
+```
+
+### Load and manage the jobs
+
+Check the plist syntax:
+
+```bash
+plutil -lint ~/Library/LaunchAgents/com.arietta.voice.plist
+plutil -lint ~/Library/LaunchAgents/com.arietta.admin.plist
+```
+
+Load both LaunchAgents:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.arietta.voice.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.arietta.admin.plist
+```
+
+Restart a job after changing a plist:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.arietta.voice
+launchctl kickstart -k gui/$(id -u)/com.arietta.admin
+```
+
+Unload a job:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.arietta.voice.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.arietta.admin.plist
+```
+
+Inspect launchd state:
+
+```bash
+launchctl print gui/$(id -u)/com.arietta.voice
+launchctl print gui/$(id -u)/com.arietta.admin
+```
+
+Watch the launchd logs:
+
+```bash
+tail -f logs/launchd.voice.out.log logs/launchd.voice.err.log
+tail -f logs/launchd.admin.out.log logs/launchd.admin.err.log
+```
+
+### What the admin console can and cannot control
+
+With the two LaunchAgent setup, the admin console can still show health, logs,
+runtime heartbeat, tools, knowledge, diagnostics, and config state. It can also
+edit knowledge files and tool source files.
+
+The admin console does not own the separately launched voice process. That
+means the Start, Stop, and Restart runtime buttons are not the primary way to
+control the launchd-started voice job. Use `launchctl kickstart -k` to restart
+the voice runtime after changing runtime config or tool source.
+
+If you want the admin console to fully own Start, Stop, and Restart, start only
+the admin console LaunchAgent and use the admin console's Start button to launch
+the voice runtime as an API-managed child process. That mode gives better
+admin-console lifecycle control, but launchd is only supervising the admin
+console directly.
+
+## 10. Common Customization Patterns
 
 ### Household assistant
 
@@ -575,7 +815,7 @@ bedrock_region = "us-west-2"
 bedrock_profile = "default"
 ```
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### "I changed knowledge but answers did not improve"
 
@@ -606,7 +846,7 @@ Remember:
 
 If the file starts becoming long and factual, move those facts into knowledge articles instead.
 
-## 11. Suggested First Customization Pass
+## 12. Suggested First Customization Pass
 
 If you are setting up Arietta Voice for the first time, this is a good sequence:
 

@@ -134,6 +134,13 @@ uv run arietta-voice --config config/arietta_voice.toml
 uv run arietta-voice serve --config config/arietta_voice.toml
 ```
 
+For a headless Mac mini or other always-on Mac, use macOS `launchd` to start
+the voice runtime and admin console automatically after reboot/login. Because
+the voice runtime uses microphone/audio access, run it as a user LaunchAgent
+rather than a root LaunchDaemon. See [Run Automatically on macOS With
+launchd](./GETTING_STARTED.md#9-run-automatically-on-macos-with-launchd) for a
+step-by-step setup.
+
 The Knowledge page can list, create, edit, delete, search, and re-index local
 knowledge files inside the configured knowledge directory.
 
@@ -285,6 +292,7 @@ tests/                  Focused unit tests for config, tools, knowledge, wake wo
 
 ## Notes
 
+- Licensed under the Apache License 2.0.
 - The default wake-word backend is transcript-based, not an acoustic hotword model.
 - The local chat path is optimized for Apple Silicon and MLX.
 - `knowledge-index` is only required when you use the semantic or hybrid backend.
