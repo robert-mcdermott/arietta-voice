@@ -2,11 +2,21 @@
 
 ![Arietta Logo](arietta_logo.png)
 
-Arietta Voice is a local-first, wake-word-driven voice assistant for Apple Silicon Macs.
+Arietta Voice is a local-first framework for building a wake-word-driven voice
+assistant on Apple Silicon Macs. It combines local speech-to-text,
+text-to-speech, turn detection, tool routing, markdown knowledge retrieval, and
+a web admin console into a customizable assistant runtime. It's like your own private,
+custom, locally host Alexa/Echo, but better.
 
-It is an open-source project built to be personalized: your own `SOUL.md`, your own knowledge articles, your own tools, and your own wake word.
+The project is meant to become *your* assistant, not a finished general-purpose
+assistant out of the box. As shipped, it is mostly a working runtime and admin
+surface; it becomes useful when you provide the assistant persona in `SOUL.md`,
+add knowledge articles for your environment, configure the wake word, and add
+deterministic or model-called tools for the things you want it to do.
 
-The default assistant persona is named `Bridget`, and the default wake word is also `Bridget`. Both are easy to change in [`config/arietta_voice.toml`](./config/arietta_voice.toml).
+The default assistant persona is named `Bridget`, and the default wake word is
+also `Bridget`. Both are easy to change in
+[`config/arietta_voice.toml`](./config/arietta_voice.toml).
 
 For a detailed customization walkthrough, see [GETTING_STARTED.md](./GETTING_STARTED.md).
 
