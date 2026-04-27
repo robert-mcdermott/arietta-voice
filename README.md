@@ -1,5 +1,7 @@
 # Arietta Voice
 
+![Arietta Logo](arietta_logo.png)
+
 Arietta Voice is a local-first, wake-word-driven voice assistant for Apple Silicon Macs.
 
 It is an open-source project built to be personalized: your own `SOUL.md`, your own knowledge articles, your own tools, and your own wake word.
