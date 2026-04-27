@@ -99,14 +99,40 @@ The admin console is available at `http://127.0.0.1:8765/admin`.
 The initial local credentials are `admin` / `password`; override them with
 `ARIETTA_ADMIN_USERNAME` and `ARIETTA_ADMIN_PASSWORD`.
 
-The voice runtime and web console can run as separate processes. The voice
-runtime publishes a heartbeat to `logs/runtime_status.json`, which lets the
-admin console show whether the separate voice process is running, stopped, or
-stale.
+The voice runtime and web console can run as separate processes. For example,
+you can start the voice runtime in one terminal and the admin console in
+another:
+
+```bash
+uv run arietta-voice
+uv run arietta-voice serve
+```
+
+In this mode, the admin console still provides observability and editing:
+health, status heartbeat, logs, diagnostics, chat testing, knowledge editing,
+tool validation, tool source editing, and config-backed tool enablement. The
+voice runtime publishes a heartbeat to `logs/runtime_status.json`, which lets
+the admin console show whether the separate voice process is running, stopped,
+or stale.
+
+The main limitation is process ownership. If the voice runtime was started
+manually with `uv run arietta-voice`, the admin console can observe it but
+cannot stop or restart that terminal process. After changing tools, knowledge
+settings, or config used by the voice runtime, restart the manually started
+runtime yourself so it picks up those changes.
 
 The admin console can also start, stop, and restart an API-managed voice
-runtime. Managed runtime stdout and stderr are written to
+runtime. Use the admin console's Start button when you want the web API to own
+the child voice process and make the Start, Stop, and Restart buttons fully
+effective. Managed runtime stdout and stderr are written to
 `logs/managed_runtime.stdout.log` and `logs/managed_runtime.stderr.log`.
+
+If you use a custom config path, pass the same config to both processes:
+
+```bash
+uv run arietta-voice --config config/arietta_voice.toml
+uv run arietta-voice serve --config config/arietta_voice.toml
+```
 
 The Knowledge page can list, create, edit, delete, search, and re-index local
 knowledge files inside the configured knowledge directory.

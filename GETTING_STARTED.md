@@ -31,6 +31,20 @@ uv run arietta-voice doctor
 uv run arietta-voice knowledge-search "what can you help with"
 ```
 
+For operational work, the admin console can be started with:
+
+```bash
+uv run arietta-voice serve
+```
+
+You can run `uv run arietta-voice` and `uv run arietta-voice serve` in separate
+terminals. In that setup the admin console can inspect health, logs, runtime
+heartbeat, knowledge, tools, and config, but it cannot stop or restart the
+manually started voice runtime process. If you want the Start, Stop, and
+Restart buttons to fully control the runtime, start the runtime from inside the
+admin console instead. After changing tools or runtime config while using a
+manually started runtime, restart that runtime terminal yourself.
+
 ## 2. Personalize The Assistant
 
 The default assistant name and wake word are `Bridget`. The examples below use `Maya` to show customization, because it is a common, easy-to-pronounce name. In general, avoid using the product name `Arietta` as the wake word unless you are confident your users will say it consistently.
