@@ -25,6 +25,7 @@ from arietta_voice.model_tools import ModelToolRegistry
 from arietta_voice.model_tooling import maybe_generate_with_model_tools
 from arietta_voice.models import AssistantState, ConversationTurn, SessionContext, UtteranceResult
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
+from arietta_voice.runtime_status import RuntimeStatusPublisher
 from arietta_voice.stt import MoonshineSpeechToText
 from arietta_voice.tools import ToolRegistry
 from arietta_voice.tts import KokoroTextToSpeech
@@ -90,6 +91,7 @@ class AriettaVoiceRuntime:
         self.display_speaking_active = False
         self._greeting_index = 0
         self._goodbye_index = 0
+        self.status_publisher = RuntimeStatusPublisher(config)
 
     def set_state(self, state: AssistantState) -> None:
         if self.state == state:
@@ -102,6 +104,16 @@ class AriettaVoiceRuntime:
             from_state=previous.value,
             to_state=state.value,
         )
+        self._publish_status(force=True)
+
+    def _publish_status(self, *, lifecycle: str = "running", force: bool = False) -> None:
+        try:
+            if force:
+                self.status_publisher.publish(self, lifecycle=lifecycle)
+            else:
+                self.status_publisher.publish_if_due(self, lifecycle=lifecycle)
+        except OSError as exc:
+            self.logger.warning("Runtime status update failed: %s", exc)
 
     def next_greeting(self) -> str:
         variants = self.config.assistant.greeting_variants
@@ -120,16 +132,21 @@ class AriettaVoiceRuntime:
         self.event_logger.log("startup_diagnostics", overall_status=self.startup_diagnostics["overall_status"])
 
         self.logger.info("Loading VAD")
+        self._publish_status(force=True)
         self.vad.ensure_loaded()
         self.logger.info("Loading STT")
+        self._publish_status(force=True)
         self.stt.ensure_loaded()
         self.logger.info("Loading LLM")
+        self._publish_status(force=True)
         self.llm.ensure_loaded()
         if self.speaker is not None:
             self.logger.info("Loading TTS")
+            self._publish_status(force=True)
             self.speaker.ensure_loaded()
         if self.smart_turn is not None:
             self.logger.info("Loading Smart Turn")
+            self._publish_status(force=True)
             self.smart_turn.ensure_loaded()
         self.memory.ensure_exists()
         self.knowledge.preload()
@@ -192,6 +209,7 @@ class AriettaVoiceRuntime:
     def _update_display_speech(self, level: float, active: bool) -> None:
         self.display_speech_level = max(0.0, min(1.0, float(level)))
         self.display_speaking_active = bool(active)
+        self._publish_status(force=False)
 
     def _generate_chat_response(self, messages: list[dict[str, str]]) -> str:
         return self.llm.generate(
@@ -381,6 +399,7 @@ class AriettaVoiceRuntime:
         return self._handle_active_turn(transcript, microphone, keypress_monitor)
 
     def run(self) -> None:
+        self._publish_status(force=True)
         self.warmup()
 
         silence_limit = max(
@@ -409,6 +428,7 @@ class AriettaVoiceRuntime:
                     print("Wake word disabled. Listening. Press Ctrl+C to quit.\n", flush=True)
 
                 while True:
+                    self._publish_status(force=False)
                     now = time.monotonic()
                     if (
                         self.config.wake_word.enabled
@@ -481,3 +501,5 @@ class AriettaVoiceRuntime:
             except Exception as exc:
                 self.last_error = type(exc).__name__
                 raise
+            finally:
+                self._publish_status(lifecycle="stopped", force=True)

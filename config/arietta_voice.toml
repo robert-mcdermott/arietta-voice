@@ -71,9 +71,9 @@ min_vector_score = 0.3
 
 [tools]
 enabled = [
-  "local_time",
-  "assistant_identity",
-  "knowledge_retrieval",
+    "assistant_identity",
+    "local_time",
+    "knowledge_retrieval",
 ]
 
 [model_tools]

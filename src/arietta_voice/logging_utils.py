@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ class EventLogger:
 
     def log(self, event: str, **fields: Any) -> None:
         payload = {
-            "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "event": event,
             **fields,
         }
