@@ -298,12 +298,15 @@ The current repo is a strong foundation for a home assistant or office assistant
 ## Project Layout
 
 ```text
-config/                 Config, SOUL, and memory example files
-knowledge/              User-editable markdown knowledge
-src/arietta_voice/      Runtime, models, knowledge, audio, and tooling code
-src/arietta_voice/tools/        Deterministic tools
-src/arietta_voice/model_tools/  Model-requested tools
-tests/                  Focused unit tests for config, tools, knowledge, wake word, and model tooling
+.
+├── config/                     # Configuration files, SOUL definitions, and memory examples
+├── knowledge/                  # User-editable Markdown knowledge base
+├── src/
+│   └── arietta_voice/
+│       ├── tools/              # Deterministic tools (directly invoked)
+│       ├── model_tools/        # Tools invoked by model reasoning
+│       └── ...                 # Core runtime, models, audio, and knowledge handling
+├── tests/                      # Unit tests for config, tools, knowledge, wake word, and model tooling
 ```
 
 ## Notes
