@@ -120,3 +120,6 @@ and 24-hour soaks as separate gates. Do not mark them passed from this baseline.
 See [HARDWARE_BASELINE.md](HARDWARE_BASELINE.md) for the current measured run and
 remaining limitations. Raw reports and recordings must not be committed; only
 reviewed aggregate observations belong in the repository.
+
+For the separate 100-turn Phase 2 timing protocol and measured stage/resource
+results, see [LATENCY_BASELINE.md](LATENCY_BASELINE.md).

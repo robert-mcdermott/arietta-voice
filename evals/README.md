@@ -102,6 +102,10 @@ these runs establish the Phase 1 gate, not an exemption for later changes.
 
 ## Remaining release gates
 
+[The Phase 2 latency benchmark](LATENCY_BASELINE.md) records real local model
+and output-device timings separately from synthetic CI. It is opt-in and never
+runs in GitHub Actions; only its timing/protocol contracts use test fakes in CI.
+
 These synthetic checks do not measure speech recognition, generated-answer
 quality, real BGE retrieval, GPU performance, microphone behavior, or long-run
 stability. Keep the Phase 1 manual hardware smoke and soak gates in

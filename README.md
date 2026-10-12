@@ -210,6 +210,10 @@ For actual microphone/speaker checks and a bounded local soak, follow
 [hardware validation](evals/HARDWARE_VALIDATION.md). The opt-in harness uses an
 isolated synthetic persona and preserves private settings and knowledge.
 
+For repeatable stage timings and 100 warm no-tool turns on the local Mac, see
+[the Phase 2 latency baseline](evals/LATENCY_BASELINE.md). It uses paced synthetic
+input and real speaker output, with an explicit software timing boundary.
+
 ## Wake Word Behavior
 
 The initial wake-word implementation is local and transcript-based:

@@ -140,6 +140,16 @@ when rolling back another component.
 
 ## Phase 2 Reduce the wait before speech
 
+**Initial measurement status (October 12, 2026):** the isolated Mac benchmark
+completed 100 warm no-tool turns through paced synthetic input and actual Jabra
+speaker output. Waveform-end-to-first-write latency was 2362.5 ms p50 and
+3496.6 ms p95, with no failed turns or output underflows. Fresh-worker warmup
+with cached assets was 6.112 seconds; startup, first-turn and warm measurements
+are separate. See [the latency/resource baseline](evals/LATENCY_BASELINE.md) for
+stage timings, RSS/CPU, repeatable commands and the failed wake-prefix pilot.
+This is a software timing boundary; physical capture/acoustic onset and
+interruption latency remain unmeasured. Streaming implementation has not started.
+
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.
 2. Extend the Phase 1 serialized inference workers with cancellation tokens and bounded text/audio

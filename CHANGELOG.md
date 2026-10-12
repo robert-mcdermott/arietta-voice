@@ -7,6 +7,9 @@ version policy and the release procedure.
 
 ### Added
 
+- Opt-in Phase 2 latency benchmark with paced synthetic questions, real output
+  device writes, separate startup/first-turn/warm timings, stage and resource
+  reports, and private-settings preservation.
 - Opt-in local hardware/model smoke and bounded live/repeated-model soak
   harnesses, with isolated settings, private-file checks, process cleanup,
   resource/heartbeat reports and a hands-on audio checklist.
