@@ -7,6 +7,14 @@ version policy and the release procedure.
 
 ### Added
 
+- Apple Silicon CI for locked installs, isolated unit/process tests, synthetic
+  evaluations, distribution builds and version/private-file checks. Actions are
+  pinned; only synthetic JUnit reports are uploaded.
+- A 43-case synthetic corpus for wake/session behavior, prompts, memory, tool
+  policy and keyword retrieval; corrupt-index and config snapshot regressions.
+- Source distributions include tests/evaluations and exclude local config and
+  knowledge. Tracked-file checks reject force-added private paths.
+
 - Configurable microphone, utterance, recording, and echo-reference limits;
   streamed WAV recording with pressure/error reporting.
 - Serialized inference processes with turn, endpoint, and startup deadlines;
@@ -56,6 +64,12 @@ version policy and the release procedure.
   unsupported audio/retrieval/generation settings before model startup.
 
 ### Fixed
+
+- Malformed, incomplete or incompatible semantic index files fall back to keyword
+  search in hybrid mode (no result in vector mode); explicit builds repair corrupt
+  caches instead of treating them as current. Source documents remain untouched.
+- Memory extraction treats `NONE` as an exact sentinel, preserving facts that
+  contain that substring in a name or word.
 
 - Failed/timed-out inference is stopped before the next job; failed turns are
   not stored or automatically retried. Playback cleanup closes resources on

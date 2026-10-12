@@ -35,8 +35,9 @@ To close the phase:
 
 1. Review and commit these changes with an explicit file list, preserving the
    user's separate config edits.
-2. Add CI's tracked-knowledge allowlist check. It should reject any indexed path
-   under `knowledge/` other than the two starter files, including forced adds.
+2. Verify a hosted CI run after pushing the workflow. The tracked-knowledge
+   allowlist check is implemented and tested against forced additions, along
+   with config/private-path, package-content and version checks.
 3. Choose whether to tag the historical `0.1.0` baseline; its version already
    existed, but no local release tag was found. Prepare `0.1.1` with the release
    procedure and publish only after review.
@@ -73,7 +74,16 @@ spawned workers with synthetic handlers, including timeouts, crashes, shutdown,
 and busy requests, plus simulated audio and state transitions. A focused admin
 dashboard/chat/editor usability update has been brought forward from Phase 4.
 
-Phase 1 remains open for CI/evaluation coverage (item 7), the hardware smoke test,
+The fourth batch implements item 7: Apple Silicon CI with locked installs,
+isolated tests, tracked-file privacy and distribution/version checks, and a
+43-case synthetic corpus covering runtime sessions, wake behavior, prompts,
+memory, tool policy and keyword retrieval. Corrupt-index regressions now cover
+safe fallback/rebuild, and spawned-worker tests cover config snapshot invalidation
+alongside concurrency/crash/deadline coverage. The corpus caught and fixed memory
+facts being discarded when they contained the substring `NONE`. See
+[evals/README.md](evals/README.md) for repeatable commands and limitations.
+
+Phase 1 remains open for the first hosted CI run, the hardware smoke test,
 and a soak test on the locked model stack. Native audio-device stalls and admin
 maintenance actions are not covered by inference deadlines. Voice and API workers
 are serialized individually; shared GPU scheduling remains future work. No release

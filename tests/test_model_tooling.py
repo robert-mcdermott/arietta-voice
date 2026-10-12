@@ -20,8 +20,8 @@ def test_parse_model_tool_request_accepts_fenced_json() -> None:
     assert request.arguments["query"] == "it leadership"
 
 
-def test_model_tool_registry_only_loads_registered_tools() -> None:
-    config = default_config()
+def test_model_tool_registry_only_loads_registered_tools(tmp_path) -> None:
+    config = default_config(tmp_path)
     config.model_tools.enabled = ("system_info",)
     registry = ModelToolRegistry(config)
 
@@ -64,7 +64,7 @@ def create_tool(context: ModelToolContext) -> DemoTool:
     )
     monkeypatch.syspath_prepend(str(tmp_path))
 
-    config = default_config()
+    config = default_config(tmp_path)
     config.model_tools.enabled = ("custom_model_tools.demo",)
     registry = ModelToolRegistry(config)
 
@@ -78,9 +78,9 @@ def create_tool(context: ModelToolContext) -> DemoTool:
     assert execution.details == {"topic": "testing"}
 
 
-def test_maybe_generate_with_model_tools_returns_plain_answer_without_tool_call() -> None:
+def test_maybe_generate_with_model_tools_returns_plain_answer_without_tool_call(tmp_path) -> None:
     calls: list[list[dict[str, str]]] = []
-    registry = ModelToolRegistry(default_config())
+    registry = ModelToolRegistry(default_config(tmp_path))
 
     def fake_llm(messages: list[dict[str, str]]) -> str:
         calls.append(messages)
@@ -113,7 +113,7 @@ Jordan leads the IT team.
         encoding="utf-8",
     )
     retriever = KnowledgeRetriever(KnowledgeConfig(directory=knowledge_dir, min_score=1.0))
-    config = default_config()
+    config = default_config(tmp_path)
     registry = ModelToolRegistry(config, knowledge_retriever=retriever)
 
     calls: list[list[dict[str, str]]] = []

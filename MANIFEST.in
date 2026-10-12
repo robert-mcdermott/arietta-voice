@@ -1,0 +1,11 @@
+include conftest.py uv.lock .python-version
+include CHANGELOG.md RELEASING.md ROADMAP.md
+recursive-include tests *.py
+recursive-include evals *.py *.json *.md
+recursive-include scripts *.py
+prune config
+prune knowledge
+prune logs
+prune .knowledge_index
+prune tmp
+global-exclude *.local.toml *.local.md *.admin.json *.working *.bak .DS_Store

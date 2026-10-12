@@ -60,7 +60,7 @@ class MemoryStore:
             max_tokens=80,
             temperature=0.2,
         ).strip()
-        if not result or "NONE" in result.upper():
+        if not result or result.upper() == "NONE":
             return 0
 
         lines = [line.strip() for line in result.splitlines() if line.strip().startswith("-")]

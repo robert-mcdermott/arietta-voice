@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "wake": [
+    {"id": "wake-only", "text": "Bridget!", "command": ""},
+    {"id": "inline-case", "text": "BRIDGET, Open Project ZETA.", "command": "Open Project ZETA."},
+    {"id": "inline-math", "text": "Bridget, calculate -5.2 * 7!", "command": "calculate -5.2 * 7!"},
+    {"id": "inline-unicode", "text": "Bridget, translate café and 東京.", "command": "translate café and 東京."},
+    {"id": "possessive", "text": "Bridget, where is Sam's notebook?", "command": "where is Sam's notebook?"},
+    {"id": "ambient-mention", "text": "I told Bridget about the telescope.", "command": null},
+    {"id": "different-name", "text": "Bridgewater has a telescope.", "command": null},
+    {"id": "empty", "text": "", "command": null}
+  ],
+  "prompts": [
+    {"id": "no-files", "soul": "", "memory": "", "enabled": false, "limit": 0, "context": ""},
+    {"id": "persona-only", "soul": "You are the synthetic station guide.", "memory": "", "enabled": false, "limit": 1, "context": ""},
+    {"id": "memory-opt-out", "soul": "Use short answers.", "memory": "# Memory\n- Synthetic favorite color: teal.", "enabled": false, "limit": 1, "context": ""},
+    {"id": "memory-opt-in", "soul": "Use short answers.", "memory": "# Memory\n- Synthetic favorite color: teal.", "enabled": true, "limit": 2, "context": ""},
+    {"id": "context-with-history", "soul": "Use short answers.", "memory": "", "enabled": false, "limit": 1, "context": "Synthetic reference: the observatory opens at noon."},
+    {"id": "context-without-history", "soul": "", "memory": "", "enabled": false, "limit": 0, "context": "Synthetic reference: the observatory opens at noon."}
+  ],
+  "memory": [
+    {"id": "empty-extraction", "enabled": true, "output": "", "facts": []},
+    {"id": "none", "enabled": true, "output": "NONE", "facts": []},
+    {"id": "none-whitespace", "enabled": true, "output": "  none\n", "facts": []},
+    {"id": "non-bullet", "enabled": true, "output": "There is nothing durable to save.", "facts": []},
+    {"id": "durable-preference", "enabled": true, "output": "- Prefers short explanations.", "facts": ["- Prefers short explanations."]},
+    {"id": "multiple-facts", "enabled": true, "output": "- Builds a toy telescope.\n- Prefers metric units.", "facts": ["- Builds a toy telescope.", "- Prefers metric units."]},
+    {"id": "none-substring-is-a-fact", "enabled": true, "output": "- Works on the synthetic NoneSuch project.", "facts": ["- Works on the synthetic NoneSuch project."]},
+    {"id": "disabled-no-write", "enabled": false, "output": "- Must not be saved.", "facts": []}
+  ],
+  "tool_policy": [
+    {"id": "plain-answer", "enabled": true, "output": "The station is quiet.", "calls": 0},
+    {"id": "malformed-json", "enabled": true, "output": "{broken", "calls": 0},
+    {"id": "unknown-tool", "enabled": true, "output": "{\"tool_call\":{\"name\":\"delete_station\",\"arguments\":{}}}", "calls": 0},
+    {"id": "array-arguments", "enabled": true, "output": "{\"tool_call\":{\"name\":\"synthetic_counter\",\"arguments\":[]}}", "calls": 0},
+    {"id": "null-name", "enabled": true, "output": "{\"tool_call\":{\"name\":null,\"arguments\":{}}}", "calls": 0},
+    {"id": "valid-one-call", "enabled": true, "output": "{\"tool_call\":{\"name\":\"synthetic_counter\",\"arguments\":{}}}", "calls": 1},
+    {"id": "fenced-one-call", "enabled": true, "output": "```json\n{\"tool_call\":{\"name\":\"synthetic_counter\",\"arguments\":{}}}\n```", "calls": 1},
+    {"id": "disabled-even-if-requested", "enabled": false, "output": "{\"tool_call\":{\"name\":\"synthetic_counter\",\"arguments\":{}}}", "calls": 0},
+    {"id": "followup-cannot-chain", "enabled": true, "output": "{\"tool_call\":{\"name\":\"synthetic_counter\",\"arguments\":{}}}", "followup": "{\"tool_call\":{\"name\":\"synthetic_counter\",\"arguments\":{}}}", "calls": 1},
+    {"id": "tool-failure-no-retry", "enabled": true, "output": "{\"tool_call\":{\"name\":\"synthetic_counter\",\"arguments\":{}}}", "fails": true, "calls": 1}
+  ],
+  "sessions": [
+    {"id": "ambient-then-wake-followup-goodbye", "steps": [
+      {"text": "The synthetic station is quiet.", "state": "waiting_for_wake", "active": false, "turns": 0},
+      {"text": "Bridget", "state": "listening", "active": true, "turns": 0},
+      {"text": "Where is the telescope?", "state": "listening", "active": true, "turns": 1, "command": "Where is the telescope?"},
+      {"text": "Goodbye.", "state": "waiting_for_wake", "active": false, "turns": 0, "end": true}
+    ]},
+    {"id": "inline-and-mentioned-farewell", "steps": [
+      {"text": "Bridget, Read Project ZETA.", "state": "listening", "active": true, "turns": 1, "command": "Read Project ZETA."},
+      {"text": "What does goodbye mean?", "state": "listening", "active": true, "turns": 2, "command": "What does goodbye mean?"}
+    ]},
+    {"id": "failed-model-and-next-turn", "steps": [
+      {"text": "Bridget, Read Project ZETA.", "fail": "chat", "state": "listening", "active": true, "turns": 0, "command": "Read Project ZETA."},
+      {"text": "Read it now.", "state": "listening", "active": true, "turns": 1, "command": "Read it now."}
+    ]},
+    {"id": "failed-transcription-before-wake", "steps": [
+      {"text": "Bridget", "fail": "transcribe", "state": "waiting_for_wake", "active": false, "turns": 0},
+      {"text": "Bridget, Hello.", "state": "listening", "active": true, "turns": 1, "command": "Hello."}
+    ]},
+    {"id": "wake-disabled", "wake_enabled": false, "steps": [
+      {"text": "Read Project ZETA.", "state": "listening", "active": true, "turns": 1, "command": "Read Project ZETA."},
+      {"text": "", "state": "listening", "active": true, "turns": 1}
+    ]}
+  ],
+  "retrieval": {
+    "documents": {
+      "observatory.md": "---\ntitle: Synthetic Observatory\ntags: telescope, observatory, stargazing\n---\n# Observatory\nThe synthetic telescope opens at noon.\n",
+      "workshop.md": "---\ntitle: Synthetic Workshop\ntags: workshop, woodworking, tools\n---\n# Workshop\nBorrow woodworking tools from the synthetic workshop.\n",
+      "greenhouse.md": "---\ntitle: Synthetic Greenhouse\ntags: greenhouse, orchids, watering\n---\n# Greenhouse\nWater the synthetic orchids every Tuesday.\n"
+    },
+    "queries": [
+      {"id": "observatory", "text": "Where is the telescope observatory?", "source": "observatory.md"},
+      {"id": "workshop", "text": "Borrow woodworking tools", "source": "workshop.md"},
+      {"id": "greenhouse", "text": "Watering orchids in the greenhouse", "source": "greenhouse.md"},
+      {"id": "absent", "text": "Volcano submarine navigation", "source": null},
+      {"id": "greeting", "text": "hello", "source": null},
+      {"id": "empty", "text": "", "source": null}
+    ]
+  }
+}

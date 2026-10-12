@@ -5,7 +5,7 @@ from arietta_voice.diagnostics import run_startup_diagnostics
 
 
 def test_startup_diagnostics_without_hardware(tmp_path) -> None:
-    config = default_config()
+    config = default_config(tmp_path)
     config.prompts.soul_path = tmp_path / "SOUL.md"
     config.prompts.memory_path = tmp_path / "MEMORY.md"
     config.logging.directory = tmp_path / "logs"

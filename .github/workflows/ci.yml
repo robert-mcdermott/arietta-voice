@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic:
+    name: Apple Silicon / Python 3.13
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      AWS_EC2_METADATA_DISABLED: "true"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.10"
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Reject tracked private paths and version drift
+        run: |
+          test "$(uname -m)" = arm64
+          uv run --no-project --python 3.13 scripts/check_release.py
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+      - name: Unit and process regression tests
+        id: unit
+        run: uv run --locked pytest tests --junitxml=tmp/ci/unit.xml
+      - name: Synthetic evaluations
+        if: ${{ !cancelled() && steps.unit.outcome != 'skipped' }}
+        run: uv run --locked pytest evals --junitxml=tmp/ci/evaluations.xml
+      - name: Build and inspect distributions
+        run: |
+          uv run --locked arietta-voice --version
+          uv build --out-dir tmp/ci/dist
+          uv run --no-project --python 3.13 scripts/check_release.py --artifacts tmp/ci/dist
+          git diff --exit-code -- pyproject.toml uv.lock
+      - name: Smoke test the installed wheel without model dependencies
+        run: |
+          uv venv --python 3.13 tmp/ci/smoke
+          uv pip install --python tmp/ci/smoke/bin/python --no-deps tmp/ci/dist/*.whl
+          uv run --no-project --python tmp/ci/smoke/bin/python python -I -m arietta_voice.cli --version
+      - name: Upload synthetic test reports
+        if: ${{ !cancelled() && steps.unit.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-test-reports
+          path: |
+            tmp/ci/unit.xml
+            tmp/ci/evaluations.xml
+          if-no-files-found: warn
+          retention-days: 7

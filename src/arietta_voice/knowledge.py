@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
+import zipfile
 from pathlib import Path
 import re
 from typing import Any, Protocol
@@ -293,29 +294,42 @@ class VectorKnowledgeBackend:
         if not (manifest_path.exists() and sections_path.exists() and vectors_path.exists()):
             return False
 
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest_signature = _deserialize_signature(manifest.get("source_signature"))
-        if manifest.get("version") != INDEX_VERSION:
-            return False
-        if manifest.get("embedding_model") != self.config.embedding_model:
-            return False
-        if manifest.get("embedding_pooling") != EMBEDDING_POOLING:
-            return False
-        if int(manifest.get("snippet_char_limit", -1)) != self.config.snippet_char_limit:
-            return False
-        if manifest_signature != source_signature:
-            return False
-
-        vectors = np.load(vectors_path)
-        sections = _load_vector_section_records(sections_path)
-        if vectors.ndim != 2:
-            return False
-        if vectors.shape[0] != len(sections):
+        # An incomplete/corrupt cache is disposable. Keep keyword retrieval
+        # available and let an explicit index build repair it. Model failures
+        # are deliberately outside this boundary and still reach turn recovery.
+        try:
+            manifest = _read_manifest(manifest_path)
+            if manifest is None:
+                return False
+            sections = _load_vector_section_records(sections_path)
+            if not _manifest_matches(manifest, self.config, source_signature, len(sections)):
+                return False
+            source_paths = {item[0] for item in source_signature or ()}
+            if any(section.source_path.as_posix() not in source_paths for section in sections):
+                return False
+            if len({section.section_id for section in sections}) != len(sections):
+                return False
+            vectors = np.load(vectors_path, allow_pickle=False)
+            if not isinstance(vectors, np.ndarray):
+                vectors.close()  # Reject an npz archive disguised as the npy file.
+                return False
+            if (
+                vectors.ndim != 2
+                or vectors.shape != (len(sections), manifest.get("vector_dim"))
+                or (bool(sections) and vectors.shape[1] == 0)
+                or not np.issubdtype(vectors.dtype, np.floating)
+                or not np.isfinite(vectors).all()
+            ):
+                return False
+            vectors = vectors.astype(np.float32, copy=False)
+            if not np.isfinite(vectors).all():
+                return False
+        except (OSError, ValueError, TypeError, KeyError, OverflowError, EOFError, zipfile.BadZipFile):
             return False
 
         self._sections = sections
-        self._vectors = vectors.astype(np.float32, copy=False)
-        self._index_signature = manifest_signature
+        self._vectors = vectors
+        self._index_signature = source_signature
         self._manifest_loaded = True
         if preload_embedder and self._vectors.size:
             self._get_embedder()
@@ -406,13 +420,10 @@ def build_knowledge_index(config: KnowledgeConfig) -> dict[str, Any]:
     sections_path = index_dir / INDEX_SECTIONS_FILENAME
     vectors_path = index_dir / INDEX_VECTORS_FILENAME
 
-    current_manifest = _read_manifest(manifest_path)
+    cached = VectorKnowledgeBackend(config)
     if (
-        current_manifest is not None
-        and manifest_path.exists()
-        and sections_path.exists()
-        and vectors_path.exists()
-        and _manifest_matches(current_manifest, config, signature, len(sections))
+        cached._ensure_index_loaded(preload_embedder=False)
+        and len(cached._sections) == len(sections)
     ):
         return {
             "updated": False,
@@ -706,21 +717,9 @@ def _serialize_signature(signature: tuple[tuple[str, int, int], ...] | None) -> 
     return [[path, modified_ns, size] for path, modified_ns, size in signature]
 
 
-def _deserialize_signature(value: Any) -> tuple[tuple[str, int, int], ...] | None:
-    if value is None:
-        return None
-    rows: list[tuple[str, int, int]] = []
-    for item in value:
-        if not isinstance(item, (list, tuple)) or len(item) != 3:
-            return None
-        rows.append((str(item[0]), int(item[1]), int(item[2])))
-    return tuple(rows)
-
-
 def _read_manifest(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else None
 
 
 def _manifest_matches(
@@ -733,9 +732,10 @@ def _manifest_matches(
         manifest.get("version") == INDEX_VERSION
         and manifest.get("embedding_model") == config.embedding_model
         and manifest.get("embedding_pooling") == EMBEDDING_POOLING
-        and int(manifest.get("snippet_char_limit", -1)) == config.snippet_char_limit
-        and int(manifest.get("section_count", -1)) == section_count
-        and _deserialize_signature(manifest.get("source_signature")) == source_signature
+        and manifest.get("snippet_char_limit") == config.snippet_char_limit
+        and manifest.get("section_count") == section_count
+        and type(manifest.get("vector_dim")) is int
+        and manifest.get("source_signature") == _serialize_signature(source_signature)
     )
 
 
@@ -761,6 +761,11 @@ def _load_vector_section_records(path: Path) -> list[_VectorSectionRecord]:
         if not line.strip():
             continue
         payload = json.loads(line)
+        if not isinstance(payload, dict) or any(
+            not isinstance(payload.get(key), str)
+            for key in ("section_id", "source_path", "title", "snippet")
+        ) or not (payload.get("section_title") is None or isinstance(payload.get("section_title"), str)):
+            raise ValueError("Invalid cached section record")
         records.append(
             _VectorSectionRecord(
                 section_id=str(payload["section_id"]),

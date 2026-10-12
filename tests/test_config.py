@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from arietta_voice.config import config_to_dict, load_config
+from arietta_voice.config import config_to_dict, default_config, load_config
 
 
 def test_load_config_resolves_relative_paths(tmp_path: Path) -> None:
@@ -70,8 +70,8 @@ enabled = true
     assert config.memory.enabled is True
 
 
-def test_config_to_dict_redacts_aws_secrets() -> None:
-    config = load_config()
+def test_config_to_dict_redacts_aws_secrets(tmp_path) -> None:
+    config = default_config(tmp_path)
     config.models.aws_access_key_id = "AKIATESTVALUE"
     config.models.aws_secret_access_key = "secret-value"
     config.models.aws_session_token = "session-value"

@@ -11,9 +11,11 @@ from arietta_voice.worker import InferenceWorker, WorkerBusy, WorkerFailure, Wor
 
 class Handler:
     def __init__(self, config):
-        pass
+        self.config = config
 
     def handle(self, operation, payload):
+        if operation == "config":
+            return self.config.assistant.name
         if operation == "fail":
             raise RuntimeError("PRIVATE prompt")
         if operation == "crash":
@@ -38,6 +40,21 @@ def test_worker_serializes_reuses_and_reloads(worker):
     assert worker.call("ok", timeout_s=5) == first
     worker.invalidate()
     assert worker.call("ok", timeout_s=5) != first
+
+
+def test_spawned_worker_receives_config_snapshot_and_reloads_only_when_invalidated(tmp_path):
+    from arietta_voice.config import default_config
+    config = default_config(tmp_path)
+    config.assistant.name = "Synthetic first"
+    instance = InferenceWorker(config, handler_factory=Handler)
+    try:
+        assert instance.call("config", timeout_s=5) == "Synthetic first"
+        config.assistant.name = "Synthetic updated"
+        assert instance.call("config", timeout_s=5) == "Synthetic first"
+        instance.invalidate()
+        assert instance.call("config", timeout_s=5) == "Synthetic updated"
+    finally:
+        instance.close()
 
 
 def test_timeout_kills_work_before_next_request(worker, tmp_path):

@@ -7,16 +7,16 @@ from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.tools import ToolRegistry
 
 
-def test_tool_registry_handles_identity() -> None:
-    registry = ToolRegistry(default_config())
+def test_tool_registry_handles_identity(tmp_path) -> None:
+    registry = ToolRegistry(default_config(tmp_path))
     response = registry.maybe_handle("What is your name?")
 
     assert response is not None
     assert response.name == "get_assistant_identity"
 
 
-def test_tool_registry_only_loads_registered_tools() -> None:
-    config = default_config()
+def test_tool_registry_only_loads_registered_tools(tmp_path) -> None:
+    config = default_config(tmp_path)
     config.tools.enabled = ("assistant_identity",)
     registry = ToolRegistry(config)
 
@@ -24,14 +24,14 @@ def test_tool_registry_only_loads_registered_tools() -> None:
     assert registry.maybe_handle("What time is it?") is None
 
 
-def test_tool_registry_does_not_handle_system_info_deterministically() -> None:
-    registry = ToolRegistry(default_config())
+def test_tool_registry_does_not_handle_system_info_deterministically(tmp_path) -> None:
+    registry = ToolRegistry(default_config(tmp_path))
 
     assert registry.maybe_handle("How much RAM do you have?") is None
 
 
-def test_tool_registry_handles_local_time() -> None:
-    registry = ToolRegistry(default_config())
+def test_tool_registry_handles_local_time(tmp_path) -> None:
+    registry = ToolRegistry(default_config(tmp_path))
     response = registry.maybe_handle("What time is it?")
 
     assert response is not None
@@ -54,7 +54,7 @@ Visitors can grab lunch at the cafeteria and coffee at the cafe.
         encoding="utf-8",
     )
 
-    config = default_config()
+    config = default_config(tmp_path)
     config.knowledge.directory = knowledge_dir
     retriever = KnowledgeRetriever(config.knowledge)
     registry = ToolRegistry(config, knowledge_retriever=retriever)
@@ -68,8 +68,8 @@ Visitors can grab lunch at the cafeteria and coffee at the cafe.
     assert "Food and Dining" in response.context
 
 
-def test_tool_registry_raises_for_unknown_registered_tool() -> None:
-    config = default_config()
+def test_tool_registry_raises_for_unknown_registered_tool(tmp_path) -> None:
+    config = default_config(tmp_path)
     config.tools.enabled = ("missing_tool",)
 
     try:

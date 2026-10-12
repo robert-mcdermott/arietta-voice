@@ -58,17 +58,21 @@ does not automatically require a major version; user-visible compatibility does.
 4. Run the release checks:
 
    ```bash
-   uv sync --locked
+   uv run --no-project --python 3.13 scripts/check_release.py
+   uv sync --locked --group dev
    uv run --locked pytest
    uv run --locked arietta-voice --version
-   uv build
+   uv build --out-dir tmp/ci/dist
+   uv run --no-project --python 3.13 scripts/check_release.py --artifacts tmp/ci/dist
    git diff --check
    git diff --stat
    git ls-files knowledge
    ```
 
-   Check that wheel/sdist metadata matches the intended version and that no
-   personal data is packaged. For model/audio/runtime changes, also run the
+   Use a fresh artifact directory for each version. The automated check verifies
+   wheel/sdist versions and known private paths; still review public files for
+   accidentally pasted personal content. Confirm the hosted CI run passes on
+   the release commit. For model/audio/runtime changes, also run the
    hardware and evaluation gates in [ROADMAP.md](ROADMAP.md). Passing unit tests
    alone does not validate microphone operation or new model compatibility.
 5. Stage the intended files explicitly, inspect `git diff --cached`, and commit
@@ -89,10 +93,12 @@ No tag or release is created by the current review. No historical release date
 is inferred from the pre-existing `0.1.0` declaration. The next proposed patch
 is `0.1.1`; the roadmap's feature milestones begin at `0.2.0`.
 
-## Release automation to add
+## CI and remaining release automation
 
-CI should validate locked installs, tests, builds, version consistency, and the
-tracked-knowledge allowlist on pull requests. A tag-triggered release workflow
+CI validates locked installs, unit/process tests, synthetic evaluations, builds,
+version consistency, and tracked-private-file allowlists on pushes and pull
+requests. See [evals/README.md](evals/README.md) for commands and limits. A future
+tag-triggered release workflow
 should reject a tag that differs from package metadata and build from that exact
 commit. Keep publication separately authorized and retain a manual Apple Silicon
 audio smoke gate until suitable CI hardware exists. Never move an existing

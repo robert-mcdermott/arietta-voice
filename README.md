@@ -193,11 +193,18 @@ uv run arietta-voice knowledge-search "what can you help with"
 uv run arietta-voice knowledge-index
 ```
 
-Run tests:
+Run the isolated unit tests and synthetic evaluations:
 
 ```bash
-uv run pytest
+uv sync --locked --group dev
+uv run --locked pytest
 ```
+
+Tests use temporary config/knowledge and fake models/audio; they preserve local
+settings and require no credentials. CI adds tracked-private-file, locked-install,
+version, and wheel/sdist checks on Apple Silicon. See
+[synthetic evaluations and CI](evals/README.md) for coverage, individual checks,
+and the remaining hardware/model validation gates.
 
 ## Wake Word Behavior
 
