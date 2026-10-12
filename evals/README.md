@@ -87,8 +87,18 @@ allowed public source, fixture, README or default config still needs review.
 Custom data directories also need explicit ignore/check rules. Review staged
 changes before committing; ignore rules alone cannot remove earlier commits.
 
-CI is ready to run after this workflow is pushed; a local passing run is not a
-successful GitHub-hosted run. A hosted run must pass before release.
+Hosted CI was verified on October 11, 2026 (America/Los_Angeles):
+
+| Commit | Hosted run | Unit/process tests | Synthetic evaluations |
+| --- | --- | --- | --- |
+| `6023154` | [First CI run: passed](https://github.com/robert-mcdermott/arietta-voice/actions/runs/38199350677) | 308 passed | 43 passed |
+| `fe04096` | [Hardware-validation commit: passed](https://github.com/robert-mcdermott/arietta-voice/actions/runs/38201095806) | 326 passed | 43 passed |
+
+Both runs completed every step, including locked dependency installation,
+tracked-path/version checks, wheel/sdist build and inspection, the installed
+wheel's dependency-free version smoke test, and synthetic report upload. No CI
+fix was needed. A future release must still pass CI on its exact release commit;
+these runs establish the Phase 1 gate, not an exemption for later changes.
 
 ## Remaining release gates
 

@@ -35,9 +35,9 @@ To close the phase:
 
 1. Review and commit these changes with an explicit file list, preserving the
    user's separate config edits.
-2. Verify a hosted CI run after pushing the workflow. The tracked-knowledge
-   allowlist check is implemented and tested against forced additions, along
-   with config/private-path, package-content and version checks.
+2. Hosted CI verified October 11, 2026: the [first run](https://github.com/robert-mcdermott/arietta-voice/actions/runs/38199350677)
+   passed the tracked-knowledge allowlist, forced-addition regression,
+   config/private-path, package-content and version checks.
 3. Choose whether to tag the historical `0.1.0` baseline; its version already
    existed, but no local release tag was found. Prepare `0.1.1` with the release
    procedure and publish only after review.
@@ -49,7 +49,11 @@ personalization files. No release tag is created by this review.
 
 ## Phase 1 Protect privacy and fix the foundation
 
-**Implementation status:** the first batch implements items 1, 4, and 5 below:
+**Status: complete as of October 11, 2026.** Implementation, synthetic tests,
+hosted CI, hardware smoke and the initial 15-minute live soak have passed.
+Release/version tagging remains a separate step under [RELEASING.md](RELEASING.md).
+
+The first batch implements items 1, 4, and 5 below:
 minimal public health; opt-in active conversation logging/status; no passive
 transcript logging; configurable, process-safe JSONL rotation; disabled-tool
 enforcement; pair-based history; preserved inline command text; direct-farewell
@@ -91,9 +95,16 @@ for resource measurements, queue drops, the synthetic persona correction, and
 the limited load exercised; [the test guide](evals/HARDWARE_VALIDATION.md) covers
 repeatable live and repeated-model checks.
 
-Phase 1 remains open for the first hosted CI run. The initial hardware and soak
-gates have passed; longer/load/reconnect tests and the Phase 2 latency baseline
-remain separate work. Native audio-device stalls and admin
+The [first hosted CI run](https://github.com/robert-mcdermott/arietta-voice/actions/runs/38199350677)
+passed on `6023154` (308 unit/process tests and 43 synthetic evaluations).
+The [hardware-validation commit's run](https://github.com/robert-mcdermott/arietta-voice/actions/runs/38201095806)
+also passed on `fe04096` (326 unit/process tests and 43 synthetic evaluations).
+Both Apple Silicon/Python 3.13 runs passed locked installation, tracked-file
+privacy/version checks, wheel/sdist inspection, and installed-wheel smoke tests.
+There were no hosted CI failures requiring a code or workflow fix.
+
+Longer/load/reconnect tests and the Phase 2 latency baseline remain separate
+work. Native audio-device stalls and admin
 maintenance actions are not covered by inference deadlines. Voice and API workers
 are serialized individually; shared GPU scheduling remains future work. No release
 bump or tag accompanies these implementation batches.

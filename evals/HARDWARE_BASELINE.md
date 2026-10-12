@@ -93,5 +93,11 @@ rate without labeled audio.
 
 Still separate: sustained repeated-model load, representative quality tests,
 100-turn stage/first-audio latency measurements, measured interruption latency,
-sleep/device reconnect, the first hosted CI run, and the Phase 4/5 eight-hour
-and 24-hour soak gates. This baseline does not mark those checks complete.
+sleep/device reconnect, and the Phase 4/5 eight-hour and 24-hour soak gates.
+This baseline does not mark those checks complete.
+
+The hosted CI gate was subsequently verified on October 11, 2026: both the
+[first workflow run](https://github.com/robert-mcdermott/arietta-voice/actions/runs/38199350677)
+and the [hardware-validation commit's run](https://github.com/robert-mcdermott/arietta-voice/actions/runs/38201095806)
+passed. See [the CI evidence](README.md#ci-and-privacy-boundaries) for test counts
+and packaging checks. Together with this hardware baseline, that closes Phase 1.
