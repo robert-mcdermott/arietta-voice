@@ -16,12 +16,26 @@ If you want the short overview, start with [README.md](./README.md). If you want
 
 The main files and directories you will touch are:
 
-- [`config/arietta_voice.toml`](./config/arietta_voice.toml): main configuration
-- [`config/SOUL.md`](./config/SOUL.md): the assistant's personality, tone, and behavior rules
+- [`config/arietta_voice.toml`](./config/arietta_voice.toml): tracked shared defaults
+- `config/arietta_voice.local.toml`: ignored private configuration
+- `config/SOUL.local.md`: ignored private personality, tone, and behavior rules
 - `config/MEMORY.md`: optional long-term memory file, created automatically if memory is enabled
 - [`knowledge/`](./knowledge): your markdown knowledge base
 - [`src/arietta_voice/tools/`](./src/arietta_voice/tools): deterministic tools
 - [`src/arietta_voice/model_tools/`](./src/arietta_voice/model_tools): model-requested tools
+
+Create private copies once before customizing:
+
+```bash
+uv run arietta-voice config-init
+```
+
+This preserves existing effective settings and persona content, leaves the
+original files untouched, and saves private backups under `config/.private-backups/`.
+It refuses to overwrite existing private files. Once you have verified the
+copies, restore any personal edits in tracked templates to their committed
+defaults; keep future customization in the private files. See
+[configuration precedence](README.md#configuration) for custom paths and merging.
 
 Good first commands:
 
@@ -34,8 +48,15 @@ uv run arietta-voice knowledge-search "what can you help with"
 For operational work, the admin console can be started with:
 
 ```bash
+uv run arietta-voice admin-setup
 uv run arietta-voice serve
 ```
+
+Run `admin-setup` once, using the same `--config` as `serve` if customized.
+There is no built-in password. It writes an ignored credential file containing
+a salted password hash, usable by both interactive and LaunchAgent starts.
+Source editing is disabled until explicitly enabled; see
+[Admin tool permissions](README.md#admin-tool-permissions).
 
 You can run `uv run arietta-voice` and `uv run arietta-voice serve` in separate
 terminals. In that setup the admin console can inspect health, logs, runtime
@@ -58,7 +79,7 @@ The default assistant name and wake word are `Bridget`. The examples below use `
 
 ### Change the spoken name
 
-Edit [`config/arietta_voice.toml`](./config/arietta_voice.toml):
+Edit `config/arietta_voice.local.toml`:
 
 ```toml
 [assistant]
@@ -96,7 +117,7 @@ session_timeout_s = 20.0
 
 ### Give it a new soul
 
-Edit [`config/SOUL.md`](./config/SOUL.md). Keep this file focused on durable behavior, not changing facts.
+Edit `config/SOUL.local.md`. Keep this file focused on durable behavior, not changing facts.
 
 Good things to put in `SOUL.md`:
 
@@ -184,7 +205,7 @@ Use a tool instead if:
 
 ## 4. Choose A Knowledge Backend
 
-Knowledge retrieval is configured in `[knowledge]` inside [`config/arietta_voice.toml`](./config/arietta_voice.toml).
+Knowledge retrieval is configured in `[knowledge]` inside `config/arietta_voice.local.toml`.
 
 Retrieval skips hidden/underscore-prefixed files and directories, and symbolic
 links that resolve outside the configured knowledge directory. Keep searchable
@@ -699,7 +720,11 @@ If you use a custom config path, include it in `ProgramArguments`:
 
 Create `~/Library/LaunchAgents/com.arietta.admin.plist`.
 
-Replace the same paths, and set a real admin password:
+Replace the same paths. First run `uv run arietta-voice admin-setup` from the
+project directory (with the same `--config`, if customized). The LaunchAgent
+reads that private credential file; no password needs to be stored in its plist.
+If an older plist sets `ARIETTA_ADMIN_PASSWORD`, remove that environment entry
+to use the credential file, since explicit environment credentials take precedence.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -711,14 +736,6 @@ Replace the same paths, and set a real admin password:
 
     <key>WorkingDirectory</key>
     <string>/Users/your-user/mycode/arietta-voice</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-      <key>ARIETTA_ADMIN_USERNAME</key>
-      <string>admin</string>
-      <key>ARIETTA_ADMIN_PASSWORD</key>
-      <string>change-this-password</string>
-    </dict>
 
     <key>ProgramArguments</key>
     <array>
@@ -880,7 +897,7 @@ If the file starts becoming long and factual, move those facts into knowledge ar
 If you are setting up Arietta Voice for the first time, this is a good sequence:
 
 1. Change the assistant name and wake word.
-2. Rewrite `config/SOUL.md`.
+2. Customize `config/SOUL.local.md` after running `config-init` once.
 3. Add 3-5 knowledge articles for the most common questions.
 4. Start with `backend = "keyword"`.
 5. Verify retrieval with `knowledge-search`.

@@ -57,11 +57,18 @@ format 2; and retrieval root containment. Regression tests use synthetic data
 and mocked hardware/models. Rebuild old semantic indexes with
 `uv run arietta-voice knowledge-index` and restart runtime/API processes.
 
-Phase 1 remains open. Next are admin credential/source-edit hardening (item 2),
-private config/persona migration (item 3), bounded audio and turn recovery
-(item 6), and CI/evaluation coverage (item 7). Logging tests cover concurrent
+The second batch implements items 2 and 3: explicit admin credential setup with
+private password hashes (or explicit environment credentials); source writes
+disabled by default; static tool inventories/source reads; Host/origin checks;
+ignored local config/persona overrides; a preserving migration command; and
+private persistence of admin tool selections. Bedrock's text-data boundary is
+documented in README. Tests cover authentication, blocked mutations, non-executing
+inventory views, config precedence, migration, and preserved settings.
+
+Phase 1 remains open for bounded audio and turn recovery (item 6), and
+CI/evaluation coverage (item 7). Logging tests cover concurrent
 processes; inference ownership and full hardware/state-transition gates remain
-outstanding. No release bump or tag accompanies this first batch.
+outstanding. No release bump or tag accompanies these implementation batches.
 
 1. Remove transcripts/paths from public health; make content logging opt-in,
    suppress passive-speech persistence, and add retention/rotation settings.

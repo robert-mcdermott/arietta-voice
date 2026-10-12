@@ -1,3 +1,6 @@
+[admin]
+allow_source_editing = false
+
 [assistant]
 name = "Bridget"
 identity = "I'm Bridget, a local voice-first assistant built with Arietta Voice. I can answer questions from my local knowledge base, use tools, and optionally route chat turns through AWS Bedrock."

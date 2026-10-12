@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from arietta_voice import __version__
@@ -9,6 +11,13 @@ from arietta_voice.api import AriettaApiService, create_app
 from arietta_voice.config import load_config
 from arietta_voice.runtime_status import runtime_status_path
 
+
+
+@pytest.fixture(autouse=True)
+def explicit_admin_credentials(monkeypatch):
+    monkeypatch.setenv("ARIETTA_ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ARIETTA_ADMIN_PASSWORD", "test-only-long-password")
+    monkeypatch.delenv("ARIETTA_ADMIN_ALLOWED_HOSTS", raising=False)
 
 def _write_api_config(tmp_path: Path) -> Path:
     config_dir = tmp_path / "config"
@@ -65,7 +74,7 @@ min_score = 1.0
 
 def _client(config_path: Path) -> TestClient:
     service = AriettaApiService(config_path)
-    return TestClient(create_app(service=service))
+    return TestClient(create_app(service=service), base_url="http://localhost")
 
 
 class FakeRuntimeSupervisor:
@@ -100,8 +109,102 @@ class FakeRuntimeSupervisor:
 
 def _client_with_service(config_path: Path) -> tuple[TestClient, AriettaApiService]:
     service = AriettaApiService(config_path)
-    client = TestClient(create_app(service=service))
+    client = TestClient(create_app(service=service), base_url="http://localhost")
     return client, service
+
+
+def test_api_refuses_to_start_without_admin_setup(tmp_path, monkeypatch):
+    monkeypatch.delenv("ARIETTA_ADMIN_PASSWORD")
+    with pytest.raises(ValueError, match="admin-setup"):
+        create_app(_write_api_config(tmp_path))
+
+
+def test_legacy_default_password_is_not_accepted(tmp_path):
+    client = _client(_write_api_config(tmp_path))
+    response = client.get("/api/config", auth=("admin", "password"))
+    assert response.status_code == 401
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_api_loads_private_credentials_and_source_permission(tmp_path, monkeypatch):
+    from arietta_voice.admin_auth import save_admin_credentials
+    from arietta_voice.private_config import update_private_section
+
+    config_path = _write_api_config(tmp_path)
+    monkeypatch.delenv("ARIETTA_ADMIN_PASSWORD")
+    save_admin_credentials(config_path, "owner", "private-login-password")
+    update_private_section(config_path, "admin", {"allow_source_editing": True})
+    client = _client(config_path)
+    auth = ("owner", "private-login-password")
+    assert client.get("/api/tools", auth=auth).json()["source_editing_enabled"] is True
+    payload = client.get("/api/config", auth=auth)
+    assert payload.status_code == 200
+    assert "private-login-password" not in payload.text
+    assert "password_hash" not in payload.text
+
+
+@pytest.mark.parametrize("method, path, payload", [
+    ("post", "/api/tools/create", {"module_name": "blocked"}),
+    ("post", "/api/model-tools/create", {"module_name": "blocked"}),
+    ("put", "/api/tools/local_time/source", {"content": "raise RuntimeError('should not execute')"}),
+    ("put", "/api/model-tools/system_info/source", {"content": "raise RuntimeError('should not execute')"}),
+])
+def test_source_mutations_are_disabled_by_default(tmp_path, monkeypatch, method, path, payload):
+    client, service = _client_with_service(_write_api_config(tmp_path))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Source mutation reached the service while disabled")
+
+    for name in ("create_tool", "create_model_tool", "write_tool_source", "write_model_tool_source"):
+        monkeypatch.setattr(service, name, forbidden)
+    assert client.request(method, path, json=payload).status_code == 401
+    result = client.request(method, path, json=payload, auth=("admin", "test-only-long-password"))
+    assert result.status_code == 403
+    assert "Source editing is disabled" in result.json()["detail"]
+
+
+def test_browser_boundaries_and_no_store(tmp_path):
+    client = _client(_write_api_config(tmp_path))
+    auth = ("admin", "test-only-long-password")
+    assert client.get("/health", headers={"Host": "attacker.example"}).status_code == 400
+    for headers in ({"Origin": "https://attacker.example"}, {"Origin": "null"}, {"Sec-Fetch-Site": "cross-site"}):
+        response = client.post("/api/tools/enabled", json={"enabled": []}, auth=auth, headers=headers)
+        assert response.status_code == 403
+    response = client.post("/api/tools/enabled", json={"enabled": []}, auth=auth, headers={"Origin": "http://localhost"})
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert client.get("/api/model-tools/instructions", auth=auth).status_code == 405
+
+
+def test_static_inventory_and_source_reads_do_not_execute_plugins(tmp_path, monkeypatch):
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    marker = tmp_path / "executed"
+    tools_dir = tmp_path / "plugins"
+    tools_dir.mkdir()
+    (tools_dir / "side_effect.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n"
+        "def create_tool(context):\n    raise RuntimeError('factory executed')\n"
+    )
+    external = tmp_path / "external_side_effect"
+    external.mkdir()
+    (external / "__init__.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).write_text('external import')")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    service.tool_admin.tools_directory = tools_dir
+    service.model_tool_admin.tools_directory = tools_dir
+    service.config.tools.enabled = ("side_effect", "external_side_effect.plugin")
+    service.config.model_tools.enabled = ("side_effect", "external_side_effect.plugin")
+    auth = ("admin", "test-only-long-password")
+    for path in ("/api/state", "/api/tools", "/api/tools/side_effect/source", "/api/model-tools/side_effect/source"):
+        assert client.get(path, auth=auth).status_code == 200
+        assert not marker.exists()
+    inventory = client.get("/api/tools", auth=auth).json()
+    assert inventory["assistant_tools"]["loaded"] == []
+    assert inventory["model_tools"]["instruction_text"] is None
+    assert all(tool["valid"] is None for tool in inventory["assistant_tools"]["tools"])
+    # Validation is an explicit authenticated action that is allowed to import.
+    assert client.post("/api/tools/side_effect/validate", auth=auth).status_code == 200
+    assert marker.read_text() == "imported"
 
 
 def test_health_is_public_and_contains_only_liveness(tmp_path: Path, monkeypatch) -> None:
@@ -127,7 +230,7 @@ def test_health_is_public_and_contains_only_liveness(tmp_path: Path, monkeypatch
 def test_detailed_health_requires_authentication(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
     assert client.get("/api/health").status_code == 401
-    response = client.get("/api/health", auth=("admin", "password"))
+    response = client.get("/api/health", auth=("admin", "test-only-long-password"))
     assert response.status_code == 200
     assert response.json()["assistant"] == "Test Assistant"
     assert "diagnostics" in response.json()
@@ -150,7 +253,7 @@ def test_chat_without_tools_does_not_load_or_execute_plugins(tmp_path: Path, mon
     monkeypatch.setattr(service, "probe_tools", forbidden)
     monkeypatch.setattr(api, "_AdHocModelToolRegistry", forbidden)
     monkeypatch.setattr(service, "_llm_generate", generate)
-    response = client.post("/api/chat", auth=("admin", "password"),
+    response = client.post("/api/chat", auth=("admin", "test-only-long-password"),
                            json={"message": "What is your name?", "use_tools": False})
     assert response.status_code == 200
     assert response.json()["used_tool"] is None
@@ -163,7 +266,7 @@ def test_admin_console_requires_basic_auth(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
     unauthenticated = client.get("/")
-    authenticated = client.get("/", auth=("admin", "password"))
+    authenticated = client.get("/", auth=("admin", "test-only-long-password"))
 
     assert unauthenticated.status_code == 401
     assert authenticated.status_code == 200
@@ -174,8 +277,8 @@ def test_state_and_config_are_authenticated(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
     unauthorized = client.get("/api/state")
-    authorized = client.get("/api/state", auth=("admin", "password"))
-    config_response = client.get("/api/config", auth=("admin", "password"))
+    authorized = client.get("/api/state", auth=("admin", "test-only-long-password"))
+    config_response = client.get("/api/config", auth=("admin", "test-only-long-password"))
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
@@ -188,7 +291,7 @@ def test_state_and_config_are_authenticated(tmp_path: Path) -> None:
 def test_runtime_endpoint_reports_unmanaged_runtime_status(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
-    response = client.get("/api/runtime", auth=("admin", "password"))
+    response = client.get("/api/runtime", auth=("admin", "test-only-long-password"))
 
     assert response.status_code == 200
     assert response.json()["managed_by_api"] is False
@@ -199,9 +302,9 @@ def test_runtime_control_endpoints_delegate_to_supervisor(tmp_path: Path) -> Non
     client, service = _client_with_service(_write_api_config(tmp_path))
     service.runtime_supervisor = FakeRuntimeSupervisor()
 
-    start = client.post("/api/runtime/start", auth=("admin", "password"))
-    state = client.get("/api/state", auth=("admin", "password"))
-    stop = client.post("/api/runtime/stop", auth=("admin", "password"))
+    start = client.post("/api/runtime/start", auth=("admin", "test-only-long-password"))
+    state = client.get("/api/state", auth=("admin", "test-only-long-password"))
+    stop = client.post("/api/runtime/stop", auth=("admin", "test-only-long-password"))
 
     assert start.status_code == 200
     assert start.json()["managed_process_running"] is True
@@ -215,7 +318,7 @@ def test_knowledge_search_endpoint(tmp_path: Path) -> None:
 
     response = client.post(
         "/api/knowledge/search",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"query": "where can visitors get lunch"},
     )
 
@@ -230,12 +333,12 @@ def test_knowledge_file_crud_endpoints(tmp_path: Path) -> None:
 
     created = client.put(
         "/api/knowledge/files/new-note.md",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"content": "# New Note\n\nThe dashboard can edit knowledge."},
     )
-    listed = client.get("/api/knowledge/files", auth=("admin", "password"))
-    read = client.get("/api/knowledge/files/new-note.md", auth=("admin", "password"))
-    deleted = client.delete("/api/knowledge/files/new-note.md", auth=("admin", "password"))
+    listed = client.get("/api/knowledge/files", auth=("admin", "test-only-long-password"))
+    read = client.get("/api/knowledge/files/new-note.md", auth=("admin", "test-only-long-password"))
+    deleted = client.delete("/api/knowledge/files/new-note.md", auth=("admin", "test-only-long-password"))
 
     assert created.status_code == 200
     assert created.json()["created"] is True
@@ -249,7 +352,7 @@ def test_knowledge_file_endpoint_rejects_path_traversal(tmp_path: Path) -> None:
 
     response = client.put(
         "/api/knowledge/files/%2E%2E/secret.md",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"content": "nope"},
     )
 
@@ -271,7 +374,7 @@ def test_logs_endpoint_reads_latest_events(tmp_path: Path) -> None:
     )
     client = _client(config_path)
 
-    response = client.get("/api/logs?limit=1", auth=("admin", "password"))
+    response = client.get("/api/logs?limit=1", auth=("admin", "test-only-long-password"))
 
     assert response.status_code == 200
     assert response.json()["items"][0]["event"] == "newer"
@@ -296,10 +399,10 @@ def test_logs_endpoint_paginates_and_filters(tmp_path: Path) -> None:
     )
     client = _client(config_path)
 
-    first_page = client.get("/api/logs?limit=2", auth=("admin", "password"))
-    second_page = client.get("/api/logs?limit=2&offset=2", auth=("admin", "password"))
-    event_filtered = client.get("/api/logs?limit=10&event=alpha", auth=("admin", "password"))
-    search_filtered = client.get("/api/logs?limit=10&q=banana", auth=("admin", "password"))
+    first_page = client.get("/api/logs?limit=2", auth=("admin", "test-only-long-password"))
+    second_page = client.get("/api/logs?limit=2&offset=2", auth=("admin", "test-only-long-password"))
+    event_filtered = client.get("/api/logs?limit=10&event=alpha", auth=("admin", "test-only-long-password"))
+    search_filtered = client.get("/api/logs?limit=10&q=banana", auth=("admin", "test-only-long-password"))
 
     assert [item["event"] for item in first_page.json()["items"]] == ["gamma", "alpha"]
     assert first_page.json()["has_next"] is True
@@ -317,7 +420,7 @@ def test_chat_endpoint_can_answer_with_deterministic_tool(tmp_path: Path) -> Non
 
     response = client.post(
         "/api/chat",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"message": "What is your name?"},
     )
 
@@ -331,22 +434,22 @@ def test_chat_endpoint_can_answer_with_deterministic_tool(tmp_path: Path) -> Non
 def test_tools_endpoint_lists_registry_inventory(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
-    response = client.get("/api/tools", auth=("admin", "password"))
+    response = client.get("/api/tools", auth=("admin", "test-only-long-password"))
 
     payload = response.json()
     assistant_tools = payload["assistant_tools"]["tools"]
     assert response.status_code == 200
     assert any(
-        tool["configured_name"] == "assistant_identity" and tool["enabled"] and tool["valid"]
+        tool["configured_name"] == "assistant_identity" and tool["enabled"] and tool["syntax_valid"]
         for tool in assistant_tools
     )
     assert any(
-        tool["configured_name"] == "local_time" and not tool["enabled"] and tool["valid"]
+        tool["configured_name"] == "local_time" and not tool["enabled"] and tool["syntax_valid"]
         for tool in assistant_tools
     )
     assert payload["assistant_tools"]["load_errors"] == []
 
-    validated = client.post("/api/tools/assistant_identity/validate", auth=("admin", "password"))
+    validated = client.post("/api/tools/assistant_identity/validate", auth=("admin", "test-only-long-password"))
     assert validated.status_code == 200
     assert validated.json()["enabled"] is True
 
@@ -359,7 +462,7 @@ def test_tools_endpoint_reports_load_errors(tmp_path: Path) -> None:
     (tools_dir / "broken_tool.py").write_text("BROKEN = True\n", encoding="utf-8")
     service.tool_admin.tools_directory = tools_dir
 
-    response = client.get("/api/tools", auth=("admin", "password"))
+    response = client.get("/api/tools", auth=("admin", "test-only-long-password"))
 
     load_errors = response.json()["assistant_tools"]["load_errors"]
     assert response.status_code == 200
@@ -368,17 +471,19 @@ def test_tools_endpoint_reports_load_errors(tmp_path: Path) -> None:
 
 def test_tools_enabled_endpoint_persists_config(tmp_path: Path) -> None:
     config_path = _write_api_config(tmp_path)
+    original = config_path.read_bytes()
     client = _client(config_path)
 
     response = client.post(
         "/api/tools/enabled",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"enabled": ["local_time"]},
     )
 
     assert response.status_code == 200
     assert response.json()["enabled"] == ["local_time"]
     assert load_config(config_path).tools.enabled == ("local_time",)
+    assert config_path.read_bytes() == original
 
 
 def test_specific_tool_probe_can_run_disabled_tool(tmp_path: Path) -> None:
@@ -386,7 +491,7 @@ def test_specific_tool_probe_can_run_disabled_tool(tmp_path: Path) -> None:
 
     response = client.post(
         "/api/tools/local_time/probe",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"text": "What time is it?"},
     )
 
@@ -399,11 +504,12 @@ def test_specific_tool_probe_can_run_disabled_tool(tmp_path: Path) -> None:
 def test_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
     config_path = _write_api_config(tmp_path)
     client, service = _client_with_service(config_path)
+    service.config.admin.allow_source_editing = True
     service.tool_admin.tools_directory = tmp_path / "generated_tools"
 
     created = client.post(
         "/api/tools/create",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={
             "module_name": "Demo Tool",
             "trigger_phrase": "banana checkout",
@@ -413,10 +519,10 @@ def test_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
     )
     probe = client.post(
         "/api/tools/demo_tool/probe",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"text": "please run banana checkout"},
     )
-    validated = client.post("/api/tools/demo_tool/validate", auth=("admin", "password"))
+    validated = client.post("/api/tools/demo_tool/validate", auth=("admin", "test-only-long-password"))
 
     assert created.status_code == 200
     assert created.json()["module_name"] == "demo_tool"
@@ -435,11 +541,12 @@ def test_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
 def test_tool_source_endpoints_read_write_and_validate(tmp_path: Path) -> None:
     config_path = _write_api_config(tmp_path)
     client, service = _client_with_service(config_path)
+    service.config.admin.allow_source_editing = True
     service.tool_admin.tools_directory = tmp_path / "generated_tools"
 
     created = client.post(
         "/api/tools/create",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={
             "module_name": "Source Demo",
             "trigger_phrase": "source demo",
@@ -447,19 +554,19 @@ def test_tool_source_endpoints_read_write_and_validate(tmp_path: Path) -> None:
             "enable": True,
         },
     )
-    read = client.get("/api/tools/source_demo/source", auth=("admin", "password"))
+    read = client.get("/api/tools/source_demo/source", auth=("admin", "test-only-long-password"))
     updated_content = read.json()["content"].replace(
         "Original source response.",
         "Edited source response.",
     )
     saved = client.put(
         "/api/tools/source_demo/source",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"content": updated_content},
     )
     probe = client.post(
         "/api/tools/source_demo/probe",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"text": "please run source demo"},
     )
 
@@ -475,7 +582,7 @@ def test_tool_source_endpoints_read_write_and_validate(tmp_path: Path) -> None:
 def test_model_tools_endpoint_lists_registry_inventory(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
-    response = client.get("/api/tools", auth=("admin", "password"))
+    response = client.get("/api/tools", auth=("admin", "test-only-long-password"))
 
     payload = response.json()
     model_tools = payload["model_tools"]["tools"]
@@ -483,8 +590,8 @@ def test_model_tools_endpoint_lists_registry_inventory(tmp_path: Path) -> None:
     assert any(
         tool["configured_name"] == "system_info"
         and not tool["enabled"]
-        and tool["valid"]
-        and tool["active"]
+        and tool["syntax_valid"]
+        and tool["active"] is None
         for tool in model_tools
     )
     assert payload["model_tools"]["load_errors"] == []
@@ -496,10 +603,10 @@ def test_model_tools_enabled_endpoint_persists_config_and_instructions(tmp_path:
 
     enabled = client.post(
         "/api/model-tools/enabled",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"enabled": ["system_info"]},
     )
-    instructions = client.get("/api/model-tools/instructions", auth=("admin", "password"))
+    instructions = client.post("/api/model-tools/instructions", auth=("admin", "test-only-long-password"))
 
     assert enabled.status_code == 200
     assert enabled.json()["enabled"] == ["system_info"]
@@ -513,7 +620,7 @@ def test_model_tool_invoke_can_run_disabled_tool(tmp_path: Path) -> None:
 
     response = client.post(
         "/api/model-tools/system_info/invoke",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"arguments": {}},
     )
 
@@ -529,11 +636,12 @@ def test_model_tool_invoke_can_run_disabled_tool(tmp_path: Path) -> None:
 def test_model_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
     config_path = _write_api_config(tmp_path)
     client, service = _client_with_service(config_path)
+    service.config.admin.allow_source_editing = True
     service.model_tool_admin.tools_directory = tmp_path / "generated_model_tools"
 
     created = client.post(
         "/api/model-tools/create",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={
             "module_name": "Demo Model Tool",
             "description": "you need a demo model tool result",
@@ -544,12 +652,12 @@ def test_model_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
     )
     invoked = client.post(
         "/api/model-tools/demo_model_tool/invoke",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"arguments": {"topic": "widgets"}},
     )
     validated = client.post(
         "/api/model-tools/demo_model_tool/validate",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
     )
 
     assert created.status_code == 200
@@ -572,11 +680,12 @@ def test_model_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
 def test_model_tool_source_endpoints_read_write_and_invoke(tmp_path: Path) -> None:
     config_path = _write_api_config(tmp_path)
     client, service = _client_with_service(config_path)
+    service.config.admin.allow_source_editing = True
     service.model_tool_admin.tools_directory = tmp_path / "generated_model_tools"
 
     created = client.post(
         "/api/model-tools/create",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={
             "module_name": "Source Model Tool",
             "description": "you need a source model tool result",
@@ -585,19 +694,19 @@ def test_model_tool_source_endpoints_read_write_and_invoke(tmp_path: Path) -> No
             "enable": True,
         },
     )
-    read = client.get("/api/model-tools/source_model_tool/source", auth=("admin", "password"))
+    read = client.get("/api/model-tools/source_model_tool/source", auth=("admin", "test-only-long-password"))
     updated_content = read.json()["content"].replace(
         "Original model follow-up.",
         "Edited model follow-up.",
     )
     saved = client.put(
         "/api/model-tools/source_model_tool/source",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"content": updated_content},
     )
     invoked = client.post(
         "/api/model-tools/source_model_tool/invoke",
-        auth=("admin", "password"),
+        auth=("admin", "test-only-long-password"),
         json={"arguments": {"topic": "source"}},
     )
 

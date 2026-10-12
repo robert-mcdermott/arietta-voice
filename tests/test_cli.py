@@ -36,3 +36,35 @@ def test_runtime_failures_do_not_leak_prompt_text_by_default(tmp_path, monkeypat
     assert cli.main() == 1
     assert "RuntimeError" in caplog.text
     assert ("PRIVATE PROMPT" in caplog.text) is content_enabled
+
+
+def test_admin_setup_uses_hidden_prompts_and_never_prints_password(tmp_path, monkeypatch, capsys):
+    from arietta_voice.admin_auth import load_admin_credentials
+
+    path = tmp_path / "app.toml"
+    path.write_text("")
+    monkeypatch.delenv("ARIETTA_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setattr(sys, "argv", ["arietta-voice", "admin-setup", "--config", str(path)])
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "synthetic-long-password")
+    assert cli.main() == 0
+    assert "synthetic-long-password" not in capsys.readouterr().out
+    assert load_admin_credentials(path).verify("admin", "synthetic-long-password")
+
+
+def test_admin_setup_refuses_echoing_password_fallback(tmp_path, monkeypatch, capsys):
+    import warnings
+
+    path = tmp_path / "app.toml"
+    path.write_text("")
+    monkeypatch.setattr(sys, "argv", ["arietta-voice", "admin-setup", "--config", str(path)])
+
+    def unsafe_prompt(prompt):
+        warnings.warn("Cannot hide input", cli.getpass.GetPassWarning)
+        raise AssertionError("Password input must not proceed without echo suppression")
+
+    monkeypatch.setattr(cli.getpass, "getpass", unsafe_prompt)
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+    assert error.value.code == 2
+    assert "interactive terminal" in capsys.readouterr().err
+    assert not (tmp_path / "app.admin.json").exists()

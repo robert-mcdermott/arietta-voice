@@ -7,11 +7,26 @@ version policy and the release procedure.
 
 ### Added
 
+- `config-init` creates ignored, owner-only private config/persona snapshots and
+  backups while retaining original files. Sibling `.local.toml` settings override
+  the selected base config; CLI runtime overrides take precedence.
+- `admin-setup` creates a private salted PBKDF2-SHA256 password hash. Credentials
+  are now required; explicit environment credentials remain supported.
+- Admin Host/origin checks and non-cacheable responses.
+
 - `arietta-voice --version` and `arietta-voice run --version` without loading
   configuration, models, or audio hardware.
 - Project review, phased roadmap, and release/versioning instructions.
 
 ### Changed
+
+- Removed the built-in admin password and authentication bypass. Credential
+  setup must complete before starting the API.
+- Tool creation/source writes require `admin.allow_source_editing = true`.
+  Inventory and source reads inspect syntax/literal metadata without loading
+  plugins. Runtime validation remains an explicit authenticated action.
+- Tool enablement changes persist atomically in the private config instead of
+  changing tracked defaults. Instruction preview now uses POST rather than GET.
 
 - Package and API version reporting now read installed metadata derived from
   `pyproject.toml`, removing duplicate hardcoded version declarations.
@@ -49,6 +64,17 @@ version policy and the release procedure.
 - Knowledge retrieval excludes links outside its root and hidden directories.
 
 ### Migration notes
+
+- Run `uv run arietta-voice config-init` once to preserve existing settings and
+  persona in private files, then customize those files. The command never resets
+  tracked originals; review the copies before restoring tracked defaults.
+- Run `uv run arietta-voice admin-setup` once with the same base `--config` used
+  by `serve`. Restart the API after credential changes. Old default credentials
+  no longer work; remove obsolete password environment entries to use the hash
+  file. Source editing stays disabled unless explicitly enabled in config.
+- Local settings, persona copies, credential hashes, migration backups, and
+  `.working` config copies under `config/` are now ignored. Custom directories
+  require their own ignore rules; already tracked private files remain tracked.
 
 - Existing custom articles remain in place. If an article was previously
   tracked in your checkout, remove that specific path from the Git index with

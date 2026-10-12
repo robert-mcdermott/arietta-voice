@@ -15,8 +15,8 @@ add knowledge articles for your environment, configure the wake word, and add
 deterministic or model-called tools for the things you want it to do.
 
 The default assistant persona is named `Bridget`, and the default wake word is
-also `Bridget`. Both are easy to change in
-[`config/arietta_voice.toml`](./config/arietta_voice.toml).
+also `Bridget`. Both are easy to change in your private
+`config/arietta_voice.local.toml` after running `uv run arietta-voice config-init`.
 
 For a detailed customization walkthrough, see [GETTING_STARTED.md](./GETTING_STARTED.md).
 
@@ -106,15 +106,30 @@ Run diagnostics:
 uv run arietta-voice doctor
 ```
 
-Run the HTTP API and admin console:
+Set up admin credentials once, then run the HTTP API and admin console:
 
 ```bash
+uv run arietta-voice admin-setup
 uv run arietta-voice serve
 ```
 
 The admin console is available at `http://127.0.0.1:8765/admin`.
-The initial local credentials are `admin` / `password`; override them with
-`ARIETTA_ADMIN_USERNAME` and `ARIETTA_ADMIN_PASSWORD`.
+There is no default password. `admin-setup` prompts without echoing your password
+and stores a salted PBKDF2-SHA256 hash in ignored, owner-only
+`config/arietta_voice.admin.json`. The username defaults to `admin`; use
+`--username` to change it and `--replace` to rotate credentials. Passwords must
+contain at least 12 printable ASCII characters. Restart the API after rotation.
+
+Alternatively, supply `ARIETTA_ADMIN_PASSWORD` and optionally
+`ARIETTA_ADMIN_USERNAME` through your environment. An explicitly set environment
+password takes precedence over the credential file and must meet the same
+requirements. The server refuses to start without valid credentials.
+
+Keep the default loopback binding. For remote use, put the service behind HTTPS
+and list exact hostnames in comma-separated `ARIETTA_ADMIN_ALLOWED_HOSTS`;
+HTTP Basic credentials are not encrypted by HTTP itself. The API rejects
+untrusted Host headers and cross-origin browser mutations, and marks responses
+non-cacheable. These controls do not provide TLS or a multi-user permission model.
 
 **Screenshot of the Arietta admin console's tool managment panel:**
 ![arietta console](arietta_console.png)
@@ -131,7 +146,7 @@ uv run arietta-voice serve
 
 In this mode, the admin console still provides observability and editing:
 health, status heartbeat, logs, diagnostics, chat testing, knowledge editing,
-tool validation, tool source editing, and config-backed tool enablement. The
+tool validation, opt-in source editing, and private-config-backed tool enablement. The
 voice runtime publishes a heartbeat to `logs/runtime_status.json`, which lets
 the admin console show whether the separate voice process is running, stopped,
 or stale.
@@ -198,11 +213,34 @@ This approach keeps the system simple and fully local while reusing the existing
 
 ## Configuration
 
-The main config file is [`config/arietta_voice.toml`](./config/arietta_voice.toml).
+The tracked [`config/arietta_voice.toml`](./config/arietta_voice.toml) provides
+shared defaults. Create private settings and a private persona before customizing:
+
+```bash
+uv run arietta-voice config-init
+```
+
+This snapshots your effective settings into `config/arietta_voice.local.toml`,
+copies the current persona to `config/SOUL.local.md`, and points the private
+config at that copy. It keeps the originals and stores backups in
+`config/.private-backups/`. Existing private files are never overwritten.
+All generated private files are owner-only and ignored by Git. If you already
+edited the tracked files, review the private copies before restoring the tracked
+files to their committed defaults. Ignore rules do not protect tracked files or
+remove content from earlier commits.
+
+Precedence is built-in defaults, selected base TOML, its sibling `.local.toml`,
+then CLI runtime overrides. Sections merge by setting; arrays replace the entire
+base array, including `[]`. With `--config /path/custom.toml`, the sibling is
+`/path/custom.local.toml`; unrelated project overrides are not loaded. Relative
+paths resolve beside the selected config. Custom locations outside `config/`
+need their own ignore rules. A full snapshot keeps existing values pinned;
+delete a private setting to inherit its shared default again.
 
 The most important editable files are:
 
-- [`config/SOUL.md`](./config/SOUL.md): the system prompt/personality
+- `config/arietta_voice.local.toml`: private configuration overrides
+- `config/SOUL.local.md`: private system prompt/personality
 - `config/MEMORY.md`: optional long-lived memory file, created automatically when memory is enabled
 - [`knowledge`](./knowledge): your editable local knowledge articles
 
@@ -218,6 +256,7 @@ The main config sections are:
 - `[knowledge]`: knowledge directory, index directory, backend, and retrieval scoring knobs
 - `[tools]`: deterministic tools checked before the model
 - `[model_tools]`: model-requested follow-up tools
+- `[admin]`: source-editing permission (disabled by default)
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
@@ -261,14 +300,37 @@ facts when enabled, and `--record` explicitly saves microphone audio, including
 passive audio. Bedrock sends assembled text prompts—including relevant history,
 persona, memory, knowledge snippets, and tool context—to AWS; speech recognition
 and synthesis remain local. Custom plugins may have their own logging or network
-behavior. Local config/persona overrides and admin credential hardening are
-still pending in [Phase 1](ROADMAP.md#phase-1-protect-privacy-and-fix-the-foundation).
+behavior. Prefer the AWS credential chain over putting AWS credentials in TOML;
+if used, keep them only in private config. Admin/CLI config displays redact AWS
+credentials, and admin password hashes are kept separately from app config.
+
+### Admin tool permissions
+
+Inventory and source views inspect syntax and literal metadata without importing
+plugin code. They report **not validated**, not runtime readiness. Explicit
+Validate, Probe/Invoke, Save Enabled, and Preview Instructions actions may import
+and execute existing plugins. Instruction preview uses
+`POST /api/model-tools/instructions`.
+
+Creating tools and saving Python source are disabled by default, including at
+the HTTP endpoints. To enable them deliberately, add this to private config and
+restart the API:
+
+```toml
+[admin]
+allow_source_editing = true
+```
+
+Saving source can execute code with the API process's privileges. Tool enablement
+changes are written atomically to private config; they preserve unrelated settings
+and never modify the tracked base. Restart an already-running voice process to
+apply changes there.
 
 ## Customizing The Assistant
 
 ### Change the assistant name and wake word
 
-Edit [`config/arietta_voice.toml`](./config/arietta_voice.toml):
+Edit `config/arietta_voice.local.toml`:
 
 ```toml
 [assistant]
@@ -280,7 +342,7 @@ phrases = ["arietta"]
 
 ### Change the system prompt
 
-Edit [`config/SOUL.md`](./config/SOUL.md). Keep it focused and durable. Project-specific facts should usually live in `knowledge/*.md`, not in the soul file.
+Edit `config/SOUL.local.md`. Keep it focused and durable. Project-specific facts should usually live in `knowledge/*.md`, not in the soul file.
 
 ### Add knowledge
 

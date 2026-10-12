@@ -7,7 +7,7 @@ from arietta_voice.tools.base import ToolContext
 
 
 # Copy this file to a new module in this directory, then add the module name to
-# [tools].enabled in config/arietta_voice.toml.
+# [tools].enabled in config/arietta_voice.local.toml.
 MATCH_PATTERNS = (
     re.compile(r"\bexample custom tool\b"),
 )

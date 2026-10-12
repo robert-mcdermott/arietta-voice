@@ -434,6 +434,24 @@ model construction. CLI overrides are validated again. History limits count
 user/assistant pairs, with zero retaining no history. `use_tools=false` in an
 API chat skips deterministic probing and model-tool registry construction.
 
+Configuration resolves built-in defaults, a selected base TOML, its sibling
+`.local.toml`, then CLI runtime overrides. Tables merge by setting and arrays
+replace. `config-init` snapshots effective settings and the current persona
+into private files without changing originals; admin tool selections update
+private TOML under a process lock with atomic replacement. The snapshot points
+`prompts.soul_path` to the private persona file.
+
+Admin credentials load once at API startup from explicit environment credentials
+or an owner-only JSON hash file created by `admin-setup`. No default password or
+authentication bypass remains. The stored format uses a random 16-byte salt and
+600,000 PBKDF2-SHA256 iterations; credential rotation requires an API restart.
+Source creation/writes require a separate config permission. Tool inventory and
+source reads parse AST/literal metadata and never resolve external packages by
+importing their parents. Runtime validity/activity is unknown until an explicit
+validation/execution action. Instruction preview is a POST because it imports
+enabled tools. Host and browser-origin checks protect local HTTP admin actions;
+remote deployment still requires HTTPS.
+
 Public `/health` provides liveness and version only. Authenticated `/api/health`
 retains diagnostics. `logging.content_enabled` defaults to false and controls
 active conversation text in runtime logging and status; passive wake misses
@@ -450,7 +468,7 @@ This rotation applies to the event file, not external launchd stdout/stderr logs
 
 The repository is meant to be extended in these directions:
 
-- change persona and tone through `config/SOUL.md`
+- change persona and tone through ignored `config/SOUL.local.md`
 - add user-specific or environment-specific knowledge as markdown
 - add deterministic tools for exact actions and lookups
 - add model-requested tools for follow-up reasoning workflows

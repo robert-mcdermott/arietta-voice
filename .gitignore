@@ -13,6 +13,15 @@ wheels/
 logs/
 .knowledge_index/
 config/MEMORY.md
+/config/*.local.toml
+/config/*.local.toml.lock
+/config/*.local.md
+/config/*.admin.json
+/config/.private-backups/
+/config/*.working
+# Incomplete atomic writes must remain private after an interrupted process.
+/config/.*.local.*
+/config/.*.admin.json.*
 tmp/
 
 # Keep personal knowledge local; only the two starter documents belong in Git.

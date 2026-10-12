@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 from pathlib import Path
 import sys
+import warnings
 
 from arietta_voice import __version__
 from arietta_voice.config import config_to_dict, load_config, validate_config
@@ -70,6 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("devices", help="List audio devices")
+    private_parser = subparsers.add_parser("config-init", help="Create private config/persona copies without changing originals")
+    private_parser.add_argument("--config", type=Path, help="Base TOML configuration to preserve")
+    admin_parser = subparsers.add_parser("admin-setup", help="Set private admin credentials")
+    admin_parser.add_argument("--config", type=Path, help="Base TOML configuration used by serve")
+    admin_parser.add_argument("--username", default="admin")
+    admin_parser.add_argument("--replace", action="store_true", help="Rotate existing credentials")
     return parser
 
 
@@ -118,6 +126,8 @@ def main() -> int:
         "knowledge-index",
         "serve",
         "devices",
+        "config-init",
+        "admin-setup",
         "-h",
         "--help",
         "--version",
@@ -143,6 +153,30 @@ def main() -> int:
 
     if args.command == "config":
         print(json.dumps(config_to_dict(config), indent=2))
+        return 0
+
+    if args.command in {"config-init", "admin-setup"}:
+        base_path = args.config or config.project_root / "config" / "arietta_voice.toml"
+        try:
+            if args.command == "config-init":
+                from arietta_voice.private_config import initialize_private_config
+
+                print(json.dumps(initialize_private_config(base_path), indent=2))
+            else:
+                from arietta_voice.admin_auth import save_admin_credentials
+
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", getpass.GetPassWarning)
+                    password = getpass.getpass("New admin password (at least 12 characters): ")
+                    repeated = getpass.getpass("Repeat password: ")
+                if password != repeated:
+                    parser.error("Passwords do not match; credentials were not changed")
+                saved = save_admin_credentials(base_path, args.username, password, replace=args.replace)
+                print(f"Admin credentials saved to {saved}. Restart the API to apply them.")
+        except (EOFError, getpass.GetPassWarning):
+            parser.error("Run admin-setup in an interactive terminal with hidden password input")
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
         return 0
 
     if args.command == "doctor":
@@ -196,7 +230,10 @@ def main() -> int:
 
         from arietta_voice.api import create_app
 
-        app = create_app(args.config)
+        try:
+            app = create_app(args.config)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
         uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
         return 0
 

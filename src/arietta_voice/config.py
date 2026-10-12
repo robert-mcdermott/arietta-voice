@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 import tomllib
 
+from arietta_voice.private_config import local_config_path
+
 
 DEFAULT_GREETINGS = (
     "Yes?",
@@ -164,6 +166,11 @@ class ModelToolsConfig:
 
 
 @dataclass(slots=True)
+class AdminConfig:
+    allow_source_editing: bool = False
+
+
+@dataclass(slots=True)
 class AppConfig:
     project_root: Path
     assistant: AssistantProfile
@@ -176,6 +183,7 @@ class AppConfig:
     knowledge: KnowledgeConfig
     tools: ToolsConfig
     model_tools: ModelToolsConfig
+    admin: AdminConfig = field(default_factory=AdminConfig)
 
 
 def default_config(project_root: Path | None = None) -> AppConfig:
@@ -210,7 +218,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     if path is None:
         base = default_config()
         candidate = base.project_root / "config" / "arietta_voice.toml"
-        if not candidate.exists():
+        if not candidate.exists() and not local_config_path(candidate).exists():
             return base
         path = candidate
     else:
@@ -218,8 +226,16 @@ def load_config(path: Path | None = None) -> AppConfig:
         root_hint = path.parent.parent if path.parent.name == "config" else path.parent
         base = default_config(root_hint)
 
-    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not path.exists() and not local_config_path(path).exists():
+        raise FileNotFoundError(path)
     _validate_toml_types(raw, base)
+    override_path = local_config_path(path)
+    if override_path != path and override_path.exists():
+        overrides = tomllib.loads(override_path.read_text(encoding="utf-8"))
+        _validate_toml_types(overrides, base)
+        for section, values in overrides.items():
+            raw.setdefault(section, {}).update(values)
     base_dir = path.parent
 
     assistant = raw.get("assistant", {})
@@ -232,9 +248,11 @@ def load_config(path: Path | None = None) -> AppConfig:
     knowledge = raw.get("knowledge", {})
     tools = raw.get("tools", {})
     model_tools = raw.get("model_tools", {})
+    admin = raw.get("admin", {})
 
     config = AppConfig(
         project_root=base.project_root,
+        admin=AdminConfig(allow_source_editing=admin.get("allow_source_editing", False)),
         assistant=AssistantProfile(
             name=assistant.get("name", base.assistant.name),
             identity=assistant.get("identity", base.assistant.identity),

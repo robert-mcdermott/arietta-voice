@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import json
@@ -10,6 +11,7 @@ from types import ModuleType
 from typing import Any
 
 from arietta_voice.config import AppConfig
+from arietta_voice.private_config import update_private_section
 from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.model_tools.base import ModelInvokedTool, ModelToolContext
 from arietta_voice.model_tools.registry import ModelToolRegistry
@@ -47,7 +49,7 @@ class ToolAdmin:
             *(name for name in available if name not in enabled_set),
         ]
 
-        records = [self.validate_tool(name) for name in configured_or_available]
+        records = [self.inspect_tool(name) for name in configured_or_available]
         for record in records:
             record["enabled"] = record["configured_name"] in enabled_set
 
@@ -67,23 +69,13 @@ class ToolAdmin:
             for record in records
             if record["error"]
         ]
-        loaded = [
-            {
-                "configured_name": record["configured_name"],
-                "name": record["tool_name"],
-                "module": record["module"],
-                "class": record["class"],
-                "file": record["file"],
-            }
-            for record in records
-            if record["enabled"] and record["valid"]
-        ]
         return {
             "enabled": enabled,
             "available": available,
             "tools_directory": str(self.tools_directory),
             "tools": records,
-            "loaded": loaded,
+            "loaded": [],
+            "inventory_mode": "static",
             "errors": enabled_errors,
             "load_errors": load_errors,
         }
@@ -98,6 +90,9 @@ class ToolAdmin:
                 continue
             names.append(name)
         return sorted(names)
+
+    def inspect_tool(self, tool_name: str) -> dict[str, Any]:
+        return _inspect_tool_source(self.tools_directory, tool_name, self.config.tools.enabled, _tool_module_name)
 
     def validate_tool(self, tool_name: str) -> dict[str, Any]:
         record = {
@@ -143,8 +138,8 @@ class ToolAdmin:
             if not record["valid"]:
                 raise ValueError(f"Tool '{tool_name}' is not valid: {record['error']}")
 
-        self.config.tools.enabled = tuple(enabled)
         self._persist_enabled_tools(enabled)
+        self.config.tools.enabled = tuple(enabled)
         return self.inventory()
 
     def probe_tool(self, tool_name: str, text: str) -> dict[str, Any]:
@@ -204,8 +199,8 @@ class ToolAdmin:
         enabled = list(self.config.tools.enabled)
         if enable and normalized not in enabled:
             enabled.append(normalized)
-            self.config.tools.enabled = tuple(enabled)
             self._persist_enabled_tools(enabled)
+            self.config.tools.enabled = tuple(enabled)
 
         record = self.validate_tool(normalized)
         return {
@@ -228,7 +223,7 @@ class ToolAdmin:
             "enabled": normalized in _unique_tool_names(self.config.tools.enabled),
             "file": str(path),
             "content": path.read_text(encoding="utf-8"),
-            "tool": self.validate_tool(normalized),
+            "tool": self.inspect_tool(normalized),
         }
 
     def write_source(self, tool_name: str, content: str) -> dict[str, Any]:
@@ -286,7 +281,7 @@ class ToolAdmin:
         path = self.config_path
         if path is None:
             path = self.config.project_root / "config" / "arietta_voice.toml"
-        _persist_tools_enabled(path, enabled)
+        update_private_section(path, "tools", {"enabled": enabled})
 
 
 class ModelToolAdmin:
@@ -303,6 +298,9 @@ class ModelToolAdmin:
         self.knowledge_retriever = knowledge_retriever
         self.tools_directory = tools_directory or Path(__file__).resolve().parent / "model_tools"
 
+    def inspect_tool(self, tool_name: str) -> dict[str, Any]:
+        return _inspect_tool_source(self.tools_directory, tool_name, self.config.model_tools.enabled, _model_tool_module_name)
+
     def inventory(self) -> dict[str, Any]:
         enabled = _unique_tool_names(self.config.model_tools.enabled)
         enabled_set = set(enabled)
@@ -312,7 +310,7 @@ class ModelToolAdmin:
             *(name for name in available if name not in enabled_set),
         ]
 
-        records = [self.validate_tool(name) for name in configured_or_available]
+        records = [self.inspect_tool(name) for name in configured_or_available]
         for record in records:
             record["enabled"] = record["configured_name"] in enabled_set
 
@@ -332,35 +330,17 @@ class ModelToolAdmin:
             for record in records
             if record["error"]
         ]
-        loaded = [
-            {
-                "configured_name": record["configured_name"],
-                "name": record["tool_name"],
-                "module": record["module"],
-                "class": record["class"],
-                "file": record["file"],
-                "description": record["description"],
-                "arguments_example": record["arguments_example"],
-            }
-            for record in records
-            if record["enabled"] and record["valid"] and record["active"]
-        ]
-        instruction_text = None
-        instruction_error = None
-        try:
-            instruction_text = self.instruction_text()
-        except Exception as exc:
-            instruction_error = f"{type(exc).__name__}: {exc}"
         return {
             "enabled": enabled,
             "available": available,
             "tools_directory": str(self.tools_directory),
             "tools": records,
-            "loaded": loaded,
+            "loaded": [],
+            "inventory_mode": "static",
             "errors": enabled_errors,
             "load_errors": load_errors,
-            "instruction_text": instruction_text,
-            "instruction_error": instruction_error,
+            "instruction_text": None,
+            "instruction_error": None,
         }
 
     def available_tool_names(self) -> list[str]:
@@ -428,8 +408,8 @@ class ModelToolAdmin:
             if not record["valid"]:
                 raise ValueError(f"Model tool '{tool_name}' is not valid: {record['error']}")
 
-        self.config.model_tools.enabled = tuple(enabled)
         self._persist_enabled_tools(enabled)
+        self.config.model_tools.enabled = tuple(enabled)
         return self.inventory()
 
     def invoke_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -514,8 +494,8 @@ class ModelToolAdmin:
         enabled = list(self.config.model_tools.enabled)
         if enable and normalized not in enabled:
             enabled.append(normalized)
-            self.config.model_tools.enabled = tuple(enabled)
             self._persist_enabled_tools(enabled)
+            self.config.model_tools.enabled = tuple(enabled)
 
         record = self.validate_tool(normalized)
         return {
@@ -538,7 +518,7 @@ class ModelToolAdmin:
             "enabled": normalized in _unique_tool_names(self.config.model_tools.enabled),
             "file": str(path),
             "content": path.read_text(encoding="utf-8"),
-            "tool": self.validate_tool(normalized),
+            "tool": self.inspect_tool(normalized),
         }
 
     def write_source(self, tool_name: str, content: str) -> dict[str, Any]:
@@ -611,7 +591,50 @@ class ModelToolAdmin:
         path = self.config_path
         if path is None:
             path = self.config.project_root / "config" / "arietta_voice.toml"
-        _persist_model_tools_enabled(path, enabled)
+        update_private_section(path, "model_tools", {"enabled": enabled})
+
+
+def _inspect_tool_source(directory: Path, tool_name: str, enabled, module_name_for) -> dict[str, Any]:
+    """Read syntax/literal metadata only. Never import plugins (including parents)."""
+    normalized = _normalize_configured_tool_name(tool_name)
+    record = {
+        "configured_name": normalized, "enabled": normalized in enabled,
+        "available": False, "valid": None, "active": None,
+        "validation": "not_run", "syntax_valid": None,
+        "module": module_name_for(normalized), "file": None, "class": None,
+        "tool_name": None, "description": None, "arguments_example": None,
+        "source": "external" if "." in normalized else "local", "error": None,
+    }
+    if "." in normalized:
+        # find_spec can import an external package's __init__; defer even
+        # discovery of external plugins to an explicit validation action.
+        return record
+    try:
+        _, path = _resolve_local_tool_source(directory, normalized)
+        record.update(available=True, file=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        record["syntax_valid"] = True
+        if not any(isinstance(node, ast.FunctionDef) and node.name == "create_tool" for node in tree.body):
+            raise ValueError("No top-level create_tool factory found; explicit validation is required")
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for item in node.body:
+                targets = item.targets if isinstance(item, ast.Assign) else [item.target] if isinstance(item, ast.AnnAssign) else []
+                for target in targets:
+                    if not isinstance(target, ast.Name) or target.id not in {"name", "description", "arguments_example"}:
+                        continue
+                    try:
+                        value = ast.literal_eval(item.value)
+                    except (ValueError, TypeError):
+                        continue
+                    if (target.id == "arguments_example" and isinstance(value, dict)) or (target.id != "arguments_example" and isinstance(value, str)):
+                        record["tool_name" if target.id == "name" else target.id] = value
+                        record["class"] = node.name
+    except (OSError, ValueError, SyntaxError) as exc:
+        record["error"] = f"Static inspection failed ({type(exc).__name__})"
+        record["syntax_valid"] = False
+    return record
 
 
 def normalize_new_tool_module_name(value: str) -> str:
@@ -673,86 +696,6 @@ def _load_module_from_file(module_name: str, path: Path) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _persist_tools_enabled(path: Path, enabled: list[str]) -> None:
-    _persist_enabled_list(path, section="tools", enabled=enabled)
-
-
-def _persist_model_tools_enabled(path: Path, enabled: list[str]) -> None:
-    _persist_enabled_list(path, section="model_tools", enabled=enabled)
-
-
-def _persist_enabled_list(path: Path, *, section: str, enabled: list[str]) -> None:
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    replacement = _format_tools_enabled(enabled)
-    section_start = _find_section(lines, section)
-    if section_start is None:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append(f"[{section}]")
-        lines.extend(replacement)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return
-
-    section_end = _find_next_section(lines, section_start)
-    enabled_start = _find_key_in_section(lines, section_start, section_end, "enabled")
-    if enabled_start is None:
-        lines[section_start + 1 : section_start + 1] = replacement
-    else:
-        enabled_end = _find_array_end(lines, enabled_start)
-        lines[enabled_start:enabled_end] = replacement
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _format_tools_enabled(enabled: list[str]) -> list[str]:
-    if not enabled:
-        return ["enabled = []"]
-    return [
-        "enabled = [",
-        *(f"    {json.dumps(name, ensure_ascii=True)}," for name in enabled),
-        "]",
-    ]
-
-
-def _find_section(lines: list[str], name: str) -> int | None:
-    header = f"[{name}]"
-    for index, line in enumerate(lines):
-        if line.strip() == header:
-            return index
-    return None
-
-
-def _find_next_section(lines: list[str], section_start: int) -> int:
-    for index in range(section_start + 1, len(lines)):
-        stripped = lines[index].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            return index
-    return len(lines)
-
-
-def _find_key_in_section(
-    lines: list[str],
-    section_start: int,
-    section_end: int,
-    key: str,
-) -> int | None:
-    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
-    for index in range(section_start + 1, section_end):
-        if pattern.match(lines[index]):
-            return index
-    return None
-
-
-def _find_array_end(lines: list[str], key_start: int) -> int:
-    first_line = lines[key_start]
-    if "[" not in first_line or "]" in first_line:
-        return key_start + 1
-    for index in range(key_start + 1, len(lines)):
-        if "]" in lines[index]:
-            return index + 1
-    return key_start + 1
 
 
 def _render_tool_template(*, module_name: str, trigger_phrase: str, response: str) -> str:

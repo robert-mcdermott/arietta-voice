@@ -7,16 +7,17 @@ import json
 import os
 from pathlib import Path
 import platform
-import secrets
 import time
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 
 from arietta_voice import __version__
+from arietta_voice.admin_auth import load_admin_credentials
 from arietta_voice.config import AppConfig, config_to_dict, load_config
 from arietta_voice.diagnostics import run_startup_diagnostics
 from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
@@ -33,8 +34,6 @@ from arietta_voice.tool_admin import ModelToolAdmin, ToolAdmin
 # Retain the existing API field names while reporting the application version.
 API_VERSION = __version__
 AUTH_REALM = "Arietta Admin"
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "password"
 
 
 class ChatHistoryItem(BaseModel):
@@ -194,7 +193,8 @@ class AriettaApiService:
             },
             "tools": {
                 "enabled": list(self.config.tools.enabled),
-                "loaded_count": len(tools["assistant_tools"]["loaded"]),
+                "loaded_count": None,
+                "inventory_mode": "static",
                 "error_count": len(tools["assistant_tools"]["errors"])
                 + len(tools["model_tools"]["errors"]),
             },
@@ -407,6 +407,7 @@ class AriettaApiService:
         return {
             "assistant_tools": assistant_tools,
             "model_tools": self.model_tool_admin.inventory(),
+            "source_editing_enabled": self.config.admin.allow_source_editing,
         }
 
     def probe_tools(self, text: str) -> dict[str, Any]:
@@ -640,8 +641,10 @@ def create_app(
     config_path: Path | None = None,
     *,
     service: AriettaApiService | None = None,
-    require_authentication: bool = True,
 ) -> FastAPI:
+    service = service or AriettaApiService(config_path)
+    base_path = service.config_path or service.config.project_root / "config" / "arietta_voice.toml"
+    admin_credentials = load_admin_credentials(base_path)
     app = FastAPI(
         title="Arietta Voice API",
         version=API_VERSION,
@@ -649,23 +652,37 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
-    app.state.arietta_service = service or AriettaApiService(config_path)
+    app.state.arietta_service = service
+    allowed_hosts = ["localhost", "127.0.0.1", "[::1]"]
+    extra_hosts = os.environ.get("ARIETTA_ADMIN_ALLOWED_HOSTS", "")
+    if "*" in extra_hosts:
+        raise ValueError("ARIETTA_ADMIN_ALLOWED_HOSTS must list exact hostnames without wildcards")
+    allowed_hosts.extend(host.strip() for host in extra_hosts.split(",") if host.strip())
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+    @app.middleware("http")
+    async def protect_browser_requests(request: Request, call_next):
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            origin = request.headers.get("origin")
+            expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
+            if (origin is not None and origin != expected_origin) or request.headers.get("sec-fetch-site") == "cross-site":
+                return JSONResponse({"detail": "Cross-origin admin actions are not allowed"}, status_code=403)
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
     security_scheme = HTTPBasic(auto_error=False)
 
     def require_admin(credentials: HTTPBasicCredentials | None = Depends(security_scheme)) -> str:
-        if not require_authentication:
-            return DEFAULT_ADMIN_USERNAME
         if credentials is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required",
                 headers={"WWW-Authenticate": f'Basic realm="{AUTH_REALM}"'},
             )
-        expected_username = os.environ.get("ARIETTA_ADMIN_USERNAME", DEFAULT_ADMIN_USERNAME)
-        expected_password = os.environ.get("ARIETTA_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
-        username_ok = secrets.compare_digest(credentials.username, expected_username)
-        password_ok = secrets.compare_digest(credentials.password, expected_password)
-        if username_ok and password_ok:
+        if admin_credentials.verify(credentials.username, credentials.password):
             return credentials.username
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -675,6 +692,11 @@ def create_app(
 
     def svc() -> AriettaApiService:
         return app.state.arietta_service
+
+    def require_source_editing(_user: str = Depends(require_admin)) -> str:
+        if not svc().config.admin.allow_source_editing:
+            raise HTTPException(status_code=403, detail="Source editing is disabled. Set admin.allow_source_editing=true in private config and restart the API to enable it.")
+        return _user
 
     @app.get("/health")
     def public_health() -> dict[str, Any]:
@@ -769,7 +791,7 @@ def create_app(
     @app.post("/api/tools/create")
     def api_tool_create(
         payload: ToolCreateRequest,
-        _user: str = Depends(require_admin),
+        _user: str = Depends(require_source_editing),
     ) -> dict[str, Any]:
         try:
             return svc().create_tool(payload)
@@ -798,7 +820,7 @@ def create_app(
     def api_tool_source_write(
         tool_name: str,
         payload: ToolSourceWriteRequest,
-        _user: str = Depends(require_admin),
+        _user: str = Depends(require_source_editing),
     ) -> dict[str, Any]:
         try:
             return svc().write_tool_source(tool_name, payload.content)
@@ -838,7 +860,7 @@ def create_app(
     @app.post("/api/model-tools/create")
     def api_model_tool_create(
         payload: ModelToolCreateRequest,
-        _user: str = Depends(require_admin),
+        _user: str = Depends(require_source_editing),
     ) -> dict[str, Any]:
         try:
             return svc().create_model_tool(payload)
@@ -867,7 +889,7 @@ def create_app(
     def api_model_tool_source_write(
         tool_name: str,
         payload: ToolSourceWriteRequest,
-        _user: str = Depends(require_admin),
+        _user: str = Depends(require_source_editing),
     ) -> dict[str, Any]:
         try:
             return svc().write_model_tool_source(tool_name, payload.content)
@@ -876,7 +898,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    @app.get("/api/model-tools/instructions")
+    @app.post("/api/model-tools/instructions")
     def api_model_tool_instructions(_user: str = Depends(require_admin)) -> dict[str, Any]:
         try:
             return svc().model_tool_instructions()
@@ -1864,7 +1886,7 @@ ADMIN_HTML = """<!doctype html>
             <div id="tools-content"></div>
           </div>
           <div class="panel">
-            <div class="panel-head"><h3>New Tool</h3><button class="button primary" id="tools-create">Create</button></div>
+            <div class="panel-head"><h3>New Tool</h3><button class="button primary" id="tools-create" disabled>Create</button></div>
             <div class="tool-create-form">
               <label>
                 Module Name
@@ -1906,7 +1928,7 @@ ADMIN_HTML = """<!doctype html>
               <div id="tools-model-content"></div>
             </div>
             <div>
-              <div class="panel-head"><h3>New Model Tool</h3><button class="button primary" id="model-tools-create">Create</button></div>
+              <div class="panel-head"><h3>New Model Tool</h3><button class="button primary" id="model-tools-create" disabled>Create</button></div>
               <div class="tool-create-form">
                 <label>
                   Module Name
@@ -1934,7 +1956,7 @@ ADMIN_HTML = """<!doctype html>
         </div>
         <div class="panel">
           <div class="panel-head">
-            <h3>Advanced Source Editor</h3>
+            <h3>Tool Source</h3>
             <div class="tool-toolbar">
               <button class="button primary" id="tool-source-save">Save Source</button>
               <button class="button info" id="tool-source-validate">Validate</button>
@@ -1943,6 +1965,7 @@ ADMIN_HTML = """<!doctype html>
               <button class="button warn" id="tool-source-restart-runtime">Restart Runtime</button>
             </div>
           </div>
+          <p class="muted" id="source-editing-policy">Source editing is disabled.</p>
           <div class="status-row" id="tool-source-meta">Open a tool source file from a tool card.</div>
           <div class="source-test-grid">
             <label>
@@ -1954,7 +1977,7 @@ ADMIN_HTML = """<!doctype html>
               <textarea id="tool-source-test-args">{}</textarea>
             </label>
           </div>
-          <textarea id="tool-source-content" class="source-editor" spellcheck="false" placeholder="Click Edit Source on a deterministic or model-called tool."></textarea>
+          <textarea id="tool-source-content" class="source-editor" spellcheck="false" readonly placeholder="Click View Source on a deterministic or model-called tool."></textarea>
           <div class="status-row" id="tool-source-result-title">No source action result yet.</div>
           <pre id="tool-source-result">{}</pre>
         </div>
@@ -1998,6 +2021,7 @@ ADMIN_HTML = """<!doctype html>
       logsLimit: 50,
       logsTotal: 0,
       lastToolsPayload: null,
+      sourceEditingEnabled: false,
       sourceEditor: {
         kind: null,
         tool: null,
@@ -2260,6 +2284,13 @@ ADMIN_HTML = """<!doctype html>
 
     function renderTools(payload) {
       state.lastToolsPayload = payload;
+      state.sourceEditingEnabled = Boolean(payload.source_editing_enabled);
+      $("#tools-create").disabled = !state.sourceEditingEnabled;
+      $("#model-tools-create").disabled = !state.sourceEditingEnabled;
+      $("#source-editing-policy").textContent = state.sourceEditingEnabled
+        ? "Source editing is enabled. Saving Python source can execute code on this machine."
+        : "Source editing is disabled. You can view source and explicitly validate or test existing tools.";
+      updateSourceControls();
       const assistant = payload.assistant_tools || { enabled: [], available: [], tools: [], load_errors: [] };
       const records = assistant.tools || [];
       const enabledCount = (assistant.enabled || []).length;
@@ -2268,7 +2299,7 @@ ADMIN_HTML = """<!doctype html>
       $("#tools-summary").innerHTML = `
         <span class="status-pill ok">${enabledCount} enabled</span>
         <span class="status-pill">${availableCount} available</span>
-        <span class="status-pill ${invalidCount ? "bad" : "ok"}">${invalidCount} load errors</span>
+        <span class="status-pill ${invalidCount ? "bad" : "ok"}">${invalidCount} inspection errors</span>
         <span class="muted">Directory: <code>${escapeHtml(assistant.tools_directory || "")}</code></span>
       `;
 
@@ -2281,14 +2312,14 @@ ADMIN_HTML = """<!doctype html>
     }
 
     function renderToolCard(tool) {
-      const statusClass = tool.valid ? "ok" : "bad";
+      const statusClass = tool.error ? "bad" : "warn";
       const enabled = Boolean(tool.enabled);
-      const checkboxDisabled = tool.valid ? "" : "disabled";
-      const statusText = tool.valid ? "valid" : "load error";
+      const checkboxDisabled = tool.error && !enabled ? "disabled" : "";
+      const statusText = tool.error ? "inspection error" : "not validated";
       const availableText = tool.available ? "available" : "configured only";
       const errorHtml = tool.error ? `<div class="tool-error">${escapeHtml(tool.error)}</div>` : "";
       return `
-        <div class="tool-item ${enabled ? "enabled" : ""} ${tool.valid ? "" : "invalid"}">
+        <div class="tool-item ${enabled ? "enabled" : ""} ${tool.error ? "invalid" : ""}">
           <div>
             <div class="tool-title">
               <strong>${escapeHtml(tool.configured_name)}</strong>
@@ -2310,7 +2341,7 @@ ADMIN_HTML = """<!doctype html>
             </label>
             <button class="button" data-tool-action="probe" data-tool-name="${escapeHtml(tool.configured_name)}">Probe</button>
             <button class="button info" data-tool-action="validate" data-tool-name="${escapeHtml(tool.configured_name)}">Validate</button>
-            <button class="button" data-tool-action="edit-source" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.source === "local" && tool.available ? "" : "disabled"}>Edit Source</button>
+            <button class="button" data-tool-action="edit-source" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.source === "local" && tool.available ? "" : "disabled"}>View Source</button>
           </div>
         </div>
       `;
@@ -2324,7 +2355,7 @@ ADMIN_HTML = """<!doctype html>
       $("#model-tools-summary").innerHTML = `
         <span class="status-pill ok">${enabledCount} enabled</span>
         <span class="status-pill">${availableCount} available</span>
-        <span class="status-pill ${invalidCount ? "bad" : "ok"}">${invalidCount} load errors</span>
+        <span class="status-pill ${invalidCount ? "bad" : "ok"}">${invalidCount} inspection errors</span>
         <span class="muted">Directory: <code>${escapeHtml(modelTools.tools_directory || "")}</code></span>
       `;
       $("#tools-model-content").innerHTML = records.length
@@ -2334,15 +2365,15 @@ ADMIN_HTML = """<!doctype html>
     }
 
     function renderModelToolCard(tool) {
-      const statusClass = tool.valid ? (tool.active ? "ok" : "warn") : "bad";
+      const statusClass = tool.error ? "bad" : "warn";
       const enabled = Boolean(tool.enabled);
-      const checkboxDisabled = tool.valid ? "" : "disabled";
-      const statusText = tool.valid ? (tool.active ? "active" : "inactive") : "load error";
+      const checkboxDisabled = tool.error && !enabled ? "disabled" : "";
+      const statusText = tool.error ? "inspection error" : "not validated";
       const availableText = tool.available ? "available" : "configured only";
       const errorHtml = tool.error ? `<div class="tool-error">${escapeHtml(tool.error)}</div>` : "";
       const args = tool.arguments_example ? JSON.stringify(tool.arguments_example) : "{}";
       return `
-        <div class="tool-item ${enabled ? "enabled" : ""} ${tool.valid ? "" : "invalid"}">
+        <div class="tool-item ${enabled ? "enabled" : ""} ${tool.error ? "invalid" : ""}">
           <div>
             <div class="tool-title">
               <strong>${escapeHtml(tool.configured_name)}</strong>
@@ -2367,7 +2398,7 @@ ADMIN_HTML = """<!doctype html>
             <button class="button" data-model-tool-action="use-args" data-tool-name="${escapeHtml(tool.configured_name)}">Use Args</button>
             <button class="button" data-model-tool-action="invoke" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.active ? "" : "disabled"}>Invoke</button>
             <button class="button info" data-model-tool-action="validate" data-tool-name="${escapeHtml(tool.configured_name)}">Validate</button>
-            <button class="button" data-model-tool-action="edit-source" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.source === "local" && tool.available ? "" : "disabled"}>Edit Source</button>
+            <button class="button" data-model-tool-action="edit-source" data-tool-name="${escapeHtml(tool.configured_name)}" ${tool.source === "local" && tool.available ? "" : "disabled"}>View Source</button>
           </div>
         </div>
       `;
@@ -2446,7 +2477,8 @@ ADMIN_HTML = """<!doctype html>
 
     function updateSourceControls() {
       const hasSource = Boolean(state.sourceEditor.kind && state.sourceEditor.tool);
-      $("#tool-source-save").disabled = !hasSource;
+      $("#tool-source-save").disabled = !hasSource || !state.sourceEditingEnabled;
+      $("#tool-source-content").readOnly = !state.sourceEditingEnabled;
       $("#tool-source-validate").disabled = !hasSource;
       $("#tool-source-test").disabled = !hasSource;
       $("#tool-source-reload").disabled = !hasSource;
@@ -2651,7 +2683,7 @@ ADMIN_HTML = """<!doctype html>
         await loadTools();
         await loadDashboard({ silent: true });
       } finally {
-        button.disabled = false;
+        button.disabled = !state.sourceEditingEnabled;
         button.textContent = "Create";
       }
     }
@@ -2745,7 +2777,7 @@ ADMIN_HTML = """<!doctype html>
         await loadTools();
         await loadDashboard({ silent: true });
       } finally {
-        button.disabled = false;
+        button.disabled = !state.sourceEditingEnabled;
         button.textContent = "Create";
       }
     }
@@ -2757,7 +2789,7 @@ ADMIN_HTML = """<!doctype html>
     }
 
     async function previewModelToolInstructions() {
-      const payload = await api("/api/model-tools/instructions");
+      const payload = await api("/api/model-tools/instructions", { method: "POST" });
       setModelToolsResult("Instruction preview", payload.instruction_text || "No model-called tools are enabled.");
     }
 
