@@ -110,3 +110,29 @@ def test_stopped_runtime_status_reports_clean_exit(tmp_path: Path) -> None:
     assert status["state"] == "stopped"
     assert status["is_running"] is False
     assert status["is_stale"] is False
+
+
+def test_heartbeat_continues_during_blocking_work(tmp_path):
+    import time
+    from types import SimpleNamespace
+    from arietta_voice.runtime_status import RuntimeStatusPublisher
+    publisher = RuntimeStatusPublisher(_config(tmp_path), interval_seconds=0.02)
+    runtime = SimpleNamespace(state="thinking", reliability_snapshot=lambda: {"turn_stage": "chat"})
+    writes = []
+    runtime._publish_status = lambda **kwargs: (writes.append(time.monotonic()), publisher.publish(runtime, lifecycle=kwargs.get("lifecycle", "running")))
+    publisher.start(runtime)
+    try:
+        time.sleep(0.09)
+    finally:
+        publisher.stop(runtime)
+    assert len(writes) >= 3
+    status = read_runtime_status(publisher.config)
+    assert status["lifecycle"] == "stopped"
+    assert status["reliability"]["turn_stage"] == "chat"
+
+
+@pytest.mark.parametrize("heartbeat", [None, "garbage", "2026-01-01T00:00:00"])
+def test_missing_or_invalid_heartbeat_is_never_reported_running(tmp_path, heartbeat):
+    config = _config(tmp_path)
+    write_runtime_status(config, {"heartbeat_at": heartbeat, "lifecycle": "running"})
+    assert not read_runtime_status(config)["is_running"]

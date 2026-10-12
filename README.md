@@ -257,6 +257,7 @@ The main config sections are:
 - `[tools]`: deterministic tools checked before the model
 - `[model_tools]`: model-requested follow-up tools
 - `[admin]`: source-editing permission (disabled by default)
+- `[runtime]`: turn, endpoint detection, and model startup time limits
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
@@ -264,6 +265,51 @@ Relative paths in the TOML are resolved relative to the config file, not the cur
 history. Invalid TOML types, unknown settings, and unsupported values fail at
 startup with the setting name. The current audio pipeline requires 16,000 Hz
 input and 512-sample chunks.
+
+### Audio limits and failure recovery
+
+These defaults are included in all three tracked TOML templates. Override only
+the settings you want in your private `.local.toml`; restart the voice runtime
+and API to apply them.
+
+| Setting | Default | Behavior |
+| --- | --- | --- |
+| `audio.queue_max_chunks` | `64` | About 2 seconds of queued microphone input; drops oldest chunks under load. |
+| `audio.max_utterance_s` | `30.0` | Maximum captured utterance, including trailing silence. |
+| `audio.recording_queue_max_chunks` | `256` | Bounded queue for the background WAV writer. |
+| `audio.max_recording_s` | `3600.0` | Maximum saved audio per `--record` run. Listening continues after the limit. |
+| `audio.playback_reference_s` | `4.0` | Rolling echo-cancellation reference, rather than the entire response. |
+| `runtime.turn_timeout_s` | `60.0` | Shared budget for STT, chat/tools, speech generation/playback, and optional memory. Also limits web chat. |
+| `runtime.endpoint_timeout_s` | `5.0` | Separate Smart Turn deadline for each endpoint check. |
+| `runtime.startup_timeout_s` | `300.0` | Model-worker warmup deadline; increase for slow first-run downloads. |
+
+Oversized or interrupted input is discarded until a quiet interval; it is not
+submitted as a truncated command. Recordings stream to an owner-only WAV file
+instead of accumulating in RAM. A slow disk can drop recording chunks; the
+dashboard reports dropped chunks, recording limits, and write failures. Such
+recordings may be incomplete. A forced process kill can leave an unfinished WAV.
+
+Heavy STT, endpoint, chat, tool, and TTS work runs in a persistent spawned process
+with one operation at a time. On timeout, crash, or model/tool exception, that
+worker is terminated before another is created. The voice runtime clears failed
+turn state and resumes listening; successful history remains. A failed memory
+update does not undo an already delivered answer. Memory writes replace the old
+file atomically, and memory extraction is skipped when speech interrupts an answer.
+
+Tools are **never automatically retried**. A timed-out external action may already
+have happened, so check its result before repeating it. Web chat returns `503`
+when busy, `504` on timeout, or `502` on inference failure, with no failed history
+entry. Voice and web chat each have a separate worker; they do not yet share a
+single GPU scheduler. The timeout bounds inference work, not a stuck native audio
+driver or arbitrary subprocesses started by a custom plugin. Admin tool-validation,
+probe/invoke, and knowledge-index maintenance actions are outside the chat deadline.
+
+The admin dashboard shows the processing stage, turn budget, microphone queue,
+recovery counters, and recording warnings while a background heartbeat continues
+during model work. Technical process/file details are expandable. Chat prevents
+duplicate submissions, retains failed drafts, and shows actionable errors. Source
+and knowledge editors warn before leaving with unsaved changes. Larger frontend
+restructuring and polling improvements remain in Phase 4 of the roadmap.
 
 ### Privacy and logging
 

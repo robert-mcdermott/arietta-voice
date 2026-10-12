@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import time
+import threading
 from typing import Any
 
 from arietta_voice.config import AppConfig
@@ -44,7 +45,9 @@ def read_runtime_status(
 
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        if not isinstance(payload, dict):
+            raise ValueError("Expected an object")
+    except (OSError, ValueError) as exc:
         return {
             **base,
             "state": "unknown",
@@ -59,8 +62,7 @@ def read_runtime_status(
     lifecycle = str(payload.get("lifecycle") or "running")
     is_stale = (
         lifecycle == "running"
-        and heartbeat_age is not None
-        and heartbeat_age > stale_after_seconds
+        and (heartbeat_age is None or heartbeat_age > stale_after_seconds)
     )
     is_running = lifecycle == "running" and not is_stale
 
@@ -95,6 +97,7 @@ def read_runtime_status(
         "display_speech_level": float(payload.get("display_speech_level", 0.0) or 0.0),
         "display_speaking_active": bool(payload.get("display_speaking_active", False)),
         "last_error": payload.get("last_error"),
+        "reliability": payload.get("reliability", {}),
         "note": note,
     }
 
@@ -124,10 +127,30 @@ class RuntimeStatusPublisher:
         self.process_id = os.getpid()
         self.started_at = _now_iso()
         self._last_publish_monotonic = 0.0
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self, runtime: Any) -> None:
+        self._stop_event.clear()
+        def heartbeat():
+            while not self._stop_event.wait(self.interval_seconds):
+                runtime._publish_status()
+        self._thread = threading.Thread(target=heartbeat, name="arietta-heartbeat", daemon=True)
+        self._thread.start()
+        runtime._publish_status(force=True)
+
+    def stop(self, runtime: Any) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+        runtime._publish_status(lifecycle="stopped", force=True)
 
     def publish(self, runtime: Any, *, lifecycle: str = "running") -> None:
-        write_runtime_status(self.config, self._payload(runtime, lifecycle=lifecycle))
-        self._last_publish_monotonic = time.monotonic()
+        with self._lock:
+            write_runtime_status(self.config, self._payload(runtime, lifecycle=lifecycle))
+            self._last_publish_monotonic = time.monotonic()
 
     def publish_if_due(self, runtime: Any, *, lifecycle: str = "running") -> None:
         now = time.monotonic()
@@ -155,6 +178,7 @@ class RuntimeStatusPublisher:
             "display_speech_level": float(getattr(runtime, "display_speech_level", 0.0) or 0.0),
             "display_speaking_active": bool(getattr(runtime, "display_speaking_active", False)),
             "last_error": getattr(runtime, "last_error", None),
+            "reliability": runtime.reliability_snapshot() if hasattr(runtime, "reliability_snapshot") else {},
         }
 
 
@@ -164,6 +188,8 @@ def _heartbeat_age_seconds(heartbeat_at: str | None) -> float | None:
     try:
         parsed = datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))
     except ValueError:
+        return None
+    if parsed.tzinfo is None:
         return None
     return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
 

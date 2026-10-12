@@ -32,6 +32,19 @@ chime_enabled = true
 voice = "af_heart"
 tts_speed = 1.0
 barge_in_threshold_chunks = 5
+# Drop oldest queued input under load; discard incomplete/oversized utterances.
+queue_max_chunks = 64
+max_utterance_s = 30.0
+# --record streams to disk; these cap queued chunks and total saved duration.
+recording_queue_max_chunks = 256
+max_recording_s = 3600.0
+playback_reference_s = 4.0
+
+[runtime]
+# Shared STT + chat/tools + speech + optional memory budget for each voice turn.
+turn_timeout_s = 60.0
+endpoint_timeout_s = 5.0
+startup_timeout_s = 300.0
 
 [models]
 chat_provider = "local"

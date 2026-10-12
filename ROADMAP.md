@@ -65,10 +65,19 @@ private persistence of admin tool selections. Bedrock's text-data boundary is
 documented in README. Tests cover authentication, blocked mutations, non-executing
 inventory views, config precedence, migration, and preserved settings.
 
-Phase 1 remains open for bounded audio and turn recovery (item 6), and
-CI/evaluation coverage (item 7). Logging tests cover concurrent
-processes; inference ownership and full hardware/state-transition gates remain
-outstanding. No release bump or tag accompanies these implementation batches.
+The third batch implements item 6: bounded capture, utterance, recording, and
+playback-reference buffers; killable serialized inference workers; shared turn
+budgets; endpoint/startup deadlines; failure recovery; exception-safe playback
+cleanup; atomic memory writes; and an independent heartbeat. Tests exercise real
+spawned workers with synthetic handlers, including timeouts, crashes, shutdown,
+and busy requests, plus simulated audio and state transitions. A focused admin
+dashboard/chat/editor usability update has been brought forward from Phase 4.
+
+Phase 1 remains open for CI/evaluation coverage (item 7), the hardware smoke test,
+and a soak test on the locked model stack. Native audio-device stalls and admin
+maintenance actions are not covered by inference deadlines. Voice and API workers
+are serialized individually; shared GPU scheduling remains future work. No release
+bump or tag accompanies these implementation batches.
 
 1. Remove transcripts/paths from public health; make content logging opt-in,
    suppress passive-speech persistence, and add retention/rotation settings.
@@ -103,7 +112,7 @@ when rolling back another component.
 
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.
-2. Add a serialized inference worker, cancellation tokens, and bounded text/audio
+2. Extend the Phase 1 serialized inference workers with cancellation tokens and bounded text/audio
    queues. Share the conversation service between console and voice paths.
 3. Extend the MLX and Bedrock adapters with structured streaming events. Send
    speakable clauses to Kokoro while generation continues; withhold tool payloads.
@@ -162,6 +171,10 @@ reverting an encoder or chunker requires the matching index or a rebuild.
    application source. Consolidate the overlapping config templates.
 2. Extract API routes and frontend assets; add focused browser smoke checks.
    Optimize event polling and logs without requiring a frontend rewrite.
+   Phase 1 already adds a responsive reliability overview, expandable technical
+   details, persistent error notices, guarded chat submission with failed-draft
+   recovery, and unsaved-editor warnings. Follow up with automated browser CI,
+   shared model-ownership status, and deadline coverage for admin maintenance.
 3. Provide generated LaunchAgent setup and a single chosen supervisor model,
    startup backoff, clean shutdown, and update/rollback instructions.
 4. Add one useful integration chosen by actual usage, such as read-only home

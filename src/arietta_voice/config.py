@@ -104,6 +104,11 @@ class AudioConfig:
     voice: str = "af_heart"
     tts_speed: float = 1.0
     barge_in_threshold_chunks: int = 5
+    queue_max_chunks: int = 64
+    max_utterance_s: float = 30.0
+    recording_queue_max_chunks: int = 256
+    max_recording_s: float = 3600.0
+    playback_reference_s: float = 4.0
 
 
 @dataclass(slots=True)
@@ -171,6 +176,13 @@ class AdminConfig:
 
 
 @dataclass(slots=True)
+class RuntimeConfig:
+    turn_timeout_s: float = 60.0
+    endpoint_timeout_s: float = 5.0
+    startup_timeout_s: float = 300.0
+
+
+@dataclass(slots=True)
 class AppConfig:
     project_root: Path
     assistant: AssistantProfile
@@ -184,6 +196,7 @@ class AppConfig:
     tools: ToolsConfig
     model_tools: ModelToolsConfig
     admin: AdminConfig = field(default_factory=AdminConfig)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
 
 def default_config(project_root: Path | None = None) -> AppConfig:
@@ -249,10 +262,12 @@ def load_config(path: Path | None = None) -> AppConfig:
     tools = raw.get("tools", {})
     model_tools = raw.get("model_tools", {})
     admin = raw.get("admin", {})
+    runtime = raw.get("runtime", {})
 
     config = AppConfig(
         project_root=base.project_root,
         admin=AdminConfig(allow_source_editing=admin.get("allow_source_editing", False)),
+        runtime=RuntimeConfig(**runtime),
         assistant=AssistantProfile(
             name=assistant.get("name", base.assistant.name),
             identity=assistant.get("identity", base.assistant.identity),
@@ -297,6 +312,11 @@ def load_config(path: Path | None = None) -> AppConfig:
             barge_in_threshold_chunks=int(
                 audio.get("barge_in_threshold_chunks", base.audio.barge_in_threshold_chunks)
             ),
+            queue_max_chunks=audio.get("queue_max_chunks", base.audio.queue_max_chunks),
+            max_utterance_s=float(audio.get("max_utterance_s", base.audio.max_utterance_s)),
+            recording_queue_max_chunks=audio.get("recording_queue_max_chunks", base.audio.recording_queue_max_chunks),
+            max_recording_s=float(audio.get("max_recording_s", base.audio.max_recording_s)),
+            playback_reference_s=float(audio.get("playback_reference_s", base.audio.playback_reference_s)),
         ),
         models=ModelConfig(
             chat_provider=str(models.get("chat_provider", base.models.chat_provider)).strip(),
@@ -423,6 +443,16 @@ def validate_config(config: AppConfig) -> AppConfig:
     require(config.audio.chunk_samples == 512, "audio.chunk_samples must be 512")
     require(config.audio.silence_ms > 0, "audio.silence_ms must be > 0")
     require(config.audio.barge_in_threshold_chunks > 0, "audio.barge_in_threshold_chunks must be > 0")
+    require(1 <= config.audio.queue_max_chunks <= 4096, "audio.queue_max_chunks must be between 1 and 4096")
+    require(1 <= config.audio.recording_queue_max_chunks <= 4096, "audio.recording_queue_max_chunks must be between 1 and 4096")
+    require(config.audio.barge_in_threshold_chunks <= config.audio.queue_max_chunks,
+            "audio.barge_in_threshold_chunks must not exceed audio.queue_max_chunks")
+    number("audio.max_utterance_s", config.audio.max_utterance_s, 1, 120)
+    number("audio.max_recording_s", config.audio.max_recording_s, 1, 86400)
+    number("audio.playback_reference_s", config.audio.playback_reference_s, 1, 30)
+    number("runtime.turn_timeout_s", config.runtime.turn_timeout_s, 1, 600)
+    number("runtime.endpoint_timeout_s", config.runtime.endpoint_timeout_s, 0.1, 30)
+    number("runtime.startup_timeout_s", config.runtime.startup_timeout_s, 1, 1800)
     number("audio.tts_speed", config.audio.tts_speed, 0.001)
     require(bool(config.audio.voice.strip()), "audio.voice must not be blank")
     require(config.models.chat_provider in {"local", "bedrock"},

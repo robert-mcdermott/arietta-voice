@@ -185,3 +185,29 @@ def test_logging_configuration(tmp_path) -> None:
     assert config.logging.content_enabled
     assert config.logging.max_bytes == 2048
     assert config.logging.backup_count == 1
+
+
+@pytest.mark.parametrize('section, setting, value', [
+    ('audio', 'queue_max_chunks', '0'), ('audio', 'queue_max_chunks', '4097'),
+    ('audio', 'recording_queue_max_chunks', '0'), ('audio', 'max_utterance_s', 'nan'),
+    ('audio', 'max_utterance_s', '121'), ('audio', 'max_recording_s', 'inf'),
+    ('audio', 'playback_reference_s', '0'), ('runtime', 'turn_timeout_s', '0'),
+    ('runtime', 'turn_timeout_s', '601'), ('runtime', 'endpoint_timeout_s', '-1'),
+    ('runtime', 'startup_timeout_s', 'false'),
+])
+def test_invalid_reliability_limits_rejected(tmp_path, section, setting, value):
+    path = tmp_path / 'test.toml'
+    path.write_text(f'[{section}]\n{setting} = {value}')
+    with pytest.raises(ValueError, match=f'{section}.{setting}'):
+        load_config(path)
+
+
+def test_reliability_defaults_and_private_override(tmp_path):
+    path = tmp_path / 'test.toml'
+    path.write_text('')
+    (tmp_path / 'test.local.toml').write_text('[runtime]\nturn_timeout_s = 90\n[audio]\nmax_utterance_s = 45')
+    config = load_config(path)
+    assert config.runtime.turn_timeout_s == 90
+    assert config.runtime.endpoint_timeout_s == 5
+    assert config.audio.max_utterance_s == 45
+    assert config.audio.queue_max_chunks == 64

@@ -7,6 +7,13 @@ version policy and the release procedure.
 
 ### Added
 
+- Configurable microphone, utterance, recording, and echo-reference limits;
+  streamed WAV recording with pressure/error reporting.
+- Serialized inference processes with turn, endpoint, and startup deadlines;
+  model/tool failure recovery and an independent runtime heartbeat.
+- Admin reliability cards, recording/recovery warnings, expandable runtime
+  details, clearer errors, and unsaved source/knowledge editor warnings.
+
 - `config-init` creates ignored, owner-only private config/persona snapshots and
   backups while retaining original files. Sibling `.local.toml` settings override
   the selected base config; CLI runtime overrides take precedence.
@@ -50,6 +57,12 @@ version policy and the release procedure.
 
 ### Fixed
 
+- Failed/timed-out inference is stopped before the next job; failed turns are
+  not stored or automatically retried. Playback cleanup closes resources on
+  generation/device failures. Memory updates use private atomic replacements.
+- Web chat prevents duplicate submissions and duplicate current-message history,
+  keeps failed drafts, and returns safe busy/timeout/failure responses.
+
 - API `use_tools=false` bypasses both deterministic and model-requested tools,
   including model-tool registry construction.
 - History limits consistently count user/assistant pairs; zero clears history.
@@ -64,6 +77,10 @@ version policy and the release procedure.
 - Knowledge retrieval excludes links outside its root and hidden directories.
 
 ### Migration notes
+
+- New audio/runtime limits apply through defaults without changing private
+  settings. Restart the runtime and API. Slow first-run model downloads may need
+  a larger `runtime.startup_timeout_s`; see README for limits and recovery scope.
 
 - Run `uv run arietta-voice config-init` once to preserve existing settings and
   persona in private files, then customize those files. The command never resets

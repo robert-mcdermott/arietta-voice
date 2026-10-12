@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from contextlib import ExitStack
 import logging
 from pathlib import Path
 import re
@@ -13,24 +14,18 @@ from arietta_voice.audio import (
     ChimePlayer,
     MicrophoneStream,
     RawKeypressMonitor,
+    UtteranceBuffer,
     play_tts_stream,
     play_tts_stream_passive,
 )
 from arietta_voice.config import AppConfig
 from arietta_voice.diagnostics import run_startup_diagnostics
-from arietta_voice.knowledge import KnowledgeRetriever
-from arietta_voice.llm import build_chat_model
 from arietta_voice.logging_utils import EventLogger
-from arietta_voice.memory import MemoryStore
-from arietta_voice.model_tools import ModelToolRegistry
-from arietta_voice.model_tooling import maybe_generate_with_model_tools
 from arietta_voice.models import AssistantState, ConversationTurn, SessionContext, UtteranceResult
-from arietta_voice.prompts import PromptManager, sanitize_for_speech
+from arietta_voice.prompts import sanitize_for_speech
 from arietta_voice.runtime_status import RuntimeStatusPublisher
-from arietta_voice.stt import MoonshineSpeechToText
-from arietta_voice.tools import ToolRegistry
-from arietta_voice.tts import KokoroTextToSpeech
-from arietta_voice.turn_detection import SileroVoiceActivityDetector, SmartTurnEndpointDetector
+from arietta_voice.turn_detection import SileroVoiceActivityDetector
+from arietta_voice.worker import InferenceWorker, WorkerTimeout
 from arietta_voice.wake import WakeWordMatch, build_wake_word_detector
 
 
@@ -49,40 +44,24 @@ class RuntimeOptions:
 
 
 class AriettaVoiceRuntime:
-    def __init__(self, config: AppConfig, options: RuntimeOptions | None = None) -> None:
+    def __init__(self, config: AppConfig, options: RuntimeOptions | None = None, *, worker=None) -> None:
         self.config = config
         self.options = options or RuntimeOptions()
         self.started_at = time.monotonic()
         self.logger = logging.getLogger("arietta_voice.runtime")
         self.event_logger = EventLogger.from_config(config.logging)
-        self.prompts = PromptManager(config)
-        self.memory = MemoryStore(
-            config.prompts.memory_path,
-            enabled=config.memory.enabled,
-            consolidate_every_turns=config.memory.consolidate_every_turns,
-        )
-        self.knowledge = KnowledgeRetriever(config.knowledge)
-        self.tools = ToolRegistry(
-            config,
-            knowledge_retriever=self.knowledge if config.knowledge.enabled else None,
-        )
-        self.model_tools = ModelToolRegistry(
-            config,
-            knowledge_retriever=self.knowledge if config.knowledge.enabled else None,
-        )
+        self.worker = worker if worker is not None else InferenceWorker(config)
         self.vad = SileroVoiceActivityDetector(config.audio.sample_rate)
-        self.smart_turn = (
-            SmartTurnEndpointDetector(config.audio.sample_rate)
-            if config.audio.smart_turn_enabled
-            else None
-        )
-        self.stt = MoonshineSpeechToText(config.models.stt_language)
-        self.llm = build_chat_model(config.models)
-        self.speaker = (
-            KokoroTextToSpeech(config.audio.voice, speed=config.audio.tts_speed)
-            if config.audio.tts_enabled
-            else None
-        )
+        self.microphone = None
+        self._last_audio_statistics = {}
+        self.turn_stage = "idle"
+        self.turn_started_at: float | None = None
+        self._stage_started_at: float | None = None
+        self._turn_deadline: float | None = None
+        self.turn_failures = 0
+        self.turn_timeouts = 0
+        self.utterances_discarded = 0
+        self.last_turn_duration_ms: int | None = None
         self.chime_player = ChimePlayer(config.audio.chime_enabled)
         self.wake_detector = build_wake_word_detector(config.wake_word)
         self.session = SessionContext()
@@ -138,22 +117,11 @@ class AriettaVoiceRuntime:
         self.logger.info("Loading VAD")
         self._publish_status(force=True)
         self.vad.ensure_loaded()
-        self.logger.info("Loading STT")
-        self._publish_status(force=True)
-        self.stt.ensure_loaded()
-        self.logger.info("Loading LLM")
-        self._publish_status(force=True)
-        self.llm.ensure_loaded()
-        if self.speaker is not None:
-            self.logger.info("Loading TTS")
-            self._publish_status(force=True)
-            self.speaker.ensure_loaded()
-        if self.smart_turn is not None:
-            self.logger.info("Loading Smart Turn")
-            self._publish_status(force=True)
-            self.smart_turn.ensure_loaded()
-        self.memory.ensure_exists()
-        self.knowledge.preload()
+        self.turn_stage = "loading_models"
+        self._stage_started_at = time.monotonic()
+        self.worker.call("warmup", timeout_s=self.config.runtime.startup_timeout_s,
+                         on_wait=self._publish_status)
+        self.turn_stage = "idle"
         self.set_state(
             AssistantState.WAITING_FOR_WAKE if self.config.wake_word.enabled else AssistantState.LISTENING
         )
@@ -217,42 +185,54 @@ class AriettaVoiceRuntime:
         self.display_speaking_active = bool(active)
         self._publish_status(force=False)
 
-    def _generate_chat_response(self, messages: list[dict[str, str]]) -> str:
-        return self.llm.generate(
-            messages,
-            max_tokens=self.config.models.max_tokens,
-            temperature=self.config.models.temperature,
-        )
+    def _remaining_time(self) -> float:
+        if self._turn_deadline is None:
+            return self.config.runtime.turn_timeout_s
+        remaining = self._turn_deadline - time.monotonic()
+        if remaining <= 0:
+            raise WorkerTimeout("Turn exceeded its time limit")
+        return remaining
+
+    def _infer(self, operation: str, payload=None):
+        self.turn_stage = operation
+        self._publish_status(force=True)
+        return self.worker.call(operation, payload, timeout_s=self._remaining_time(),
+                                on_wait=self._publish_status)
 
     def _respond(self, user_text: str) -> str:
-        tool_response = self.tools.maybe_handle(user_text)
-        if tool_response and tool_response.bypass_model:
-            self.event_logger.log("tool_call", tool=tool_response.name, mode="direct")
-            return tool_response.content
-        if tool_response:
-            self.event_logger.log("tool_call", tool=tool_response.name, mode="context")
+        result = self._infer("chat", {"message": user_text,
+            "voice_turn": True,
+            "history": [asdict(turn) for turn in self.session.history], "use_tools": True,
+            "enabled_tools": self.config.tools.enabled,
+            "enabled_model_tools": self.config.model_tools.enabled})
+        tool = result.get("model_tool") or result.get("used_tool")
+        if tool:
+            self.event_logger.log("tool_call", tool=tool,
+                                  mode="model_requested" if result.get("model_tool") else result["source"])
+        return result["response"]
 
-        messages = self.prompts.build_messages(self.session.history, user_text, tool_response)
-        response, model_tool_use = maybe_generate_with_model_tools(
-            messages,
-            model_tool_registry=self.model_tools,
-            llm_generate=self._generate_chat_response,
-        )
-        if model_tool_use is not None:
-            self.event_logger.log(
-                "tool_call",
-                tool=model_tool_use.name,
-                mode="model_requested",
-                content={"details": model_tool_use.details},
-            )
-        return sanitize_for_speech(response)
+    async def _tts_stream(self, text: str):
+        self._infer("tts_start", text)
+        try:
+            while True:
+                item = self._infer("tts_next")
+                if item is None:
+                    return
+                yield item
+        finally:
+            if self.worker.pid is not None:
+                try:
+                    self.worker.call("tts_close", timeout_s=1)
+                except Exception:
+                    pass  # The worker already stopped and discarded this stream.
 
     def _speak_blocking(self, text: str) -> None:
-        if self.speaker is None:
+        if not self.config.audio.tts_enabled:
             return
 
         play_tts_stream_passive(
-            tts_stream=self.speaker.create_stream(text),
+            tts_stream=self._tts_stream(text),
+            deadline=self._turn_deadline,
             chime_player=self.chime_player,
             playback_level_callback=self._update_display_speech,
         )
@@ -272,7 +252,7 @@ class AriettaVoiceRuntime:
         self.last_assistant_text = response
         self.event_logger.log("assistant_response", content={"text": response}, chars=len(response))
 
-        if self.speaker is None:
+        if not self.config.audio.tts_enabled:
             self.chime_player.stop_at_gap()
             self._print_response(response)
             self._update_display_speech(0.0, False)
@@ -281,7 +261,9 @@ class AriettaVoiceRuntime:
 
         self.set_state(AssistantState.SPEAKING)
         playback = play_tts_stream(
-            tts_stream=self.speaker.create_stream(response),
+            tts_stream=self._tts_stream(response),
+            deadline=self._turn_deadline,
+            reference_seconds=self.config.audio.playback_reference_s,
             microphone=microphone,
             vad=self.vad,
             keypress_monitor=keypress_monitor,
@@ -316,11 +298,18 @@ class AriettaVoiceRuntime:
             self.session.history = self.session.history[-max_turns:]
         self.session.turn_count += 1
 
-        memory_updates = self.memory.update_from_turn(self.llm, transcript, response)
-        if memory_updates:
-            self.event_logger.log("memory_updated", facts_added=memory_updates)
-        if self.memory.maybe_consolidate(self.llm, self.session.turn_count):
-            self.event_logger.log("memory_consolidated", turn_count=self.session.turn_count)
+    def _remember_turn(self, transcript: str, response: str) -> None:
+        if not self.config.memory.enabled:
+            return
+        try:
+            result = self._infer("memory", {"user": transcript, "assistant": response,
+                                            "turn_count": self.session.turn_count})
+            self.event_logger.log("memory_updated", **result)
+        except Exception as exc:
+            # The answer was already delivered. Memory failure must not erase
+            # that success or cause the tool/action to be repeated.
+            self.last_error = "MemoryUpdateFailed"
+            self.event_logger.log("memory_update_failed", error_type=type(exc).__name__)
 
     def _handle_active_turn(
         self,
@@ -344,7 +333,6 @@ class AriettaVoiceRuntime:
             if not response:
                 response = "I don't have a good answer for that yet."
             response = sanitize_for_speech(response)
-            self._store_turn(transcript, response)
 
         buffered_chunks = self._deliver_response(
             response,
@@ -352,6 +340,10 @@ class AriettaVoiceRuntime:
             keypress_monitor=keypress_monitor,
             next_state=AssistantState.LISTENING,
         )
+        if transcript and not end_session_requested:
+            self._store_turn(transcript, response)
+            if not buffered_chunks:
+                self._remember_turn(transcript, response)
         self._touch_session()
         return UtteranceResult(
             buffered_chunks=buffered_chunks,
@@ -385,14 +377,14 @@ class AriettaVoiceRuntime:
         self._touch_session()
         return UtteranceResult(buffered_chunks=buffered_chunks)
 
-    def process_utterance(
+    def _process_utterance(
         self,
         audio: np.ndarray,
         microphone: MicrophoneStream,
         keypress_monitor: RawKeypressMonitor,
     ) -> UtteranceResult:
         started_at = time.monotonic()
-        transcript = self.stt.transcribe(audio, self.config.audio.sample_rate).strip()
+        transcript = self._infer("transcribe", audio).strip()
         stt_latency_ms = int((time.monotonic() - started_at) * 1000)
 
         if not self.session.active and self.config.wake_word.enabled:
@@ -419,108 +411,168 @@ class AriettaVoiceRuntime:
         self.event_logger.log("user_transcript", content={"text": transcript},
                               chars=len(transcript), latency_ms=latency_ms)
 
+    def process_utterance(self, audio: np.ndarray, microphone: MicrophoneStream,
+                          keypress_monitor: RawKeypressMonitor) -> UtteranceResult:
+        self.turn_started_at = time.monotonic()
+        self._turn_deadline = self.turn_started_at + self.config.runtime.turn_timeout_s
+        self.last_error = None
+        try:
+            if len(audio) > self.config.audio.max_utterance_s * self.config.audio.sample_rate:
+                self.utterances_discarded += 1
+                raise ValueError("Utterance exceeds the audio limit")
+            return self._process_utterance(audio, microphone, keypress_monitor)
+        except Exception as exc:
+            self._recover(exc, microphone)
+            return UtteranceResult(buffered_chunks=[])
+        finally:
+            self.last_turn_duration_ms = round((time.monotonic() - self.turn_started_at) * 1000)
+            self.turn_started_at = self._turn_deadline = None
+            self.turn_stage = "idle"
+            self._publish_status(force=True)
+
+    def _recover(self, exc: Exception, microphone) -> None:
+        self.turn_failures += 1
+        timed_out = isinstance(exc, (WorkerTimeout, TimeoutError))
+        self.turn_timeouts += int(timed_out)
+        self.last_error = "TurnTimeout" if timed_out else type(exc).__name__
+        self.event_logger.log("turn_failed", stage=self.turn_stage, error_type=self.last_error,
+                              content={"error": str(exc)})
+        self.logger.warning("Turn failed during %s (%s); listening will resume", self.turn_stage, self.last_error)
+        # Do not replay a possibly completed external action or send partial
+        # audio to STT. A new user turn is required after a failure.
+        try:
+            self.chime_player.stop()
+        except Exception:
+            self.logger.warning("Could not stop the thinking chime")
+        self._update_display_speech(0, False)
+        microphone.drain()
+        try:
+            self.vad.reset()
+        except Exception:
+            self.logger.warning("Could not reset voice activity detection")
+        if self.session.active:
+            self._print_response("That turn failed. Please check any external action before trying again.")
+        self._touch_session()
+        self.set_state(AssistantState.LISTENING if self.session.active or not self.config.wake_word.enabled
+                       else AssistantState.WAITING_FOR_WAKE)
+
+    def reliability_snapshot(self) -> dict:
+        started_at = self.turn_started_at
+        microphone = self.microphone
+        stage_limit = self.config.runtime.turn_timeout_s
+        if self.turn_stage in {"endpoint", "loading_models"}:
+            started_at = self._stage_started_at
+            stage_limit = (self.config.runtime.endpoint_timeout_s if self.turn_stage == "endpoint"
+                           else self.config.runtime.startup_timeout_s)
+        return {"turn_stage": self.turn_stage,
+                "turn_elapsed_s": round(time.monotonic() - started_at, 1) if started_at else None,
+                "turn_timeout_s": self.config.runtime.turn_timeout_s,
+                "stage_timeout_s": stage_limit,
+                "turn_failures": self.turn_failures, "turn_timeouts": self.turn_timeouts,
+                "utterances_discarded": self.utterances_discarded,
+                "last_turn_duration_ms": self.last_turn_duration_ms,
+                "worker_pid": self.worker.pid, "worker_restarts": self.worker.restarts,
+                "audio": microphone.statistics() if microphone is not None else self._last_audio_statistics}
+
     def run(self) -> None:
-        self._publish_status(force=True)
-        self.warmup()
-
-        silence_limit = max(
-            1,
-            int(
-                self.config.audio.silence_ms
-                / (self.config.audio.chunk_samples / self.config.audio.sample_rate * 1000)
-            ),
-        )
-
-        speech_buffer: list[np.ndarray] = []
-        speaking = False
-        silent_chunks = 0
-
-        with RawKeypressMonitor() as keypress_monitor, MicrophoneStream(
-            self.config.audio.sample_rate,
-            self.config.audio.chunk_samples,
-            record_path=self.options.record_path,
-        ) as microphone:
-            try:
-                if self.config.wake_word.enabled:
-                    wake_words = ", ".join(self.config.wake_word.phrases)
-                    print(f"Listening for wake word(s): {wake_words}. Press Ctrl+C to quit.\n", flush=True)
-                else:
+        self.status_publisher.start(self)
+        try:
+            self.warmup()
+            with RawKeypressMonitor() as keypress_monitor, MicrophoneStream(
+                self.config.audio.sample_rate, self.config.audio.chunk_samples,
+                record_path=self.options.record_path, max_queue_chunks=self.config.audio.queue_max_chunks,
+                recording_queue_max_chunks=self.config.audio.recording_queue_max_chunks,
+                max_recording_s=self.config.audio.max_recording_s,
+            ) as microphone:
+                self.microphone = microphone
+                if not self.config.wake_word.enabled:
                     self._open_session(None)
-                    print("Wake word disabled. Listening. Press Ctrl+C to quit.\n", flush=True)
+                self._listen(microphone, keypress_monitor)
+        except KeyboardInterrupt:
+            self.set_state(AssistantState.STOPPING)
+        except Exception as exc:
+            self.last_error = type(exc).__name__
+            raise
+        finally:
+            if self.microphone is not None:
+                self._last_audio_statistics = self.microphone.statistics()
+            self.microphone = None
+            self.turn_stage = "stopped"
+            with ExitStack() as cleanup:
+                cleanup.callback(self.status_publisher.stop, self)
+                cleanup.callback(self.worker.close)
+                cleanup.callback(self.chime_player.stop)
 
-                while True:
-                    self._publish_status(force=False)
-                    now = time.monotonic()
-                    if (
-                        self.config.wake_word.enabled
-                        and self.session.active
-                        and self.state not in {AssistantState.THINKING, AssistantState.SPEAKING}
-                        and self._session_timed_out(now)
-                    ):
-                        self._end_session(
-                            reason="idle_timeout",
-                            microphone=microphone,
-                            speak_goodbye=False,
-                        )
-                        speech_buffer.clear()
-                        speaking = False
-                        silent_chunks = 0
-
-                    chunk = microphone.get(timeout=0.1)
-                    if chunk is None:
-                        continue
-                    if len(chunk) < self.config.audio.chunk_samples:
-                        continue
-
-                    speech_probability = self.vad.probability(chunk)
-                    if speech_probability > 0.5:
-                        speaking = True
-                        silent_chunks = 0
-                        speech_buffer.append(chunk)
-                        continue
-
-                    if not speaking:
-                        continue
-
-                    silent_chunks += 1
-                    speech_buffer.append(chunk)
-                    if silent_chunks < silence_limit:
-                        continue
-
-                    utterance = np.concatenate(speech_buffer)
-                    if self.smart_turn is not None:
-                        endpoint_probability = self.smart_turn.probability(utterance)
-                        self.event_logger.log(
-                            "smart_turn_score",
-                            probability=round(endpoint_probability, 4),
-                        )
-                        if endpoint_probability < 0.5:
-                            silent_chunks = 0
-                            continue
-
-                    result = self.process_utterance(utterance, microphone, keypress_monitor)
-                    if result.end_session_requested:
-                        self._end_session(
-                            reason="user_goodbye",
-                            microphone=microphone,
-                            speak_goodbye=False,
-                        )
-                        speech_buffer.clear()
-                        speaking = False
-                        silent_chunks = 0
-                    else:
-                        speech_buffer = list(result.buffered_chunks)
-                        speaking = bool(speech_buffer)
-                        silent_chunks = 0
+    def _listen(self, microphone, keypress_monitor) -> None:
+        silence_limit = max(1, int(self.config.audio.silence_ms * self.config.audio.sample_rate /
+                                   (self.config.audio.chunk_samples * 1000)))
+        buffer = UtteranceBuffer(int(self.config.audio.max_utterance_s * self.config.audio.sample_rate))
+        silent_chunks = 0
+        discard_until_quiet = False
+        observed_drops = microphone.dropped_chunks + microphone.input_overflows
+        while True:
+            if self.config.wake_word.enabled and self.session.active and self._session_timed_out(time.monotonic()):
+                self._end_session(reason="idle_timeout", microphone=microphone, speak_goodbye=False)
+                buffer.clear()
+                silent_chunks = 0
+            chunk = microphone.get(timeout=0.1)
+            if chunk is None or len(chunk) != self.config.audio.chunk_samples:
+                continue
+            drops = microphone.dropped_chunks + microphone.input_overflows
+            if drops != observed_drops:
+                observed_drops = drops
+                buffer.clear()
+                discard_until_quiet = True
+                silent_chunks = 0
+                self.event_logger.log("audio_gap", dropped_chunks=drops)
+            try:
+                is_speech = self.vad.probability(chunk) > 0.5
+                silent_chunks = 0 if is_speech else silent_chunks + 1
+                if discard_until_quiet:
+                    if silent_chunks >= silence_limit:
+                        discard_until_quiet = False
+                        self.vad.reset()
+                    continue
+                if not buffer.samples and not is_speech:
+                    continue
+                if not buffer.append(chunk):
+                    self.utterances_discarded += 1
+                    self.event_logger.log("utterance_limit", max_seconds=self.config.audio.max_utterance_s)
+                    buffer.clear()
+                    discard_until_quiet = True
                     self.vad.reset()
-            except KeyboardInterrupt:
-                self.set_state(AssistantState.STOPPING)
-                if self.session.active:
-                    goodbye = self.next_goodbye()
-                    self._print_response(goodbye)
-                    self._speak_blocking(goodbye)
+                    continue
+                if is_speech or silent_chunks < silence_limit:
+                    continue
+                utterance = buffer.audio()
+                if self.config.audio.smart_turn_enabled:
+                    self.turn_stage = "endpoint"
+                    self._stage_started_at = time.monotonic()
+                    endpoint = self.worker.call("endpoint", utterance,
+                        timeout_s=self.config.runtime.endpoint_timeout_s, on_wait=self._publish_status)
+                    self.event_logger.log("smart_turn_score", probability=round(endpoint, 4))
+                    self.turn_stage = "idle"
+                    if endpoint < 0.5:
+                        silent_chunks = 0
+                        continue
+                result = self.process_utterance(utterance, microphone, keypress_monitor)
+                if not result.buffered_chunks:
+                    microphone.drain()
+                buffer.clear()
+                if result.end_session_requested:
+                    self._end_session(reason="user_goodbye", microphone=microphone, speak_goodbye=False)
+                else:
+                    for buffered in result.buffered_chunks:
+                        if not buffer.append(buffered):
+                            buffer.clear()
+                            break
+                observed_drops = microphone.dropped_chunks + microphone.input_overflows
+                silent_chunks = 0
+                self.vad.reset()
             except Exception as exc:
-                self.last_error = type(exc).__name__
-                raise
-            finally:
-                self._publish_status(lifecycle="stopped", force=True)
+                buffer.clear()
+                silent_chunks = 0
+                discard_until_quiet = True
+                self._recover(exc, microphone)
+                self.turn_stage = "idle"
+                observed_drops = microphone.dropped_chunks + microphone.input_overflows

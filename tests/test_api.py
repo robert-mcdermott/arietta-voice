@@ -109,6 +109,18 @@ class FakeRuntimeSupervisor:
 
 def _client_with_service(config_path: Path) -> tuple[TestClient, AriettaApiService]:
     service = AriettaApiService(config_path)
+    from dataclasses import asdict
+    from unittest.mock import Mock
+    from arietta_voice.api import ChatRequest
+
+    def in_process(operation, payload, **kwargs):
+        assert operation == "chat"
+        payload.pop("enabled_tools")
+        payload.pop("enabled_model_tools")
+        return asdict(service._chat_in_process(ChatRequest(**payload), record=False))
+
+    service.worker.close()
+    service.worker = Mock(call=in_process, pid=None, restarts=0, operation=None)
     client = TestClient(create_app(service=service), base_url="http://localhost")
     return client, service
 
@@ -718,3 +730,22 @@ def test_model_tool_source_endpoints_read_write_and_invoke(tmp_path: Path) -> No
     assert saved.json()["tool"]["valid"] is True
     assert invoked.status_code == 200
     assert "Edited model follow-up." in invoked.json()["followup_context"]
+
+
+@pytest.mark.parametrize("failure, code", [("WorkerTimeout", 504), ("WorkerBusy", 503), ("WorkerFailure", 502)])
+def test_chat_failure_has_safe_actionable_error_and_can_recover(tmp_path, failure, code):
+    from unittest.mock import Mock
+    from arietta_voice import worker
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    service.worker.call = Mock(side_effect=[getattr(worker, failure)("PRIVATE failure details"),
+        {"response": "Recovered", "source": "model", "used_tool": None, "model_tool": None}])
+    auth = ("admin", "test-only-long-password")
+    response = client.post("/api/chat", auth=auth, json={"message": "hello"})
+    assert response.status_code == code
+    assert "PRIVATE" not in response.text
+    assert "PRIVATE" not in service.config.logging.events_file.read_text()
+    assert service.chat_turns == 0
+    response = client.post("/api/chat", auth=auth, json={"message": "new request"})
+    assert response.status_code == 200
+    assert service.chat_turns == 1
+    assert service.last_error is None

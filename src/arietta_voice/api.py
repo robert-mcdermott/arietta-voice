@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -29,6 +30,7 @@ from arietta_voice.prompts import PromptManager, sanitize_for_speech
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
 from arietta_voice.tool_admin import ModelToolAdmin, ToolAdmin
+from arietta_voice.worker import InferenceWorker, WorkerBusy, WorkerFailure, WorkerTimeout
 
 
 # Retain the existing API field names while reporting the application version.
@@ -38,12 +40,12 @@ AUTH_REALM = "Arietta Admin"
 
 class ChatHistoryItem(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=12_000)
 
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12_000)
-    history: list[ChatHistoryItem] = Field(default_factory=list)
+    history: list[ChatHistoryItem] = Field(default_factory=list, max_length=128)
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     use_tools: bool = True
@@ -129,6 +131,8 @@ class AriettaApiService:
             knowledge_retriever=self.knowledge,
         )
         self._llm: ChatModel | None = None
+        self.worker = InferenceWorker(self.config)
+        self._worker_model_pid: int | None = None
         self.chat_turns = 0
         self.last_chat_at: str | None = None
         self.last_error: str | None = None
@@ -171,6 +175,9 @@ class AriettaApiService:
                 "chat_turns": self.chat_turns,
                 "last_chat_at": self.last_chat_at,
                 "last_error": self.last_error,
+                "inference": {"operation": self.worker.operation, "worker_pid": self.worker.pid,
+                              "worker_restarts": self.worker.restarts,
+                              "turn_timeout_s": self.config.runtime.turn_timeout_s},
             },
             "runtime": runtime_status,
             "assistant": {
@@ -181,7 +188,7 @@ class AriettaApiService:
             "models": {
                 "chat_provider": self.config.models.chat_provider,
                 "chat_model": self.config.models.chat_model,
-                "llm_loaded": self._llm is not None and self._llm.is_loaded(),
+                "llm_loaded": self.worker.pid is not None and self.worker.pid == self._worker_model_pid,
                 "stt_language": self.config.models.stt_language,
             },
             "knowledge": {
@@ -334,6 +341,7 @@ class AriettaApiService:
 
     def build_index(self) -> dict[str, Any]:
         payload = build_knowledge_index(self.config.knowledge)
+        self.worker.invalidate()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
         self.model_tool_admin.knowledge_retriever = self.knowledge
@@ -378,6 +386,7 @@ class AriettaApiService:
         created = not path.exists()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        self.worker.invalidate()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
         self.model_tool_admin.knowledge_retriever = self.knowledge
@@ -395,6 +404,7 @@ class AriettaApiService:
             raise FileNotFoundError(file_path)
         relative_path = path.relative_to(self.config.knowledge.directory).as_posix()
         path.unlink()
+        self.worker.invalidate()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
         self.model_tool_admin.knowledge_retriever = self.knowledge
@@ -445,6 +455,7 @@ class AriettaApiService:
         return result
 
     def reload_tools(self) -> dict[str, Any]:
+        self.worker.invalidate()
         payload = self.tool_admin.reload()
         self.event_logger.log("api_tools_reloaded", enabled=payload["enabled"])
         return payload
@@ -454,6 +465,7 @@ class AriettaApiService:
 
     def write_tool_source(self, tool_name: str, content: str) -> dict[str, Any]:
         payload = self.tool_admin.write_source(tool_name, content)
+        self.worker.invalidate()
         self.event_logger.log(
             "api_tool_source_saved",
             configured_name=payload["configured_name"],
@@ -490,6 +502,7 @@ class AriettaApiService:
         return result
 
     def reload_model_tools(self) -> dict[str, Any]:
+        self.worker.invalidate()
         payload = self.model_tool_admin.reload()
         self.event_logger.log("api_model_tools_reloaded", enabled=payload["enabled"])
         return payload
@@ -499,6 +512,7 @@ class AriettaApiService:
 
     def write_model_tool_source(self, tool_name: str, content: str) -> dict[str, Any]:
         payload = self.model_tool_admin.write_source(tool_name, content)
+        self.worker.invalidate()
         self.event_logger.log(
             "api_model_tool_source_saved",
             configured_name=payload["configured_name"],
@@ -514,6 +528,18 @@ class AriettaApiService:
         }
 
     def chat(self, request: ChatRequest) -> ChatResult:
+        payload = request.model_dump()
+        payload.update(enabled_tools=self.config.tools.enabled,
+                       enabled_model_tools=self.config.model_tools.enabled)
+        response = self.worker.call("chat", payload, timeout_s=self.config.runtime.turn_timeout_s)
+        self._worker_model_pid = self.worker.pid if response.pop("model_loaded", False) else None
+        result = ChatResult(**response)
+        self.last_error = None
+        self._record_chat(request.message, result.response, source=result.source,
+                          used_tool=result.used_tool, model_tool=result.model_tool)
+        return result
+
+    def _chat_in_process(self, request: ChatRequest, *, record: bool = True) -> ChatResult:
         message = request.message.strip()
         history = [
             ConversationTurn(role=item.role, content=item.content.strip())
@@ -530,7 +556,8 @@ class AriettaApiService:
                 used_tool = str(probe["tool"])
                 if probe["bypass_model"]:
                     response = sanitize_for_speech(str(probe["content"]))
-                    self._record_chat(message, response, source="tool", used_tool=used_tool)
+                    if record:
+                        self._record_chat(message, response, source="tool", used_tool=used_tool)
                     return ChatResult(
                         response=response,
                         source="tool",
@@ -567,7 +594,8 @@ class AriettaApiService:
         if model_tool_use is not None:
             model_tool = model_tool_use.name
         clean_response = sanitize_for_speech(response)
-        self._record_chat(message, clean_response, source="model", used_tool=used_tool, model_tool=model_tool)
+        if record:
+            self._record_chat(message, clean_response, source="model", used_tool=used_tool, model_tool=model_tool)
         return ChatResult(
             response=clean_response,
             source="model",
@@ -645,12 +673,20 @@ def create_app(
     service = service or AriettaApiService(config_path)
     base_path = service.config_path or service.config.project_root / "config" / "arietta_voice.toml"
     admin_credentials = load_admin_credentials(base_path)
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            yield
+        finally:
+            service.worker.close()
+
     app = FastAPI(
         title="Arietta Voice API",
         version=API_VERSION,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.arietta_service = service
     allowed_hosts = ["localhost", "127.0.0.1", "[::1]"]
@@ -989,11 +1025,16 @@ def create_app(
             result = svc().chat(payload)
         except Exception as exc:
             service_obj = svc()
-            service_obj.last_error = f"{type(exc).__name__}: {exc}"
-            service_obj.event_logger.log("api_error", route="/api/chat", error=service_obj.last_error)
+            service_obj.last_error = type(exc).__name__
+            service_obj.event_logger.log("api_error", route="/api/chat", error_type=service_obj.last_error)
+            code, detail = 502, "The model or tool failed. The next request will use a fresh worker."
+            if isinstance(exc, WorkerBusy):
+                code, detail = 503, "Inference is busy. Wait for the current request to finish."
+            elif isinstance(exc, WorkerTimeout):
+                code, detail = 504, "The turn timed out and was stopped. No automatic retry was made; check any external action before repeating it."
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=service_obj.last_error,
+                status_code=code,
+                detail=detail,
             ) from exc
         return {
             "response": result.response,
@@ -1060,6 +1101,7 @@ ADMIN_HTML = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Arietta Voice Admin</title>
+  <link rel="icon" href="data:,">
   <script>
     document.documentElement.dataset.theme = localStorage.getItem("arietta-theme") || "light";
   </script>
@@ -1088,7 +1130,7 @@ ADMIN_HTML = """<!doctype html>
       --good: #197344;
       --disabled-bg: #eef1ed;
       --disabled-ink: #8b9489;
-      --shadow: 0 16px 34px rgba(31, 37, 28, 0.10);
+      --shadow: 0 3px 12px rgba(31, 37, 28, 0.04);
       color-scheme: light;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -1356,7 +1398,7 @@ ADMIN_HTML = """<!doctype html>
     .metric, .panel, .row-card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 12px;
       box-shadow: var(--shadow);
     }
     .metric {
@@ -1374,7 +1416,7 @@ ADMIN_HTML = """<!doctype html>
       letter-spacing: 0;
     }
     .metric .value {
-      font-size: 24px;
+      font-size: 21px;
       line-height: 1.1;
       font-weight: 760;
       overflow-wrap: anywhere;
@@ -1388,6 +1430,23 @@ ADMIN_HTML = """<!doctype html>
       padding: 18px;
       margin-bottom: 18px;
     }
+    .eyebrow { color: var(--accent); font-size: 11px; font-weight: 750; letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 7px; }
+    .runtime-summary { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; color: var(--muted); font-size: 13px; }
+    .runtime-badge { color: var(--active-ink); background: var(--active-bg); border: 1px solid var(--active-border); padding: 6px 12px; border-radius: 99px; font-weight: 650; }
+    .runtime-badge.offline { color: var(--muted); background: var(--panel-strong); border-color: var(--line); }
+    .reliability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+    .reliability-card { background: var(--panel-strong); padding: 16px; border-radius: 10px; min-width: 0; }
+    .reliability-card h4 { margin: 0 0 10px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .reliability-value { font-size: 22px; font-weight: 650; margin-bottom: 8px; overflow-wrap: anywhere; }
+    .reliability-note { color: var(--muted); font-size: 12px; line-height: 1.7; }
+    progress { width: 100%; height: 6px; accent-color: var(--accent); display: block; margin: 12px 0; }
+    .notice { border: 1px solid var(--warn); border-left-width: 4px; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+    .notice.error-notice { border-color: var(--bad); }
+    .notice button { float: right; margin-left: 12px; }
+    details.runtime-details { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 14px; }
+    details.runtime-details summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    @media (max-width: 1100px) { .reliability-grid { grid-template-columns: 1fr; } }
     .panel-head {
       display: flex;
       align-items: center;
@@ -1745,6 +1804,7 @@ ADMIN_HTML = """<!doctype html>
       nav { grid-template-columns: 1fr 1fr; }
       .grid { grid-template-columns: 1fr; }
       .form-row { flex-direction: column; }
+      .runtime-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
       .tool-item { grid-template-columns: 1fr; }
       .tool-actions,
       .tool-toolbar { justify-content: flex-start; }
@@ -1778,11 +1838,14 @@ ADMIN_HTML = """<!doctype html>
     <main>
       <div class="topbar">
         <div>
+          <div class="eyebrow">Arietta Voice <span id="app-version"></span></div>
           <h2 id="view-title">Dashboard</h2>
           <div class="status-row"><span id="health-dot" class="dot"></span><span id="health-text">Checking</span><span id="poll-status">Auto-refresh on</span></div>
         </div>
         <button class="button info" id="refresh">Refresh</button>
       </div>
+
+      <div id="error-notice" class="notice error-notice" role="alert" hidden><button id="error-dismiss" class="button">Dismiss</button><span id="error-message"></span></div>
 
       <section id="dashboard" class="view active">
         <div class="grid">
@@ -1794,14 +1857,18 @@ ADMIN_HTML = """<!doctype html>
         <div class="panel">
           <div class="panel-head">
             <h3>Voice Runtime</h3>
-            <div class="form-row" style="margin:0">
+            <div class="form-row runtime-actions" style="margin:0">
               <button class="button success" id="runtime-start">Start</button>
               <button class="button danger" id="runtime-stop">Stop</button>
               <button class="button warn" id="runtime-restart">Restart</button>
               <button class="button info" id="runtime-refresh">Refresh</button>
             </div>
           </div>
-          <div id="runtime-detail"></div>
+          <div class="runtime-summary"><span id="runtime-badge" class="runtime-badge">Checking</span><span id="runtime-summary"></span></div>
+          <div id="runtime-warning" class="notice" role="status" hidden></div>
+          <div id="runtime-reliability" class="reliability-grid"></div>
+          <div id="api-inference-note" class="reliability-note"></div>
+          <details class="runtime-details"><summary>Process, session, and file details</summary><div id="runtime-detail"></div></details>
         </div>
         <div class="split">
           <div class="panel">
@@ -1822,11 +1889,13 @@ ADMIN_HTML = """<!doctype html>
             <div id="chat-log" class="chat-log"></div>
           </div>
           <div class="panel">
-            <textarea id="chat-message" placeholder="Type a message for the assistant"></textarea>
+            <label for="chat-message" class="muted">Message · ⌘/Ctrl + Enter to send</label>
+            <textarea id="chat-message" maxlength="12000" placeholder="Type a message for the assistant"></textarea>
             <div class="form-row">
               <button class="button primary" id="chat-send">Send</button>
               <button class="button" id="tool-probe">Probe Tools</button>
             </div>
+            <div id="chat-status" class="reliability-note" role="status">Ready</div>
             <pre id="chat-meta">{}</pre>
           </div>
         </div>
@@ -2012,6 +2081,8 @@ ADMIN_HTML = """<!doctype html>
   <script>
     const state = {
       chatHistory: [],
+      chatPending: false,
+      knowledgeDirty: false,
       currentKnowledgeFile: null,
       currentView: "dashboard",
       dashboardLoading: false,
@@ -2047,8 +2118,9 @@ ADMIN_HTML = """<!doctype html>
       const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
       const response = await fetch(path, Object.assign({}, options, { headers }));
       if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`${response.status} ${response.statusText}: ${body}`);
+        const body = await response.json().catch(() => ({}));
+        const detail = typeof body.detail === "string" ? body.detail : response.statusText;
+        throw new Error(response.status === 401 ? "Your admin session needs authentication. Reload this page to sign in." : `${detail} (${response.status})`);
       }
       return response.json();
     }
@@ -2065,6 +2137,8 @@ ADMIN_HTML = """<!doctype html>
     function setError(message) {
       $("#health-dot").classList.add("bad");
       $("#health-text").textContent = message;
+      $("#error-message").textContent = message;
+      $("#error-notice").hidden = false;
     }
 
     function setPollStatus(message) {
@@ -2120,18 +2194,22 @@ ADMIN_HTML = """<!doctype html>
           api("/api/logs?limit=6")
         ]);
         setHealth(health);
+        $("#app-version").textContent = `· v${currentState.api.version}`;
         $("#metric-assistant").textContent = currentState.assistant.name;
         $("#metric-wake").textContent = currentState.assistant.wake_enabled ? currentState.assistant.wake_words.join(", ") : "wake disabled";
         const runtime = currentState.runtime;
-        $("#metric-runtime").textContent = runtime.state;
+        $("#metric-runtime").textContent = String(runtime.state).replaceAll("_", " ");
         $("#metric-uptime").textContent = runtime.is_running
           ? `pid ${runtime.process_id || "--"} · heartbeat ${runtime.heartbeat_age_seconds ?? 0}s`
           : runtime.note;
-        $("#metric-model").textContent = currentState.models.chat_model;
+        $("#metric-model").textContent = currentState.models.chat_model.split("/").pop();
+        $("#metric-model").title = currentState.models.chat_model;
         $("#metric-provider").textContent = currentState.models.chat_provider;
-        $("#metric-knowledge").textContent = currentState.knowledge.backend;
-        $("#metric-index").textContent = currentState.knowledge.loaded ? "loaded" : currentState.knowledge.directory;
+        $("#metric-knowledge").textContent = currentState.knowledge.enabled ? currentState.knowledge.backend : "Disabled";
+        $("#metric-index").textContent = !currentState.knowledge.enabled ? "Retrieval is turned off" : currentState.knowledge.loaded ? "Loaded" : "Loads on demand";
+        $("#metric-index").title = currentState.knowledge.directory;
         renderRuntime(runtime);
+        renderReliability(runtime, currentState.api);
         renderDiagnostics(diagnostics);
         renderRecentEvents(logs.items || []);
         state.lastDashboardRefreshAt = new Date();
@@ -2159,6 +2237,45 @@ ADMIN_HTML = """<!doctype html>
         ["Note", escapeHtml(runtime.note)]
       ];
       $("#runtime-detail").innerHTML = table(["Field", "Value"], rows);
+    }
+
+    function renderReliability(runtime, apiState) {
+      const data = runtime.reliability || {};
+      const audio = data.audio || {};
+      const active = Boolean(runtime.is_running);
+      const badge = $("#runtime-badge");
+      badge.textContent = String(runtime.state || "unknown").replaceAll("_", " ");
+      badge.classList.toggle("offline", !active);
+      $("#runtime-summary").textContent = active
+        ? `Heartbeat ${runtime.heartbeat_age_seconds ?? 0}s ago · ${runtime.session_active ? "Conversation active" : "Ready for wake word"}`
+        : runtime.note;
+      const elapsed = Number(data.turn_elapsed_s || 0);
+      const limit = Number(data.stage_timeout_s || data.turn_timeout_s || 60);
+      const stageNames = { idle: "Ready", transcribe: "Transcribing", endpoint: "Checking turn end", chat: "Thinking", tts_start: "Preparing speech", tts_next: "Speaking", memory: "Updating memory", loading_models: "Loading models", stopped: "Stopped" };
+      const stage = active ? (stageNames[data.turn_stage] || "Starting") : "Offline";
+      const queued = Math.max(0, Number(audio.queued_chunks) || 0);
+      const capacity = Math.max(0, Number(audio.queue_max_chunks) || 0);
+      $("#runtime-reliability").innerHTML = `
+        <div class="reliability-card"><h4>Current turn</h4><div class="reliability-value">${escapeHtml(stage)}</div>
+          <div class="reliability-note">${elapsed ? `${elapsed}s of ${limit}s budget` : `Time limit ${limit}s`}</div>
+          <progress aria-label="Turn time budget used" max="${limit}" value="${Math.min(elapsed, limit)}"></progress>
+          <div class="reliability-note">Last turn ${data.last_turn_duration_ms == null ? "—" : `${escapeHtml(data.last_turn_duration_ms)} ms`}</div></div>
+        <div class="reliability-card"><h4>Microphone buffer</h4><div class="reliability-value">${capacity ? `${queued} / ${capacity}` : "—"}</div>
+          <div class="reliability-note">Chunks queued · bounded capture</div>
+          <progress aria-label="Microphone buffer usage" max="${capacity || 1}" value="${queued}"></progress>
+          <div class="reliability-note">Dropped ${escapeHtml(audio.dropped_chunks ?? 0)} · Input overruns ${escapeHtml(audio.input_overflows ?? 0)}</div></div>
+        <div class="reliability-card"><h4>Recovery · this runtime</h4><div class="reliability-value">${escapeHtml(data.turn_failures ?? 0)} failed turn${data.turn_failures === 1 ? "" : "s"}</div>
+          <div class="reliability-note">Timeouts ${escapeHtml(data.turn_timeouts ?? 0)} · Worker resets ${escapeHtml(data.worker_restarts ?? 0)}<br>
+          Oversized utterances ${escapeHtml(data.utterances_discarded ?? 0)}<br>Recording drops ${escapeHtml(audio.recording_dropped_chunks ?? 0)}</div></div>`;
+      const warnings = [];
+      if (runtime.last_error) warnings.push(`Last error: ${runtime.last_error}. No automatic retry was made. Check any external action before repeating it.`);
+      if (audio.recording_limit_reached) warnings.push("Recording reached its duration limit; voice interaction can continue.");
+      if (audio.recording_error) warnings.push(`Recording stopped: ${audio.recording_error}. The recording may be incomplete.`);
+      if (audio.recording_dropped_chunks) warnings.push("Recording lost audio under load; the saved file has gaps.");
+      $("#runtime-warning").hidden = !warnings.length;
+      $("#runtime-warning").textContent = warnings.join(" ");
+      const inference = apiState.inference || {};
+      $("#api-inference-note").textContent = `Web chat: ${inference.operation ? "processing a request" : "ready"} · ${inference.turn_timeout_s || limit}s turn limit.`;
     }
 
     function setButtonTone(button, tone) {
@@ -2843,10 +2960,12 @@ ADMIN_HTML = """<!doctype html>
     }
 
     async function openKnowledgeFile(path) {
+      if (state.knowledgeDirty && !confirm("Discard unsaved knowledge edits and open another file?")) return;
       const payload = await api(knowledgeFileUrl(path));
       state.currentKnowledgeFile = payload.path;
       $("#knowledge-file-path").value = payload.path;
       $("#knowledge-file-content").value = payload.content;
+      state.knowledgeDirty = false;
       $("#knowledge-meta").textContent = JSON.stringify({ opened: payload.path }, null, 2);
     }
 
@@ -2872,6 +2991,7 @@ ADMIN_HTML = """<!doctype html>
         body: JSON.stringify({ content: $("#knowledge-file-content").value })
       });
       state.currentKnowledgeFile = payload.path;
+      state.knowledgeDirty = false;
       $("#knowledge-file-path").value = payload.path;
       $("#knowledge-meta").textContent = JSON.stringify(payload, null, 2);
       await loadKnowledgeFiles();
@@ -2881,8 +3001,10 @@ ADMIN_HTML = """<!doctype html>
     async function deleteKnowledgeFile() {
       const path = ($("#knowledge-file-path").value || state.currentKnowledgeFile || "").trim();
       if (!path) return;
+      if (!confirm(`Delete ${path}? This cannot be undone here.`)) return;
       const payload = await api(knowledgeFileUrl(path), { method: "DELETE" });
       state.currentKnowledgeFile = null;
+      state.knowledgeDirty = false;
       $("#knowledge-file-path").value = "";
       $("#knowledge-file-content").value = "";
       $("#knowledge-meta").textContent = JSON.stringify(payload, null, 2);
@@ -2899,21 +3021,38 @@ ADMIN_HTML = """<!doctype html>
     async function sendChat() {
       const textarea = $("#chat-message");
       const message = textarea.value.trim();
-      if (!message) return;
+      if (!message || state.chatPending) return;
+      const history = state.chatHistory.slice(-10);
+      state.chatPending = true;
+      ["chat-send", "chat-clear", "tool-probe"].forEach((id) => { $("#" + id).disabled = true; });
+      textarea.disabled = true;
+      $("#chat-send").textContent = "Thinking…";
+      $("#chat-status").textContent = "Processing one turn. The server enforces the configured time limit.";
       state.chatHistory.push({ role: "user", content: message });
       textarea.value = "";
       renderChat();
-      const payload = await api("/api/chat", {
-        method: "POST",
-        body: JSON.stringify({
-          message,
-          history: state.chatHistory.filter((item) => item.role === "user" || item.role === "assistant").slice(-10)
-        })
-      });
-      state.chatHistory.push({ role: "assistant", content: payload.response });
-      $("#chat-meta").textContent = JSON.stringify(payload, null, 2);
-      renderChat();
-      await loadDashboard();
+      try {
+        const payload = await api("/api/chat", {
+          method: "POST", body: JSON.stringify({ message, history })
+        });
+        state.chatHistory.push({ role: "assistant", content: payload.response });
+        state.chatHistory = state.chatHistory.slice(-40);
+        $("#chat-meta").textContent = JSON.stringify(payload, null, 2);
+        $("#chat-status").textContent = "Response received";
+      } catch (error) {
+        state.chatHistory.pop();
+        textarea.value = message;
+        $("#chat-status").textContent = error.message;
+        throw error;
+      } finally {
+        state.chatPending = false;
+        ["chat-send", "chat-clear", "tool-probe"].forEach((id) => { $("#" + id).disabled = false; });
+        textarea.disabled = false;
+        $("#chat-send").textContent = "Send";
+        renderChat();
+        textarea.focus();
+      }
+      await loadDashboard({ silent: true });
     }
 
     async function probeTools() {
@@ -3025,6 +3164,7 @@ ADMIN_HTML = """<!doctype html>
     $("#knowledge-files-refresh").addEventListener("click", () => loadKnowledgeFiles().catch((error) => setError(error.message)));
     $("#knowledge-file-new").addEventListener("click", newKnowledgeFile);
     $("#knowledge-file-save").addEventListener("click", () => saveKnowledgeFile().catch((error) => setError(error.message)));
+    $("#knowledge-file-content").addEventListener("input", () => { state.knowledgeDirty = true; });
     $("#knowledge-file-delete").addEventListener("click", () => deleteKnowledgeFile().catch((error) => setError(error.message)));
     $("#knowledge-file-list").addEventListener("click", (event) => {
       const target = event.target.closest("[data-knowledge-file]");
@@ -3043,6 +3183,13 @@ ADMIN_HTML = """<!doctype html>
     setInterval(() => {
       if (!document.hidden) refreshActiveView();
     }, ACTIVE_VIEW_POLL_MS);
+    $("#error-dismiss").addEventListener("click", () => { $("#error-notice").hidden = true; });
+    window.addEventListener("beforeunload", (event) => {
+      if (state.sourceEditor.dirty || state.knowledgeDirty || state.chatPending) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         loadDashboard({ silent: true }).catch((error) => setError(error.message));

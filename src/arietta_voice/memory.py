@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Protocol
 
 
@@ -25,7 +26,20 @@ class MemoryStore:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
-            self.path.write_text("# Memory\n", encoding="utf-8")
+            self._write_atomic("# Memory\n")
+
+    def _write_atomic(self, text: str) -> None:
+        # A killed inference worker must leave the previous memory intact.
+        working = self.path.with_name(f".{self.path.name}.working")
+        try:
+            with os.fdopen(os.open(working, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
+                os.fchmod(handle.fileno(), 0o600)
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            working.replace(self.path)
+        finally:
+            working.unlink(missing_ok=True)
 
     def read_text(self) -> str:
         return self.path.read_text(encoding="utf-8") if self.path.exists() else "# Memory\n"
@@ -53,8 +67,7 @@ class MemoryStore:
         if not lines:
             return 0
 
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write("\n" + "\n".join(lines) + "\n")
+        self._write_atomic(self.read_text() + "\n" + "\n".join(lines) + "\n")
         return len(lines)
 
     def maybe_consolidate(self, generator: TextGenerator, turn_count: int) -> bool:
@@ -76,5 +89,5 @@ class MemoryStore:
         if not result.startswith("# Memory"):
             return False
 
-        self.path.write_text(result + "\n", encoding="utf-8")
+        self._write_atomic(result + "\n")
         return True
