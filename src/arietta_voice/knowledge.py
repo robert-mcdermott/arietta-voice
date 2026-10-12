@@ -18,7 +18,8 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 WHITESPACE_RE = re.compile(r"\s+")
 SUPPORTED_EXTENSIONS = {".md", ".markdown", ".txt"}
 IGNORED_FILENAMES = {"README.md"}
-INDEX_VERSION = 1
+INDEX_VERSION = 2
+EMBEDDING_POOLING = "cls-normalized"
 INDEX_MANIFEST_FILENAME = "manifest.json"
 INDEX_SECTIONS_FILENAME = "sections.jsonl"
 INDEX_VECTORS_FILENAME = "vectors.npy"
@@ -298,6 +299,8 @@ class VectorKnowledgeBackend:
             return False
         if manifest.get("embedding_model") != self.config.embedding_model:
             return False
+        if manifest.get("embedding_pooling") != EMBEDDING_POOLING:
+            return False
         if int(manifest.get("snippet_char_limit", -1)) != self.config.snippet_char_limit:
             return False
         if manifest_signature != source_signature:
@@ -433,6 +436,7 @@ def build_knowledge_index(config: KnowledgeConfig) -> dict[str, Any]:
     manifest = {
         "version": INDEX_VERSION,
         "embedding_model": embedding_model,
+        "embedding_pooling": EMBEDDING_POOLING,
         "source_signature": _serialize_signature(signature),
         "snippet_char_limit": config.snippet_char_limit,
         "section_count": len(sections),
@@ -460,10 +464,18 @@ def _directory_signature(directory: Path) -> tuple[tuple[str, int, int], ...] | 
 
 def _iter_knowledge_files(directory: Path) -> list[Path]:
     files: list[Path] = []
+    root = directory.resolve()
     for path in sorted(directory.rglob("*")):
+        if any(part.startswith(("_", ".")) for part in path.relative_to(directory).parts):
+            continue
+        try:
+            if not path.resolve().is_relative_to(root):
+                continue
+        except (OSError, RuntimeError):
+            continue
         if not path.is_file():
             continue
-        if path.name in IGNORED_FILENAMES or path.name.startswith(("_", ".")):
+        if path.name in IGNORED_FILENAMES:
             continue
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
@@ -486,7 +498,10 @@ def _load_sections(directory: Path, *, snippet_char_limit: int) -> list[_Knowled
 
 
 def _parse_document(path: Path, *, root: Path, snippet_char_limit: int) -> list[_KnowledgeSection]:
-    raw = path.read_text(encoding="utf-8")
+    resolved_path = path.resolve()
+    if not resolved_path.is_relative_to(root.resolve()):
+        return []
+    raw = resolved_path.read_text(encoding="utf-8")
     metadata, body = _split_front_matter(raw)
 
     title = metadata.get("title") or _first_heading(body) or _humanize_stem(path.stem)
@@ -717,6 +732,7 @@ def _manifest_matches(
     return (
         manifest.get("version") == INDEX_VERSION
         and manifest.get("embedding_model") == config.embedding_model
+        and manifest.get("embedding_pooling") == EMBEDDING_POOLING
         and int(manifest.get("snippet_char_limit", -1)) == config.snippet_char_limit
         and int(manifest.get("section_count", -1)) == section_count
         and _deserialize_signature(manifest.get("source_signature")) == source_signature
@@ -822,19 +838,11 @@ class BgeTextEmbedder:
             encoded = {key: value.to(self._device) for key, value in encoded.items()}
             with self._torch.inference_mode():
                 outputs = self._model(**encoded)
-                token_embeddings = outputs.last_hidden_state
-                attention_mask = encoded["attention_mask"]
-                pooled = self._mean_pool(token_embeddings, attention_mask)
+                # BGE v1.5 uses the first token (CLS), then L2 normalization.
+                pooled = outputs.last_hidden_state[:, 0]
                 normalized = self._F.normalize(pooled, p=2, dim=1)
             batches.append(normalized.detach().cpu().numpy().astype(np.float32, copy=False))
         return np.vstack(batches)
-
-    def _mean_pool(self, token_embeddings, attention_mask):
-        mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        summed = (token_embeddings * mask).sum(dim=1)
-        counts = mask.sum(dim=1).clamp(min=1e-9)
-        return summed / counts
-
 
 def _split_front_matter(raw: str) -> tuple[dict[str, str], str]:
     if not raw.startswith("---\n"):

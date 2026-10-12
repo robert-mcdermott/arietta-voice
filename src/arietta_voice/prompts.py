@@ -34,7 +34,8 @@ class PromptManager:
             messages.append({"role": "system", "content": prompt})
         if tool_response and tool_response.context:
             messages.append({"role": "system", "content": tool_response.context})
-        recent_history = history[-self.config.assistant.max_history_turns :]
+        history_limit = self.config.assistant.max_history_turns * 2
+        recent_history = history[-history_limit:] if history_limit > 0 else []
         for turn in recent_history:
             messages.append({"role": turn.role, "content": turn.content})
         messages.append({"role": "user", "content": user_text})

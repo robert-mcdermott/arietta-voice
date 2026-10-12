@@ -313,6 +313,12 @@ The default configuration uses `keyword` so a new user can start adding knowledg
 
 When semantic search is desired, `knowledge-index` creates derived artifacts under `.knowledge_index/`.
 
+The BGE v1.5 adapter uses the first token (CLS) followed by L2 normalization for
+both documents and prefixed queries. Index format 2 records `embedding_pooling`
+as `cls-normalized`; loaders and the builder reject the previous mean-pooling
+pipeline. Source enumeration excludes hidden/underscore-prefixed paths and
+links outside the configured root.
+
 ### 7.1 Knowledge authoring and indexing
 
 ```mermaid
@@ -422,6 +428,23 @@ The runtime is driven by a typed `AppConfig` object that contains:
 - model-tool registration
 
 This makes the boundary between runtime modules explicit and keeps config handling out of the main control loop.
+
+The TOML loader validates types, known keys, and runtime constraints before
+model construction. CLI overrides are validated again. History limits count
+user/assistant pairs, with zero retaining no history. `use_tools=false` in an
+API chat skips deterministic probing and model-tool registry construction.
+
+Public `/health` provides liveness and version only. Authenticated `/api/health`
+retains diagnostics. `logging.content_enabled` defaults to false and controls
+active conversation text in runtime logging and status; passive wake misses
+never persist transcript text. Status reads also redact legacy transcript
+fields. Interactive text output remains available, while redirected responses
+respect the content setting.
+
+JSONL appends and rotation share a stable sidecar `flock` across the API and
+runtime processes. `max_bytes` bounds each newly written log, `backup_count`
+controls retained archives, and oversized records become metadata-only markers.
+This rotation applies to the event file, not external launchd stdout/stderr logs.
 
 ## 10. Extensibility Strategy
 

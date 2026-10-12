@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from arietta_voice.config import KnowledgeConfig
-from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
+from arietta_voice.knowledge import BgeTextEmbedder, KnowledgeRetriever, build_knowledge_index
 
 
 def test_keyword_retriever_matches_team_and_food_queries(tmp_path: Path) -> None:
@@ -113,6 +116,66 @@ class FakeEmbedder:
             vector[2] = 1.0
         vector /= np.linalg.norm(vector)
         return vector
+
+
+def test_bge_uses_normalized_cls_for_documents_and_queries() -> None:
+    import torch
+    import torch.nn.functional as F
+
+    embedder = BgeTextEmbedder.__new__(BgeTextEmbedder)
+    embedder.batch_size = 1
+    embedder._device = torch.device("cpu")
+    embedder._torch = torch
+    embedder._F = F
+    embedder._tokenizer = lambda batch, **kwargs: {
+        "attention_mask": torch.ones((len(batch), 2), dtype=torch.long),
+    }
+    embedder._model = lambda **kwargs: SimpleNamespace(
+        last_hidden_state=torch.tensor([[[3.0, 4.0], [100.0, 0.0]]])
+    )
+    np.testing.assert_allclose(embedder.embed_documents(["one", "two"]), [[0.6, 0.8], [0.6, 0.8]])
+    np.testing.assert_allclose(embedder.embed_query("question"), [0.6, 0.8])
+
+
+@pytest.mark.parametrize("outdated", [{"version": 1}, {"embedding_pooling": "mean"}])
+def test_old_embedding_pipeline_is_rejected_and_rebuilt(tmp_path, monkeypatch, outdated) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "access.md").write_text("# Credential recovery\nUse password reset.")
+    monkeypatch.setattr("arietta_voice.knowledge._create_text_embedder", lambda config: FakeEmbedder())
+    config = KnowledgeConfig(backend="vector", directory=knowledge_dir,
+                             index_directory=tmp_path / "index", embedding_model="fake-bge-small")
+    build_knowledge_index(config)
+    manifest_path = config.index_directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(outdated)
+    manifest_path.write_text(json.dumps(manifest))
+    assert KnowledgeRetriever(config).search("password reset") is None
+    assert build_knowledge_index(config)["updated"]
+    assert KnowledgeRetriever(config).search("password reset") is not None
+    assert not build_knowledge_index(config)["updated"]
+
+
+def test_retrieval_and_index_exclude_external_links_and_hidden_directories(tmp_path, monkeypatch) -> None:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    outside = tmp_path / "private.md"
+    outside.write_text("# Credential recovery\nPRIVATE OUTSIDE password reset.")
+    (knowledge_dir / "link.md").symlink_to(outside)
+    for name in (".private", "_drafts"):
+        folder = knowledge_dir / name
+        folder.mkdir()
+        (folder / "article.md").write_text("# Credential recovery\nPRIVATE HIDDEN password reset.")
+    (knowledge_dir / "access.md").write_text("# Credential recovery\nPublic password reset.")
+    monkeypatch.setattr("arietta_voice.knowledge._create_text_embedder", lambda config: FakeEmbedder())
+    config = KnowledgeConfig(directory=knowledge_dir, index_directory=tmp_path / "index",
+                             embedding_model="fake-bge-small")
+    result = KnowledgeRetriever(config).search("password reset")
+    assert result is not None
+    assert len(result.matches) == 1
+    assert result.matches[0].source_path == Path("access.md")
+    assert build_knowledge_index(config)["section_count"] == 1
+    assert "PRIVATE" not in (config.index_directory / "sections.jsonl").read_text()
 
 
 def test_build_knowledge_index_and_hybrid_search_use_semantic_matches(

@@ -52,6 +52,8 @@ def read_runtime_status(
             "note": f"Runtime status file could not be read: {type(exc).__name__}",
         }
 
+    payload = _redact_conversation(config, payload)
+
     heartbeat_at = str(payload.get("heartbeat_at") or "").strip() or None
     heartbeat_age = _heartbeat_age_seconds(heartbeat_at)
     lifecycle = str(payload.get("lifecycle") or "running")
@@ -101,8 +103,18 @@ def write_runtime_status(config: AppConfig, payload: dict[str, Any]) -> None:
     path = runtime_status_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    with os.fdopen(os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        json.dump(_redact_conversation(config, payload), handle, indent=2, sort_keys=True)
     tmp_path.replace(path)
+
+
+def _redact_conversation(config: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    # Also filter legacy status files on read. Passive speech is never exposed,
+    # even when the user opts into active-conversation content logging.
+    if not config.logging.content_enabled or not payload.get("session_active", False):
+        return {**payload, "last_user_transcript": "", "last_assistant_text": ""}
+    return payload
 
 
 class RuntimeStatusPublisher:

@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 from arietta_voice import __version__
-from arietta_voice.config import config_to_dict, load_config
+from arietta_voice.config import config_to_dict, load_config, validate_config
 from arietta_voice.logging_utils import configure_logging
 
 
@@ -96,7 +96,7 @@ def _apply_runtime_overrides(config, args):
         config.wake_word.phrases = tuple(word.strip() for word in args.wake_words if word.strip())
     if getattr(args, "session_timeout", None) is not None:
         config.wake_word.session_timeout_s = float(args.session_timeout)
-    return config
+    return validate_config(config)
 
 
 def _resolve_record_path(value: str | None) -> Path | None:
@@ -134,15 +134,20 @@ def main() -> int:
         print(json.dumps(list_audio_devices(), indent=2))
         return 0
 
-    if args.command == "config":
+    try:
         config = load_config(args.config)
+        if args.command == "run":
+            config = _apply_runtime_overrides(config, args)
+    except (ValueError, OSError) as exc:
+        parser.error(f"Invalid configuration: {exc}")
+
+    if args.command == "config":
         print(json.dumps(config_to_dict(config), indent=2))
         return 0
 
     if args.command == "doctor":
         from arietta_voice.diagnostics import run_startup_diagnostics
 
-        config = load_config(args.config)
         report = run_startup_diagnostics(config)
         print(json.dumps(report, indent=2))
         return 0
@@ -150,7 +155,6 @@ def main() -> int:
     if args.command == "knowledge-search":
         from arietta_voice.knowledge import KnowledgeRetriever
 
-        config = load_config(args.config)
         retriever = KnowledgeRetriever(config.knowledge)
         result = retriever.search(" ".join(args.query))
         payload = (
@@ -183,7 +187,6 @@ def main() -> int:
     if args.command == "knowledge-index":
         from arietta_voice.knowledge import build_knowledge_index
 
-        config = load_config(args.config)
         payload = build_knowledge_index(config.knowledge)
         print(json.dumps(payload, indent=2))
         return 0
@@ -199,13 +202,24 @@ def main() -> int:
 
     from arietta_voice.runtime import AriettaVoiceRuntime, RuntimeOptions
 
-    config = load_config(args.config if hasattr(args, "config") else None)
-    config = _apply_runtime_overrides(config, args)
-    runtime = AriettaVoiceRuntime(
-        config,
-        RuntimeOptions(record_path=_resolve_record_path(getattr(args, "record", None))),
-    )
-    runtime.run()
+    try:
+        runtime = AriettaVoiceRuntime(
+            config,
+            RuntimeOptions(record_path=_resolve_record_path(getattr(args, "record", None))),
+        )
+        runtime.run()
+    except Exception as exc:
+        # Model/plugin exceptions can contain prompts or tool arguments. Keep
+        # those out of redirected process logs unless content was opted in.
+        logger = configure_logging()
+        if config.logging.content_enabled:
+            logger.exception("Voice runtime failed")
+        else:
+            logger.error(
+                "Voice runtime failed (%s). Enable logging.content_enabled for error details.",
+                type(exc).__name__,
+            )
+        return 1
     return 0
 
 

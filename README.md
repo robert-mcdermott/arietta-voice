@@ -214,12 +214,55 @@ The main config sections are:
 - `[models]`: local vs Bedrock chat provider, model ids, AWS settings, STT language, generation settings
 - `[prompts]`: `SOUL.md` and memory file locations
 - `[memory]`: optional memory behavior
-- `[logging]`: runtime log locations
+- `[logging]`: runtime log locations, content opt-in, and event-log rotation
 - `[knowledge]`: knowledge directory, index directory, backend, and retrieval scoring knobs
 - `[tools]`: deterministic tools checked before the model
 - `[model_tools]`: model-requested follow-up tools
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
+
+`max_history_turns` counts complete user/assistant pairs; `0` disables conversation
+history. Invalid TOML types, unknown settings, and unsupported values fail at
+startup with the setting name. The current audio pipeline requires 16,000 Hz
+input and 512-sample chunks.
+
+### Privacy and logging
+
+Public `/health` returns only liveness and the app version. Detailed diagnostics
+and runtime state remain at authenticated `/api/health`.
+
+Conversation text is omitted from event logs, process logs, and the runtime
+status file by default. Passive speech that does not activate the assistant is
+never logged as text, even with content logging enabled. Active conversation
+text can be enabled for debugging in the existing `[logging]` section:
+
+```toml
+content_enabled = false
+max_bytes = 5000000
+backup_count = 3
+```
+
+Set `content_enabled = true` only when you want active speech, responses, and
+model-tool details in logs, plus active conversation text in runtime status.
+The runtime monitor's last-user/last-assistant fields are otherwise blank.
+Interactive text-only responses remain visible in a terminal. Redirected
+runtime responses require content opt-in.
+Uncaught voice-runtime failures report the exception type and exit with a
+nonzero status; full exception details require the same content opt-in.
+
+The JSONL event log rotates at 5 MB by default and retains three backups
+(`events.jsonl.1` through `.3`). `backup_count = 0` keeps no archives. Event logs
+and newly written status files use owner-only permissions. Rotation does not
+cover launchd's stdout/stderr files or remove content already written by earlier
+versions. Review old logs and recordings separately if you need to remove them.
+
+These settings control diagnostic persistence. Optional memory still saves
+facts when enabled, and `--record` explicitly saves microphone audio, including
+passive audio. Bedrock sends assembled text prompts—including relevant history,
+persona, memory, knowledge snippets, and tool context—to AWS; speech recognition
+and synthesis remain local. Custom plugins may have their own logging or network
+behavior. Local config/persona overrides and admin credential hardening are
+still pending in [Phase 1](ROADMAP.md#phase-1-protect-privacy-and-fix-the-foundation).
 
 ## Customizing The Assistant
 

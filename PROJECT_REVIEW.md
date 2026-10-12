@@ -9,6 +9,10 @@ and the existing component boundaries while introducing measured upgrades.
 The implementation sequence and release gates are in [ROADMAP.md](ROADMAP.md).
 App versioning is described in [RELEASING.md](RELEASING.md).
 
+This review records the baseline findings, including bugs subsequently fixed.
+See the Phase 1 implementation status in the roadmap and the Unreleased
+changelog for completed privacy and correctness work.
+
 ## Current architecture
 
 The microphone feeds Silero VAD, then Smart Turn endpoint detection. Moonshine

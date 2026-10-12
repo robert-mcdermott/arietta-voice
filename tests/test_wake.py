@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from arietta_voice.config import WakeWordConfig
 from arietta_voice.wake import TranscriptWakeWordDetector, build_wake_word_detector
 
@@ -40,3 +42,26 @@ def test_build_wake_word_detector_uses_configured_backend() -> None:
     )
 
     assert detector.match("Arietta are you there") is not None
+
+
+@pytest.mark.parametrize("transcript, command", [
+    ("Hey, Bridget: Set API_KEY to AbC_123!", "Set API_KEY to AbC_123!"),
+    ("Bridget, is -5.2 less than +3?", "is -5.2 less than +3?"),
+    ("Bridget: résumé for José, please.", "résumé for José, please."),
+    ("Bridget, -5", "-5"),
+    ("Bridget, .env is the filename", ".env is the filename"),
+    ("Bridget .5 * 3", ".5 * 3"),
+    ("  BRIDGET?!  ", None),
+])
+def test_inline_command_preserves_original_text(transcript, command) -> None:
+    match = TranscriptWakeWordDetector(("bridget",)).match(transcript)
+    assert match is not None
+    assert match.transcript == transcript
+    assert match.prompt_text == command
+
+
+def test_multiword_and_unicode_wake_phrases_preserve_command() -> None:
+    detector = TranscriptWakeWordDetector(("computer", "computer assistant", "Ária"))
+    assert detector.match("Computer assistant, Call O'Neil!").prompt_text == "Call O'Neil!"
+    assert detector.match("ÁRIA, Calculate 5*7.").prompt_text == "Calculate 5*7."
+    assert detector.match("Computers are interesting") is None

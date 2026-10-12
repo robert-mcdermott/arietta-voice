@@ -7,8 +7,7 @@ from typing import Protocol
 from arietta_voice.config import WakeWordConfig
 
 
-NON_ALNUM_RE = re.compile(r"[^a-z0-9\s]+")
-WHITESPACE_RE = re.compile(r"\s+")
+WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 LEADING_FILLERS = {"hey", "hi", "hello", "okay", "ok"}
 
 
@@ -24,8 +23,7 @@ class WakeWordDetector(Protocol):
 
 
 def normalize_phrase(value: str) -> str:
-    cleaned = NON_ALNUM_RE.sub(" ", value.lower())
-    return WHITESPACE_RE.sub(" ", cleaned).strip()
+    return " ".join(match.group().casefold() for match in WORD_RE.finditer(value))
 
 
 class TranscriptWakeWordDetector:
@@ -44,27 +42,20 @@ class TranscriptWakeWordDetector:
         )
 
     def match(self, transcript: str) -> WakeWordMatch | None:
-        normalized = normalize_phrase(transcript)
-        if not normalized:
-            return None
-
-        tokens = normalized.split()
-        while tokens and tokens[0] in LEADING_FILLERS:
-            tokens.pop(0)
-        cleaned = " ".join(tokens)
-        if not cleaned:
+        words = list(WORD_RE.finditer(transcript))
+        while words and words[0].group().casefold() in LEADING_FILLERS:
+            words.pop(0)
+        if not words:
             return None
 
         for normalized_phrase, original_phrase in self._phrases:
-            if cleaned == normalized_phrase:
-                return WakeWordMatch(
-                    phrase=original_phrase,
-                    transcript=transcript,
-                    prompt_text=None,
-                )
-            prefix = f"{normalized_phrase} "
-            if cleaned.startswith(prefix):
-                prompt = cleaned[len(prefix) :].strip()
+            phrase_words = normalized_phrase.split()
+            candidate = [word.group().casefold() for word in words[:len(phrase_words)]]
+            if candidate == phrase_words:
+                # Slice the original string so case, punctuation, numbers, and
+                # non-ASCII command text survive wake-word matching.
+                remainder = transcript[words[len(phrase_words) - 1].end():]
+                prompt = re.sub(r"^[,.:;!?]+(?:\s+|$)", "", remainder).lstrip()
                 return WakeWordMatch(
                     phrase=original_phrase,
                     transcript=transcript,

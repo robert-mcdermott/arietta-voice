@@ -115,7 +115,7 @@ class AriettaApiService:
         self.config = config or load_config(config_path)
         self.started_at = _now_iso()
         self.started_monotonic = time.monotonic()
-        self.event_logger = EventLogger(self.config.logging.events_file)
+        self.event_logger = EventLogger.from_config(self.config.logging)
         self.prompt_manager = PromptManager(self.config)
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.runtime_supervisor = RuntimeSupervisor(self.config, config_path=self.config_path)
@@ -546,15 +546,23 @@ class AriettaApiService:
                 )
 
         messages = self.prompt_manager.build_messages(history, message, tool_response)
-        response, model_tool_use = maybe_generate_with_model_tools(
-            messages,
-            model_tool_registry=_AdHocModelToolRegistry(self.config, self.knowledge),
-            llm_generate=lambda model_messages: self._llm_generate(
+
+        def generate(model_messages: list[dict[str, str]]) -> str:
+            return self._llm_generate(
                 model_messages,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
-            ),
-        )
+            )
+
+        if request.use_tools:
+            response, model_tool_use = maybe_generate_with_model_tools(
+                messages,
+                model_tool_registry=_AdHocModelToolRegistry(self.config, self.knowledge),
+                llm_generate=generate,
+            )
+        else:
+            # Do not even import/construct plugins when tools are disabled.
+            response, model_tool_use = generate(messages), None
         if model_tool_use is not None:
             model_tool = model_tool_use.name
         clean_response = sanitize_for_speech(response)
@@ -670,7 +678,9 @@ def create_app(
 
     @app.get("/health")
     def public_health() -> dict[str, Any]:
-        return svc().health()
+        # Liveness only: no runtime file, diagnostics, identity, or exception
+        # details. Authenticated /api/health provides readiness diagnostics.
+        return {"status": "ok", "api_version": API_VERSION}
 
     @app.get("/api/health")
     def api_health(_user: str = Depends(require_admin)) -> dict[str, Any]:

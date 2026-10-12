@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 from pathlib import Path
 import re
+import sys
 import time
 
 import numpy as np
@@ -34,7 +35,10 @@ from arietta_voice.wake import WakeWordMatch, build_wake_word_detector
 
 
 GOODBYE_PATTERN = re.compile(
-    r"\b(?:goodbye|bye|see you|talk to you later|that's all|that is all|i'm done|i am done)\b",
+    r"(?:ok(?:ay)?[,.! ]+)?(?:thanks?[,.! ]+|thank you[,.! ]+)?"
+    r"(?:goodbye|bye(?: bye)?|see you(?: later)?|talk to you later|"
+    r"(?:that's|that is) all(?: for now)?|(?:i'm|i am) done)"
+    r"(?:[,.! ]+(?:thanks?|thank you))?[.!\s]*",
     re.IGNORECASE,
 )
 
@@ -50,7 +54,7 @@ class AriettaVoiceRuntime:
         self.options = options or RuntimeOptions()
         self.started_at = time.monotonic()
         self.logger = logging.getLogger("arietta_voice.runtime")
-        self.event_logger = EventLogger(config.logging.events_file)
+        self.event_logger = EventLogger.from_config(config.logging)
         self.prompts = PromptManager(config)
         self.memory = MemoryStore(
             config.prompts.memory_path,
@@ -161,6 +165,8 @@ class AriettaVoiceRuntime:
         self.session.activated_at = 0.0
         self.session.last_activity_at = 0.0
         self.session.last_wake_phrase = None
+        self.last_user_transcript = ""
+        self.last_assistant_text = ""
 
     def _open_session(self, wake_match: WakeWordMatch | None) -> None:
         self.session.active = True
@@ -180,13 +186,13 @@ class AriettaVoiceRuntime:
         goodbye = self.next_goodbye() if speak_goodbye else None
         if goodbye:
             self.last_assistant_text = goodbye
-            print(f"\n> {goodbye}\n", flush=True)
+            self._print_response(goodbye)
             self._speak_blocking(goodbye)
 
         self.event_logger.log(
             "session_ended",
             reason=reason,
-            goodbye=goodbye,
+            content={"goodbye": goodbye},
         )
         self._update_display_speech(0.0, False)
         microphone.drain()
@@ -237,7 +243,7 @@ class AriettaVoiceRuntime:
                 "tool_call",
                 tool=model_tool_use.name,
                 mode="model_requested",
-                **model_tool_use.details,
+                content={"details": model_tool_use.details},
             )
         return sanitize_for_speech(response)
 
@@ -261,13 +267,14 @@ class AriettaVoiceRuntime:
         keypress_monitor: RawKeypressMonitor,
         next_state: AssistantState,
     ) -> list[np.ndarray]:
-        self.logger.info("Assistant: %s", response)
+        if self.config.logging.content_enabled:
+            self.logger.info("Assistant: %s", response)
         self.last_assistant_text = response
-        self.event_logger.log("assistant_response", text=response)
+        self.event_logger.log("assistant_response", content={"text": response}, chars=len(response))
 
         if self.speaker is None:
             self.chime_player.stop_at_gap()
-            print(f"\n> {response}\n", flush=True)
+            self._print_response(response)
             self._update_display_speech(0.0, False)
             self.set_state(next_state)
             return []
@@ -289,6 +296,12 @@ class AriettaVoiceRuntime:
         self.set_state(next_state)
         return list(playback.buffered_chunks)
 
+    def _print_response(self, response: str) -> None:
+        # Interactive text-only use still needs an answer. Redirected output
+        # (including launchd/managed runtime logs) must respect content opt-in.
+        if sys.stdout.isatty() or self.config.logging.content_enabled:
+            print(f"\n> {response}\n", flush=True)
+
     def _store_turn(self, transcript: str, response: str) -> None:
         self.session.history.extend(
             [
@@ -297,7 +310,9 @@ class AriettaVoiceRuntime:
             ]
         )
         max_turns = self.config.assistant.max_history_turns * 2
-        if len(self.session.history) > max_turns:
+        if max_turns == 0:
+            self.session.history.clear()
+        elif len(self.session.history) > max_turns:
             self.session.history = self.session.history[-max_turns:]
         self.session.turn_count += 1
 
@@ -321,7 +336,7 @@ class AriettaVoiceRuntime:
         end_session_requested = False
         if not transcript:
             response = "I didn't catch that. Could you repeat it?"
-        elif GOODBYE_PATTERN.search(transcript):
+        elif GOODBYE_PATTERN.fullmatch(transcript.strip().replace("’", "'")):
             response = self.next_goodbye()
             end_session_requested = True
         else:
@@ -377,10 +392,8 @@ class AriettaVoiceRuntime:
         keypress_monitor: RawKeypressMonitor,
     ) -> UtteranceResult:
         started_at = time.monotonic()
-        transcript = sanitize_for_speech(self.stt.transcribe(audio, self.config.audio.sample_rate))
+        transcript = self.stt.transcribe(audio, self.config.audio.sample_rate).strip()
         stt_latency_ms = int((time.monotonic() - started_at) * 1000)
-        self.logger.info("Heard: %s", transcript or "<empty>")
-        self.event_logger.log("user_transcript", text=transcript, latency_ms=stt_latency_ms)
 
         if not self.session.active and self.config.wake_word.enabled:
             if not transcript:
@@ -388,15 +401,23 @@ class AriettaVoiceRuntime:
                 return UtteranceResult(buffered_chunks=[])
             wake_match = self.wake_detector.match(transcript)
             if wake_match is None:
-                self.last_user_transcript = transcript
-                self.event_logger.log("wake_miss", text=transcript)
+                self.last_user_transcript = ""
+                self.event_logger.log("wake_miss", latency_ms=stt_latency_ms)
                 self.set_state(AssistantState.WAITING_FOR_WAKE)
                 return UtteranceResult(buffered_chunks=[])
+            self._log_transcript(wake_match.prompt_text or "", stt_latency_ms)
             return self._handle_wake_match(wake_match, microphone, keypress_monitor)
 
+        self._log_transcript(transcript, stt_latency_ms)
         if not self.session.active:
             self._open_session(None)
         return self._handle_active_turn(transcript, microphone, keypress_monitor)
+
+    def _log_transcript(self, transcript: str, latency_ms: int) -> None:
+        if self.config.logging.content_enabled:
+            self.logger.info("Heard: %s", transcript or "<empty>")
+        self.event_logger.log("user_transcript", content={"text": transcript},
+                              chars=len(transcript), latency_ms=latency_ms)
 
     def run(self) -> None:
         self._publish_status(force=True)
@@ -496,7 +517,7 @@ class AriettaVoiceRuntime:
                 self.set_state(AssistantState.STOPPING)
                 if self.session.active:
                     goodbye = self.next_goodbye()
-                    print(f"\n> {goodbye}\n", flush=True)
+                    self._print_response(goodbye)
                     self._speak_blocking(goodbye)
             except Exception as exc:
                 self.last_error = type(exc).__name__

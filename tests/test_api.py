@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from arietta_voice import __version__
 from arietta_voice.api import AriettaApiService, create_app
 from arietta_voice.config import load_config
+from arietta_voice.runtime_status import runtime_status_path
 
 
 def _write_api_config(tmp_path: Path) -> Path:
@@ -103,15 +104,59 @@ def _client_with_service(config_path: Path) -> tuple[TestClient, AriettaApiServi
     return client, service
 
 
-def test_health_is_public(tmp_path: Path) -> None:
-    client = _client(_write_api_config(tmp_path))
+def test_health_is_public_and_contains_only_liveness(tmp_path: Path, monkeypatch) -> None:
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    runtime_status_path(service.config).write_text(
+        '{"session_active":true,"last_user_transcript":"PRIVATE TRANSCRIPT"}',
+        encoding="utf-8",
+    )
+    service.last_error = "PRIVATE ERROR"
+
+    def unexpected_diagnostics():
+        raise AssertionError("Public liveness must not inspect private diagnostics")
+
+    monkeypatch.setattr(service, "health", unexpected_diagnostics)
 
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json()["assistant"] == "Test Assistant"
-    assert response.json()["api_version"] == __version__
+    assert response.json() == {"status": "ok", "api_version": __version__}
     assert client.app.version == __version__
+
+
+def test_detailed_health_requires_authentication(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+    assert client.get("/api/health").status_code == 401
+    response = client.get("/api/health", auth=("admin", "password"))
+    assert response.status_code == 200
+    assert response.json()["assistant"] == "Test Assistant"
+    assert "diagnostics" in response.json()
+
+
+def test_chat_without_tools_does_not_load_or_execute_plugins(tmp_path: Path, monkeypatch) -> None:
+    from arietta_voice import api
+
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    service.config.model_tools.enabled = ("missing_private_plugin",)
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Disabled tools must not load or execute")
+
+    def generate(messages, **kwargs):
+        calls.append(messages)
+        return '{"tool_call":{"name":"forbidden","arguments":{}}}'
+
+    monkeypatch.setattr(service, "probe_tools", forbidden)
+    monkeypatch.setattr(api, "_AdHocModelToolRegistry", forbidden)
+    monkeypatch.setattr(service, "_llm_generate", generate)
+    response = client.post("/api/chat", auth=("admin", "password"),
+                           json={"message": "What is your name?", "use_tools": False})
+    assert response.status_code == 200
+    assert response.json()["used_tool"] is None
+    assert response.json()["model_tool"] is None
+    assert len(calls) == 1
+    assert calls[0][-1] == {"role": "user", "content": "What is your name?"}
 
 
 def test_admin_console_requires_basic_auth(tmp_path: Path) -> None:

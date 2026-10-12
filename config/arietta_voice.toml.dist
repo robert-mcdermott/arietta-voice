@@ -56,6 +56,10 @@ consolidate_every_turns = 5
 [logging]
 directory = "../logs"
 events_file = "../logs/events.jsonl"
+# Active conversation text is omitted from logs and runtime status by default.
+content_enabled = false
+max_bytes = 5000000
+backup_count = 3
 
 [knowledge]
 enabled = true

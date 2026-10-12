@@ -45,6 +45,13 @@ Restart buttons to fully control the runtime, start the runtime from inside the
 admin console instead. After changing tools or runtime config while using a
 manually started runtime, restart that runtime terminal yourself.
 
+Conversation text is hidden from runtime logs and status by default; the
+runtime monitor's last-user/last-assistant fields will be blank. See
+[Privacy and logging](README.md#privacy-and-logging) for debugging opt-in,
+rotation settings, and how memory, recordings, and Bedrock differ from logs.
+Restart the runtime and API after changing logging settings so both processes
+use the same policy. Existing log files are not scrubbed during an upgrade.
+
 ## 2. Personalize The Assistant
 
 The default assistant name and wake word are `Bridget`. The examples below use `Maya` to show customization, because it is a common, easy-to-pronounce name. In general, avoid using the product name `Arietta` as the wake word unless you are confident your users will say it consistently.
@@ -178,6 +185,22 @@ Use a tool instead if:
 ## 4. Choose A Knowledge Backend
 
 Knowledge retrieval is configured in `[knowledge]` inside [`config/arietta_voice.toml`](./config/arietta_voice.toml).
+
+Retrieval skips hidden/underscore-prefixed files and directories, and symbolic
+links that resolve outside the configured knowledge directory. Keep searchable
+articles inside that directory.
+
+After upgrading from the original mean-pooled BGE implementation, rebuild any
+semantic index with:
+
+```bash
+uv run arietta-voice knowledge-index
+```
+
+The corrected embedding pipeline uses normalized CLS embeddings and index
+version 2. Old indexes are rejected even if the source articles are unchanged.
+Until rebuilt, `hybrid` uses keyword matches and `vector` returns no matches.
+Restart a running runtime/API after rebuilding to reload its index.
 
 ### Option 1: `keyword`
 

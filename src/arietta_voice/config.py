@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+import math
 from pathlib import Path
 from typing import Any
 import tomllib
@@ -133,6 +134,9 @@ class MemoryConfig:
 class LoggingConfig:
     directory: Path
     events_file: Path
+    content_enabled: bool = False
+    max_bytes: int = 5_000_000
+    backup_count: int = 3
 
 
 @dataclass(slots=True)
@@ -215,6 +219,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         base = default_config(root_hint)
 
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    _validate_toml_types(raw, base)
     base_dir = path.parent
 
     assistant = raw.get("assistant", {})
@@ -228,7 +233,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     tools = raw.get("tools", {})
     model_tools = raw.get("model_tools", {})
 
-    return AppConfig(
+    config = AppConfig(
         project_root=base.project_root,
         assistant=AssistantProfile(
             name=assistant.get("name", base.assistant.name),
@@ -245,11 +250,11 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         wake_word=WakeWordConfig(
             enabled=bool(wake_word.get("enabled", base.wake_word.enabled)),
-            backend=str(wake_word.get("backend", base.wake_word.backend)).strip()
-            or base.wake_word.backend,
+            backend=str(wake_word.get("backend", base.wake_word.backend)).strip(),
             phrases=_merge_tuple(
                 wake_word.get("phrases"),
                 base.wake_word.phrases,
+                allow_empty=True,
             ),
             acknowledgement=str(
                 wake_word.get("acknowledgement", base.wake_word.acknowledgement)
@@ -276,8 +281,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             ),
         ),
         models=ModelConfig(
-            chat_provider=str(models.get("chat_provider", base.models.chat_provider)).strip()
-            or base.models.chat_provider,
+            chat_provider=str(models.get("chat_provider", base.models.chat_provider)).strip(),
             chat_model=str(models.get("chat_model", base.models.chat_model)),
             bedrock_region=str(models.get("bedrock_region", "")).strip() or base.models.bedrock_region,
             bedrock_profile=str(models.get("bedrock_profile", "")).strip()
@@ -305,11 +309,13 @@ def load_config(path: Path | None = None) -> AppConfig:
         logging=LoggingConfig(
             directory=_resolve_path(base_dir, logging_cfg.get("directory", base.logging.directory)),
             events_file=_resolve_path(base_dir, logging_cfg.get("events_file", base.logging.events_file)),
+            content_enabled=logging_cfg.get("content_enabled", base.logging.content_enabled),
+            max_bytes=logging_cfg.get("max_bytes", base.logging.max_bytes),
+            backup_count=logging_cfg.get("backup_count", base.logging.backup_count),
         ),
         knowledge=KnowledgeConfig(
             enabled=bool(knowledge.get("enabled", base.knowledge.enabled)),
-            backend=str(knowledge.get("backend", base.knowledge.backend)).strip()
-            or base.knowledge.backend,
+            backend=str(knowledge.get("backend", base.knowledge.backend)).strip(),
             directory=_resolve_path(base_dir, knowledge.get("directory", base.knowledge.directory)),
             index_directory=_resolve_path(
                 base_dir,
@@ -317,8 +323,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             ),
             embedding_model=str(
                 knowledge.get("embedding_model", base.knowledge.embedding_model)
-            ).strip()
-            or base.knowledge.embedding_model,
+            ).strip(),
             max_matches=int(knowledge.get("max_matches", base.knowledge.max_matches)),
             snippet_char_limit=int(
                 knowledge.get("snippet_char_limit", base.knowledge.snippet_char_limit)
@@ -344,6 +349,82 @@ def load_config(path: Path | None = None) -> AppConfig:
             ),
         ),
     )
+    return validate_config(config)
+
+
+def _validate_toml_types(raw: dict[str, Any], defaults: AppConfig) -> None:
+    """Reject coercions such as bool('false') and int(1.5) before loading."""
+    sections = {item.name for item in fields(defaults)} - {"project_root"}
+    for section, values in raw.items():
+        if section not in sections:
+            raise ValueError(f"Unknown configuration section: {section}")
+        if not isinstance(values, dict):
+            raise ValueError(f"{section} must be a TOML table")
+        section_defaults = getattr(defaults, section)
+        keys = {item.name for item in fields(section_defaults)}
+        for key, value in values.items():
+            name = f"{section}.{key}"
+            if key not in keys:
+                raise ValueError(f"Unknown configuration setting: {name}")
+            default = getattr(section_defaults, key)
+            if isinstance(default, bool):
+                valid, expected = type(value) is bool, "a boolean"
+            elif isinstance(default, int):
+                valid, expected = type(value) is int, "an integer"
+            elif isinstance(default, float):
+                valid, expected = type(value) in (int, float), "a number"
+            elif isinstance(default, tuple):
+                valid = isinstance(value, list) and all(isinstance(item, str) for item in value)
+                expected = "an array of strings"
+            else:
+                valid, expected = isinstance(value, str), "a string"
+            if not valid:
+                raise ValueError(f"{name} must be {expected}")
+
+
+def validate_config(config: AppConfig) -> AppConfig:
+    """Validate runtime assumptions, including values supplied by CLI overrides."""
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise ValueError(message)
+
+    def number(name: str, value: float, minimum: float, maximum: float = math.inf) -> None:
+        require(math.isfinite(value) and minimum <= value <= maximum,
+                f"{name} must be finite and between {minimum:g} and {maximum:g}")
+
+    require(config.assistant.max_history_turns >= 0, "assistant.max_history_turns must be >= 0")
+    require(bool(config.assistant.name.strip()), "assistant.name must not be blank")
+    require(config.wake_word.backend == "transcript", "wake_word.backend must be 'transcript'")
+    require(not config.wake_word.enabled or bool(config.wake_word.phrases),
+            "wake_word.phrases must not be empty when wake word detection is enabled")
+    require(all(any(char.isalnum() for char in phrase) for phrase in config.wake_word.phrases),
+            "wake_word.phrases must contain words or numbers")
+    number("wake_word.session_timeout_s", config.wake_word.session_timeout_s, 0.001)
+    # The current VAD, Smart Turn, and AEC paths share this input format.
+    require(config.audio.sample_rate == 16000, "audio.sample_rate must be 16000")
+    require(config.audio.chunk_samples == 512, "audio.chunk_samples must be 512")
+    require(config.audio.silence_ms > 0, "audio.silence_ms must be > 0")
+    require(config.audio.barge_in_threshold_chunks > 0, "audio.barge_in_threshold_chunks must be > 0")
+    number("audio.tts_speed", config.audio.tts_speed, 0.001)
+    require(bool(config.audio.voice.strip()), "audio.voice must not be blank")
+    require(config.models.chat_provider in {"local", "bedrock"},
+            "models.chat_provider must be 'local' or 'bedrock'")
+    require(bool(config.models.chat_model.strip()), "models.chat_model must not be blank")
+    require(bool(config.models.stt_language.strip()), "models.stt_language must not be blank")
+    number("models.temperature", config.models.temperature, 0, 2)
+    require(config.models.max_tokens > 0, "models.max_tokens must be > 0")
+    require(config.memory.consolidate_every_turns > 0, "memory.consolidate_every_turns must be > 0")
+    require(config.logging.max_bytes >= 1024, "logging.max_bytes must be >= 1024")
+    require(config.logging.backup_count >= 0, "logging.backup_count must be >= 0")
+    require(config.knowledge.backend in {"keyword", "vector", "hybrid"},
+            "knowledge.backend must be 'keyword', 'vector', or 'hybrid'")
+    require(bool(config.knowledge.embedding_model.strip()), "knowledge.embedding_model must not be blank")
+    require(config.knowledge.max_matches > 0, "knowledge.max_matches must be > 0")
+    require(config.knowledge.snippet_char_limit > 0, "knowledge.snippet_char_limit must be > 0")
+    number("knowledge.min_score", config.knowledge.min_score, 0)
+    number("knowledge.hybrid_alpha", config.knowledge.hybrid_alpha, 0, 1)
+    number("knowledge.min_vector_score", config.knowledge.min_vector_score, -1, 1)
+    return config
 
 
 def config_to_dict(config: AppConfig) -> dict[str, Any]:

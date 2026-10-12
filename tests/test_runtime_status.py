@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import json
+
+import pytest
 
 from arietta_voice.config import default_config
 from arietta_voice.runtime_status import read_runtime_status, runtime_status_path, write_runtime_status
@@ -50,6 +53,23 @@ def test_fresh_runtime_status_reports_voice_state(tmp_path: Path) -> None:
     assert status["is_running"] is True
     assert status["is_stale"] is False
     assert status["process_id"] == 12345
+
+
+@pytest.mark.parametrize("content_enabled, active, visible", [
+    (False, True, False), (False, False, False), (True, False, False), (True, True, True),
+])
+def test_status_content_privacy_on_disk_and_on_read(tmp_path, content_enabled, active, visible) -> None:
+    config = _config(tmp_path)
+    config.logging.content_enabled = content_enabled
+    payload = {"heartbeat_at": _iso(), "lifecycle": "running", "session_active": active,
+               "last_user_transcript": "PRIVATE USER", "last_assistant_text": "PRIVATE ANSWER"}
+    write_runtime_status(config, payload)
+    assert ("PRIVATE" in runtime_status_path(config).read_text()) is visible
+    assert ("PRIVATE" in json.dumps(read_runtime_status(config))) is visible
+
+    # An older runtime's status file must not bypass the current read policy.
+    runtime_status_path(config).write_text(json.dumps(payload))
+    assert ("PRIVATE" in json.dumps(read_runtime_status(config))) is visible
 
 
 def test_stale_runtime_status_reports_stale(tmp_path: Path) -> None:

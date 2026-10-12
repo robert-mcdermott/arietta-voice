@@ -48,6 +48,21 @@ personalization files. No release tag is created by this review.
 
 ## Phase 1 Protect privacy and fix the foundation
 
+**Implementation status:** the first batch implements items 1, 4, and 5 below:
+minimal public health; opt-in active conversation logging/status; no passive
+transcript logging; configurable, process-safe JSONL rotation; disabled-tool
+enforcement; pair-based history; preserved inline command text; direct-farewell
+matching; startup config validation; normalized BGE CLS embeddings with index
+format 2; and retrieval root containment. Regression tests use synthetic data
+and mocked hardware/models. Rebuild old semantic indexes with
+`uv run arietta-voice knowledge-index` and restart runtime/API processes.
+
+Phase 1 remains open. Next are admin credential/source-edit hardening (item 2),
+private config/persona migration (item 3), bounded audio and turn recovery
+(item 6), and CI/evaluation coverage (item 7). Logging tests cover concurrent
+processes; inference ownership and full hardware/state-transition gates remain
+outstanding. No release bump or tag accompanies this first batch.
+
 1. Remove transcripts/paths from public health; make content logging opt-in,
    suppress passive-speech persistence, and add retention/rotation settings.
 2. Replace known default admin credentials with a setup requirement. Gate source
