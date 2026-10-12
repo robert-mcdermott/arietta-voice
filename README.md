@@ -206,6 +206,10 @@ version, and wheel/sdist checks on Apple Silicon. See
 [synthetic evaluations and CI](evals/README.md) for coverage, individual checks,
 and the remaining hardware/model validation gates.
 
+For actual microphone/speaker checks and a bounded local soak, follow
+[hardware validation](evals/HARDWARE_VALIDATION.md). The opt-in harness uses an
+isolated synthetic persona and preserves private settings and knowledge.
+
 ## Wake Word Behavior
 
 The initial wake-word implementation is local and transcript-based:

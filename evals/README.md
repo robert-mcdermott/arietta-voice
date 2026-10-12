@@ -95,6 +95,7 @@ successful GitHub-hosted run. A hosted run must pass before release.
 These synthetic checks do not measure speech recognition, generated-answer
 quality, real BGE retrieval, GPU performance, microphone behavior, or long-run
 stability. Keep the Phase 1 manual hardware smoke and soak gates in
+[`HARDWARE_VALIDATION.md`](HARDWARE_VALIDATION.md) and
 [`ROADMAP.md`](../ROADMAP.md), using the current locked model stack. Phase 3's
 representative retrieval benchmark remains separate; the six keyword cases here
 are regression fixtures and do not establish a recall/accuracy score for a model.

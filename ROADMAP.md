@@ -83,8 +83,17 @@ alongside concurrency/crash/deadline coverage. The corpus caught and fixed memor
 facts being discarded when they contained the substring `NONE`. See
 [evals/README.md](evals/README.md) for repeatable commands and limitations.
 
-Phase 1 remains open for the first hosted CI run, the hardware smoke test,
-and a soak test on the locked model stack. Native audio-device stalls and admin
+The fifth batch adds an isolated opt-in hardware harness and records a passing
+real-model smoke test and 15-minute live microphone soak on the locked stack,
+with operator-confirmed speech, interruption and farewell behavior. Private
+settings remained unchanged. See [the measured baseline](evals/HARDWARE_BASELINE.md)
+for resource measurements, queue drops, the synthetic persona correction, and
+the limited load exercised; [the test guide](evals/HARDWARE_VALIDATION.md) covers
+repeatable live and repeated-model checks.
+
+Phase 1 remains open for the first hosted CI run. The initial hardware and soak
+gates have passed; longer/load/reconnect tests and the Phase 2 latency baseline
+remain separate work. Native audio-device stalls and admin
 maintenance actions are not covered by inference deadlines. Voice and API workers
 are serialized individually; shared GPU scheduling remains future work. No release
 bump or tag accompanies these implementation batches.

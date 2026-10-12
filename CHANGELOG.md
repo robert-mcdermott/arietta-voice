@@ -7,6 +7,12 @@ version policy and the release procedure.
 
 ### Added
 
+- Opt-in local hardware/model smoke and bounded live/repeated-model soak
+  harnesses, with isolated settings, private-file checks, process cleanup,
+  resource/heartbeat reports and a hands-on audio checklist.
+- Recorded Apple M4/Jabra hardware smoke and 15-minute live soak results,
+  including manual interruption/farewell checks and baseline limitations.
+
 - Apple Silicon CI for locked installs, isolated unit/process tests, synthetic
   evaluations, distribution builds and version/private-file checks. Actions are
   pinned; only synthetic JUnit reports are uploaded.

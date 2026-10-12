@@ -1,0 +1,155 @@
+"""Safety/reporting contracts only; CI must never open devices or load models."""
+from dataclasses import asdict
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+from arietta_voice.config import default_config
+from scripts import hardware_validation as validation
+
+
+def test_test_profile_preserves_source_settings_and_excludes_private_context(tmp_path):
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source = default_config(source_root)
+    source.models.aws_secret_access_key = "synthetic-private-secret"
+    source.models.bedrock_profile = "synthetic-private-profile"
+    source.assistant.identity = "synthetic private persona"
+    source.wake_word.phrases = ("private wake phrase",)
+    source.memory.enabled = True
+    source.logging.content_enabled = True
+    source.admin.allow_source_editing = True
+    source.tools.enabled = ("custom.private_tool",)
+    source.models.max_tokens = 123
+    before = asdict(source)
+    target = tmp_path / "run"
+    target.mkdir()
+    config = validation.isolated_config(source, target)
+    assert asdict(source) == before
+    assert config.models.chat_model == source.models.chat_model
+    assert config.models.max_tokens == 123
+    assert config.audio == source.audio and config.audio is not source.audio
+    assert config.runtime == source.runtime and config.runtime is not source.runtime
+    assert not config.memory.enabled and not config.knowledge.enabled
+    assert not config.logging.content_enabled and not config.admin.allow_source_editing
+    assert not config.tools.enabled and not config.model_tools.enabled
+    assert config.models.aws_secret_access_key is None
+    assert config.models.bedrock_profile is None
+    assert "private" not in config.prompts.soul_path.read_text()
+    assert "text-to-speech" in config.prompts.soul_path.read_text()
+    assert config.wake_word.phrases == default_config(target).wake_word.phrases
+    for path in (config.prompts.soul_path, config.prompts.memory_path,
+                 config.logging.directory, config.knowledge.directory, config.knowledge.index_directory):
+        assert path.is_relative_to(target)
+
+
+def test_cloud_profile_cannot_accidentally_make_paid_calls(tmp_path):
+    source = default_config(tmp_path)
+    source.models.chat_provider = "bedrock"
+    with pytest.raises(ValueError, match="local chat provider"):
+        validation.isolated_config(source, tmp_path / "run")
+    assert not (tmp_path / "run").exists()
+
+
+def test_validation_lock_prevents_competing_hardware_runs_and_releases(tmp_path):
+    with validation.validation_lock(tmp_path):
+        with pytest.raises(ValueError, match="Another hardware validation"):
+            with validation.validation_lock(tmp_path):
+                pytest.fail("Concurrent lock was acquired")
+    with validation.validation_lock(tmp_path):
+        assert (tmp_path / "active.lock").stat().st_mode & 0o777 == 0o600
+
+
+def test_resource_summary_excludes_startup_ramp(tmp_path):
+    samples = [{"rss_mib": 5000, "ready": False}]
+    samples += [{"rss_mib": value, "ready": True} for value in [100, 102, 103, 104]]
+    result = validation.summarize_resources(samples)
+    assert result["peak_rss_mib"] == 5000
+    assert result["warm_start_rss_mib"] == 101
+    assert result["warm_end_rss_mib"] == 103.5
+    assert result["warm_rss_growth_mib"] == 2.5
+    assert validation.summarize_resources([]) == {}
+
+
+def test_event_summary_detects_content_without_copying_it(tmp_path):
+    events = [{"event": "session_ended", "reason": "user_goodbye"},
+              {"event": "assistant_audio_complete", "interrupted": True},
+              {"event": "user_transcript", "text": "synthetic private phrase"}]
+    (tmp_path / "events.jsonl").write_text("\n".join(map(json.dumps, events)))
+    (tmp_path / "events.jsonl.lock").write_text("")
+    result = validation.summarize_events(tmp_path)
+    assert result["voice_interruptions"] == 1
+    assert result["session_end_reasons"] == {"user_goodbye": 1}
+    assert result["content_fields_present"]
+    assert "synthetic private phrase" not in json.dumps(result)
+
+
+def test_private_fingerprint_detects_edits_without_modifying_files(tmp_path):
+    (tmp_path / "config").mkdir()
+    private = tmp_path / "config" / "SOUL.local.md"
+    private.write_text("synthetic private persona")
+    before = validation.protected_fingerprints(tmp_path)
+    assert private.read_text() == "synthetic private persona"
+    assert "synthetic private persona" not in json.dumps(before)
+    private.write_text("edited synthetic persona")
+    assert validation.protected_fingerprints(tmp_path) != before
+
+
+@pytest.mark.parametrize("failure", [None, "turn", "heartbeat", "missing_heartbeat", "content", "status_content", "device", "duration", "broken_log"])
+def test_live_gates_do_not_hide_failures(failure):
+    status = {"lifecycle": "stopped", "last_error": None,
+              "reliability": {"turn_failures": 0, "turn_timeouts": 0, "worker_restarts": 0,
+                              "audio": {"input_overflows": 0}}}
+    report = {"duration_completed": True, "raw_status_has_content": False,
+              "events": {"content_fields_present": False, "invalid_records": 0}}
+    samples = [{"ready": True, "heartbeat_age_seconds": 0.5}]
+    if failure == "turn":
+        status["reliability"]["turn_failures"] = 1
+    elif failure == "heartbeat":
+        samples[0]["heartbeat_age_seconds"] = 8
+    elif failure == "missing_heartbeat":
+        samples.append({"ready": True, "heartbeat_age_seconds": None})
+    elif failure == "content":
+        report["events"]["content_fields_present"] = True
+    elif failure == "status_content":
+        report["raw_status_has_content"] = True
+    elif failure == "broken_log":
+        report["events"]["invalid_records"] = 1
+    elif failure == "device":
+        status["reliability"]["audio"]["input_overflows"] = 1
+    elif failure == "duration":
+        report["duration_completed"] = False
+    assert all(validation.live_gates(report, status, samples).values()) is (failure is None)
+
+
+def test_partial_event_is_reported_as_failure_without_disclosing_text(tmp_path):
+    (tmp_path / "events.jsonl").write_text('{"text":"synthetic private incomplete')
+    report = validation.summarize_events(tmp_path)
+    assert report["invalid_records"] == 1
+    assert "synthetic private" not in json.dumps(report)
+
+
+def test_cleanup_never_signals_an_unrelated_process_group(monkeypatch):
+    process = Mock(pid=123)
+    process.is_alive.side_effect = [True, False]
+    kill, killpg = Mock(), Mock()
+    monkeypatch.setattr(validation.os, "getpgid", lambda pid: 456)
+    monkeypatch.setattr(validation.os, "kill", kill)
+    monkeypatch.setattr(validation.os, "killpg", killpg)
+    validation.stop_process(process)
+    kill.assert_called_once_with(123, validation.signal.SIGINT)
+    killpg.assert_not_called()
+
+
+def test_tts_uses_remaining_turn_budget_and_closes_stream():
+    worker = Mock(pid=1)
+    runtime = SimpleNamespace(_turn_deadline=123.0, worker=worker,
+                              config=SimpleNamespace(runtime=SimpleNamespace(turn_timeout_s=60)))
+    runtime._infer = Mock(side_effect=[None, None])
+    with pytest.raises(ValueError, match="no audio"):
+        validation._synthesize(runtime, "synthetic")
+    assert runtime._turn_deadline == 123.0
+    worker.call.assert_called_once_with("tts_close", timeout_s=2)
