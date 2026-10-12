@@ -14,3 +14,11 @@ logs/
 .knowledge_index/
 config/MEMORY.md
 tmp/
+
+# Keep personal knowledge local; only the two starter documents belong in Git.
+/knowledge/*
+!/knowledge/README.md
+!/knowledge/getting-started.md
+
+# macOS metadata
+.DS_Store

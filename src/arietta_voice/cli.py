@@ -5,15 +5,18 @@ import json
 from pathlib import Path
 import sys
 
+from arietta_voice import __version__
 from arietta_voice.config import config_to_dict, load_config
 from arietta_voice.logging_utils import configure_logging
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Arietta Voice")
+    parser.add_argument("--version", action="version", version=f"arietta-voice {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Run the voice assistant")
+    run_parser.add_argument("--version", action="version", version=f"arietta-voice {__version__}")
     run_parser.add_argument("--config", type=Path, help="Path to a TOML config file")
     run_parser.add_argument("--memory", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--tts", action=argparse.BooleanOptionalAction, default=None)
@@ -117,6 +120,7 @@ def main() -> int:
         "devices",
         "-h",
         "--help",
+        "--version",
     }:
         argv = ["run", *argv]
     elif not argv:

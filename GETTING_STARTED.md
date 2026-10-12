@@ -119,7 +119,13 @@ Do not invent device states or automation results.
 
 Knowledge is the easiest and safest way to teach Arietta new facts.
 
-Create markdown files in [`knowledge/`](./knowledge). A template is already included at [`knowledge/_template.md`](./knowledge/_template.md).
+Create markdown files in [`knowledge/`](./knowledge) by copying
+[`examples/knowledge-template.md`](./examples/knowledge-template.md) to a new
+file there. Personal articles and subdirectories are ignored by Git. Only
+`knowledge/README.md` and `knowledge/getting-started.md` remain tracked, so
+keep private content out of those two starter files. See the
+[knowledge README](./knowledge/README.md) for previously tracked articles and
+knowledge directories outside this default location.
 
 ### A minimal article
 

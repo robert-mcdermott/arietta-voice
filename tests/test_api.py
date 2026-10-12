@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from arietta_voice import __version__
 from arietta_voice.api import AriettaApiService, create_app
 from arietta_voice.config import load_config
 
@@ -109,6 +110,8 @@ def test_health_is_public(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["assistant"] == "Test Assistant"
+    assert response.json()["api_version"] == __version__
+    assert client.app.version == __version__
 
 
 def test_admin_console_requires_basic_auth(tmp_path: Path) -> None:
@@ -131,6 +134,7 @@ def test_state_and_config_are_authenticated(tmp_path: Path) -> None:
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
+    assert authorized.json()["api"]["version"] == __version__
     assert authorized.json()["runtime"]["mode"] == "web_api"
     assert authorized.json()["runtime"]["state"] == "not_running"
     assert config_response.json()["assistant"]["name"] == "Test Assistant"

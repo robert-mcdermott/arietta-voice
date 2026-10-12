@@ -20,6 +20,10 @@ also `Bridget`. Both are easy to change in
 
 For a detailed customization walkthrough, see [GETTING_STARTED.md](./GETTING_STARTED.md).
 
+For planned improvements, see [ROADMAP.md](./ROADMAP.md). The
+[release guide](./RELEASING.md) explains app versioning, and
+[CHANGELOG.md](./CHANGELOG.md) records user-visible changes.
+
 ## What This Project Includes
 
 - local speech-to-text with Moonshine
@@ -79,6 +83,7 @@ uv run arietta-voice run
 Useful variations:
 
 ```bash
+uv run arietta-voice --version
 uv run arietta-voice --no-wake
 uv run arietta-voice --wake-word Bridget
 uv run arietta-voice --wake-word Bridget --wake-word Arietta
@@ -236,7 +241,13 @@ Edit [`config/SOUL.md`](./config/SOUL.md). Keep it focused and durable. Project-
 
 ### Add knowledge
 
-Add markdown files to [`knowledge`](./knowledge). A template is included at [`knowledge/_template.md`](./knowledge/_template.md).
+Add markdown files to [`knowledge`](./knowledge). Copy the template at
+[`examples/knowledge-template.md`](./examples/knowledge-template.md) into a new
+file there. Only `knowledge/README.md` and `knowledge/getting-started.md` are
+tracked by default; other knowledge files and subdirectories are ignored.
+Keep personal content in new files, since edits to the two starter documents
+remain tracked. See the [knowledge README](./knowledge/README.md) for existing
+tracked files and custom knowledge directory locations.
 
 ### Add a deterministic tool
 
@@ -291,7 +302,7 @@ For an always-on voice assistant box, the intended target is a dedicated Apple S
 - a reliable USB microphone or speakerphone
 - a good near-field speaker
 - a quiet location with stable power
-- local knowledge and tool configuration committed alongside the project
+- local knowledge kept in ignored files, with private backups managed separately
 
 The current repo is a strong foundation for a home assistant or office assistant. Home automation should be added through tools, not by hardcoding behaviors into the runtime.
 

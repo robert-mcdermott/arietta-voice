@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 
+from arietta_voice import __version__
 from arietta_voice.config import AppConfig, config_to_dict, load_config
 from arietta_voice.diagnostics import run_startup_diagnostics
 from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
@@ -29,7 +30,8 @@ from arietta_voice.runtime_supervisor import RuntimeSupervisor
 from arietta_voice.tool_admin import ModelToolAdmin, ToolAdmin
 
 
-API_VERSION = "0.1.0"
+# Retain the existing API field names while reporting the application version.
+API_VERSION = __version__
 AUTH_REALM = "Arietta Admin"
 DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD = "password"

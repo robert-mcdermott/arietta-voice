@@ -1,0 +1,185 @@
+# Arietta Voice Improvement Roadmap
+
+Plan dated October 11, 2026. Preserve the local Apple Silicon assistant and
+improve privacy, reliability, and response speed in that order. The evidence
+and technology comparisons are in [PROJECT_REVIEW.md](PROJECT_REVIEW.md).
+The existing app baseline is `0.1.0`; versions below are proposed milestones,
+not releases that have already been published.
+
+Estimates are focused engineering effort for one developer, including tests,
+with model/hardware experiments adding uncertainty. Release when the exit
+criteria pass rather than on a fixed calendar date.
+
+| Phase | Proposed version | Outcome | Effort | Depends on |
+| --- | --- | --- | --- | --- |
+| 0 | `0.1.1` | Personal knowledge protected by default; consistent version reporting | 1–3 days | Current checkout |
+| 1 | `0.2.0` | Private, bounded, testable operation with known correctness fixes | 1–2 weeks | Phase 0 |
+| 2 | `0.3.0` | Streaming answers and dependable interruption | 2–4 weeks | Phase 1 and a recorded baseline |
+| 3 | `0.4.0` | Better grounded answers, structured tools, manageable memory | 1–2 weeks | Phase 1; integrate against Phase 2 interfaces |
+| 4 | `0.5.0` | Repeatable installation and useful optional integrations | 2–3 weeks | Phases 2 and 3 |
+| 5 | `1.0.0` | Stable supported interface and an operationally proven release | Based on validation | Prior release gates |
+
+## Phase 0 Establish repository and release hygiene
+
+Implemented in this working tree:
+
+- Ignore everything below `knowledge/` except its README and getting-started
+  article; relocate the article template to `examples/knowledge-template.md`.
+- Explain tracked-file exceptions, custom-directory limits, and private backups.
+- Use `pyproject.toml` as the sole version declaration and installed package
+  metadata for runtime reporting. Add `arietta-voice --version` and reuse the
+  same version in the existing API fields.
+- Add a changelog, release instructions, this roadmap, and the project review.
+
+To close the phase:
+
+1. Review and commit these changes with an explicit file list, preserving the
+   user's separate config edits.
+2. Add CI's tracked-knowledge allowlist check. It should reject any indexed path
+   under `knowledge/` other than the two starter files, including forced adds.
+3. Choose whether to tag the historical `0.1.0` baseline; its version already
+   existed, but no local release tag was found. Prepare `0.1.1` with the release
+   procedure and publish only after review.
+
+**Exit criteria:** 60 existing/new tests pass; version reporting agrees across
+CLI/package/API; private and nested knowledge is ignored; CI rejects a private
+tracked knowledge fixture; wheel/sdist have the expected version and no local
+personalization files. No release tag is created by this review.
+
+## Phase 1 Protect privacy and fix the foundation
+
+1. Remove transcripts/paths from public health; make content logging opt-in,
+   suppress passive-speech persistence, and add retention/rotation settings.
+2. Replace known default admin credentials with a setup requirement. Gate source
+   editing; stop importing tool code just to render inventory. Preserve detailed
+   diagnostics behind authentication.
+3. Introduce ignored local config/persona overrides with a migration that
+   preserves current files. Explain the data sent to Bedrock when enabled.
+4. Fix `use_tools=False`, history-pair counting, inline wake-command preservation,
+   goodbye intent, and invalid config handling.
+5. Correct BGE pooling against the reference, version the embedding pipeline,
+   invalidate old indexes, and enforce retrieval root containment.
+6. Bound microphone queues, utterance duration, and recording memory. Add
+   per-turn timeouts/recovery, exception-safe audio cleanup, inference ownership,
+   and a heartbeat that continues during long work.
+7. Add CI and a synthetic evaluation corpus before introducing new models.
+   Include runtime state-transition, prompt, memory, tool-policy, corrupt-index,
+   and process-concurrency regression coverage.
+
+**Exit criteria:** unauthenticated health contains no transcript or local paths;
+passive speech leaves no text in logs/status by default; tools disabled means
+zero executions; configured history counts pairs correctly; malformed config
+fails with actionable errors. A failed model/tool turn returns to listening;
+continuous audio and an unresponsive endpoint model cannot grow buffers without
+limit. A hardware smoke test passes with the existing locked model stack.
+
+**Rollback:** preserve private config backups and the old lockfile; knowledge
+indexes are rebuildable. Do not automatically re-enable privacy-leaking logging
+when rolling back another component.
+
+## Phase 2 Reduce the wait before speech
+
+1. Record stage-level latency and resource baselines on the intended Mac and
+   microphone/speaker. Separate cold start from warm conversational turns.
+2. Add a serialized inference worker, cancellation tokens, and bounded text/audio
+   queues. Share the conversation service between console and voice paths.
+3. Extend the MLX and Bedrock adapters with structured streaming events. Send
+   speakable clauses to Kokoro while generation continues; withhold tool payloads.
+4. Move memory work after first response delivery and off the interactive path.
+5. Migrate Moonshine in an isolated experiment from `0.0.54` to a chosen stable
+   streaming release, covering asset formats, language selection, partial/final
+   transcript semantics, and terminology hints. Retain the old path until validated.
+6. Improve AEC alignment, pre-roll capture, and interruption cancellation. Add
+   input/output device selection and sleep/reconnect handling.
+7. Compare current ONNX Kokoro with MLX Kokoro; then optionally test small
+   Qwen3-TTS. Compare Gemma with one compatible small alternate model. Change
+   only one component per comparison. Acoustic wake detection is an optional
+   experiment and does not block the streaming release.
+
+**Exit criteria:** using the same warm, no-tool question set, reduce median
+speech-end-to-first-audio time by at least 30% without worsening p95 relative
+to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms
+on the chosen audio hardware, with no stale playback after cancellation.
+Measure false cutoffs, false interruptions, and transcription accuracy; accept
+no unexplained regression. These are proposed targets, not current measurements.
+
+**Rollback:** select the previous adapter/model profile through configuration;
+retain the batch STT and existing Kokoro paths. Schema/tool planning still needs
+to complete before speaking an action result.
+
+## Phase 3 Improve knowledge and tool reliability
+
+1. Add bounded retrieval chunks, stable source IDs, atomic index generations,
+   visible stale/corrupt-index state, and incremental indexing where worthwhile.
+2. Compare keyword and hybrid retrieval on at least 50 representative synthetic
+   queries, including paraphrases, proper names, ambiguous questions, and absent
+   facts. Add source references to API responses and explicit uncertainty when
+   evidence is missing. Consider reranking only if it improves measured quality.
+3. Add tool argument schemas, native provider tool calls where available,
+   deadlines, bounded results, and structured errors. Retain a one-call budget
+   until evidence shows a need for longer tool sequences.
+4. Separate untrusted retrieved text from instructions. Add prompt-injection
+   fixtures and enforce allowed actions outside the model.
+5. Add memory inspect/delete controls, provenance, size limits, atomic writes,
+   and background consolidation.
+
+**Exit criteria:** target relevant-source recall@3 of at least 90% on the agreed
+answerable corpus, with separate false-positive and unsupported-answer reporting
+on unanswerable questions. Disabled or invalid tools cannot execute; timeouts
+produce a useful response; interrupted/retried actions cannot execute twice.
+Corrupt indexes recover without losing source files. Memory can be inspected,
+cleared, and disabled without residual prompt injection.
+
+**Rollback:** keyword retrieval and the prior index generation remain available;
+reverting an encoder or chunker requires the matching index or a rebuild.
+
+## Phase 4 Make installation and extensions durable
+
+1. Package starter assets and add `arietta-voice init` plus config migration.
+   Keep private data outside the installed package and custom tools outside
+   application source. Consolidate the overlapping config templates.
+2. Extract API routes and frontend assets; add focused browser smoke checks.
+   Optimize event polling and logs without requiring a frontend rewrite.
+3. Provide generated LaunchAgent setup and a single chosen supervisor model,
+   startup backoff, clean shutdown, and update/rollback instructions.
+4. Add one useful integration chosen by actual usage, such as read-only home
+   status followed by explicitly authorized device control. Start with schemas,
+   permission boundaries, action confirmation, and idempotency.
+5. Optionally prototype a cloud voice session using Nova 2 Sonic or OpenAI
+   Realtime. Keep this feature opt-in, define audio/text egress and cost limits,
+   and test connection renewal, interruption, tool handoff, and offline fallback.
+   This experiment is not required to ship the local release.
+
+**Exit criteria:** a clean Apple Silicon installation works without editing
+package source; an upgrade preserves knowledge/persona/settings; a rollback is
+documented and exercised. An eight-hour soak has no crash, lost device, duplicate
+runtime, or unbounded memory growth. Network loss does not prevent local mode.
+
+## Phase 5 Declare the supported stable interface
+
+Ship `1.0.0` when the CLI, config schema, documented HTTP endpoints, and extension
+interfaces have an explicit compatibility policy; the supported Mac/Python
+matrix is documented; migrations and rollback work; and the privacy, speech,
+knowledge, and operations gates above are repeatable. Complete a 24-hour soak
+with reconnect/restart scenarios and publish the measured resource envelope.
+The version number should communicate a stable promise, not just accumulated features.
+
+## Benchmark and release discipline
+
+Use synthetic or explicitly approved local fixtures. Keep private recordings
+and real knowledge out of the repository. Record app version, dependency lock,
+model revision/quantization, Mac chip/RAM, macOS version, audio device, and config.
+
+| Measure | Evaluation approach |
+| --- | --- |
+| Response latency | At least 100 warm no-tool turns; p50/p95 end-to-first-audio and stage timings; report cold-start cases separately |
+| Speech recognition | Quiet and noisy clips, accents, names, numbers; word errors and task success |
+| Wake behavior | Positive custom-phrase trials and long negative background audio; misses and false activations per hour |
+| Endpointing and interruption | Hesitations, long pauses, speaker echo, and deliberate barge-in; premature cutoffs and stop latency |
+| Grounding and tools | Answerable/unanswerable questions, source recall, malformed requests, disabled tools, retries, and injected instructions |
+| Resources and operation | Idle CPU, peak memory, startup/download time, queue bounds, sleep/reconnect, eight-hour then 24-hour soak |
+
+Model replacements must show a useful latency, quality, or resource advantage
+within the same test conditions. Keep raw private evaluations local; publish
+only synthetic fixtures and aggregate results. Track shipped changes in
+[CHANGELOG.md](CHANGELOG.md), and use [RELEASING.md](RELEASING.md) for version bumps.
