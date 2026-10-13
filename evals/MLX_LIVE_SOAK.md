@@ -130,6 +130,12 @@ page remained physically resident or that the OS could not compress/swap it.
 
 ## Decision and next checks
 
+The subsequent [capture/alignment investigation](CAPTURE_ALIGNMENT_INVESTIGATION.md)
+adds reason-specific telemetry, fixes expected startup resets and prevents unused
+capture from overrunning during transcription/initial generation waits. See that
+report for the separate live repeat and remaining speaker-output underflows;
+the historical counts above are unchanged.
+
 Keep the ONNX default and the isolated MLX opt-in. This run closes the initial
 integrated listening checks and requested 15-minute shared-model soak. It adds
 evidence of correct interruption recovery and stable allocations within this

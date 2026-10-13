@@ -164,6 +164,24 @@ def test_passive_speech_never_reaches_logs_or_status(runtime, content_enabled, c
     assert "PRIVATE" not in runtime_status_path(runtime.config).read_text()
 
 
+@pytest.mark.parametrize('stage,foreground,discarded', [
+    ('transcribe', True, True), ('endpoint', True, False),
+    ('chat', True, False), ('transcribe', False, False),
+])
+def test_only_foreground_transcription_wait_retires_capture(runtime, stage, foreground, discarded):
+    import threading
+    from arietta_voice.audio import MicrophoneStream
+    mic = MicrophoneStream(16000, 512)
+    mic._callback(np.ones((512, 1)), 512, None, False)
+    runtime._turn_microphone = mic
+    runtime._turn_thread_ident = threading.get_ident() if foreground else -1
+    runtime.turn_stage = stage
+    runtime._inference_wait()
+    assert mic.empty() == discarded
+    assert mic.dropped_chunks == 0
+    assert mic.statistics()['discarded_by_reason'] == ({'transcribing': 1} if discarded else {})
+
+
 @pytest.mark.parametrize("content_enabled", [False, True])
 def test_active_content_respects_opt_in_everywhere(runtime, content_enabled, caplog, capsys, monkeypatch) -> None:
     runtime.config.logging.content_enabled = content_enabled

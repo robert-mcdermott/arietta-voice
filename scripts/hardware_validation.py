@@ -142,6 +142,7 @@ def summarize_events(directory):
     counts, reasons = Counter(), Counter()
     interruptions, content_fields, invalid_records = 0, False, 0
     alignment_resets, output_underflows = 0, 0
+    alignment_reset_reasons, capture_discard_reasons = Counter(), Counter()
     for path in directory.glob("events.jsonl*"):
         if not path.is_file() or path.name.endswith(".lock"):
             continue
@@ -160,10 +161,14 @@ def summarize_events(directory):
             if event.get("event") == "assistant_audio_complete":
                 alignment_resets += event.get("alignment_resets", 0)
                 output_underflows += event.get("output_underflows", 0)
+                alignment_reset_reasons.update(event.get("alignment_reset_reasons", {}))
+                capture_discard_reasons.update(event.get("capture_discard_reasons", {}))
             content_fields |= bool({"text", "transcript", "response", "prompt", "content"}.intersection(event))
     return {"event_counts": dict(counts), "session_end_reasons": dict(reasons),
             "voice_interruptions": interruptions, "content_fields_present": content_fields,
             "alignment_resets": alignment_resets, "output_underflows": output_underflows,
+            "alignment_reset_reasons": dict(alignment_reset_reasons),
+            "capture_discard_reasons": dict(capture_discard_reasons),
             "invalid_records": invalid_records}
 
 

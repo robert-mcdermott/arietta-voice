@@ -405,6 +405,7 @@ def test_capture_discontinuity_discards_old_barge_in_prefix(monkeypatch):
         chime_player=Mock(), sample_rate=16000, use_aec=True,
         barge_in_threshold_chunks=3, pre_roll_ms=64)
     assert result.interrupted and result.alignment_resets == 1
+    assert result.alignment_reset_reasons == {'timestamp_gap': 1}
     assert factory.call_count == 2
     np.testing.assert_allclose(np.concatenate(result.buffered_chunks), .6)
 
@@ -421,6 +422,7 @@ def test_output_underflow_invalidates_reference_and_resets_aec(monkeypatch):
         vad=Mock(), keypress_monitor=None, chime_player=Mock(), sample_rate=16000,
         use_aec=True, barge_in_threshold_chunks=3)
     assert result.output_underflows == result.alignment_resets == 1
+    assert result.alignment_reset_reasons == {'output_underflow': 1}
     assert factory.call_count == 2
 
 
@@ -449,3 +451,106 @@ def test_drop_during_producer_cleanup_cannot_join_discontinuous_followup(monkeyp
     assert result.interrupted
     assert result.buffered_chunks == []
     assert mic.empty()
+
+
+def test_expected_startup_packet_does_not_reset_fresh_aec(monkeypatch):
+    now = [10.]
+    monkeypatch.setattr(audio.time, 'monotonic', lambda: now[0])
+    factory = Mock(side_effect=lambda rate: lambda mic, ref: mic)
+    monkeypatch.setattr(audio, 'make_aec_processor', factory)
+    mic = audio.MicrophoneStream(16000, 512)
+    device = Mock(latency=0.)
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: device)
+    async def chunks():
+        yield np.zeros(512, dtype=np.float32), 24000
+        # Arrives after output starts, but includes samples from before it.
+        now[0] = 10.016
+        mic._callback(np.ones((512, 1)), 512, None, False)
+        for _ in range(3):
+            now[0] += .032
+            mic._callback(np.full((512, 1), .5), 512, None, False)
+        yield None, None
+        raise AssertionError('Cancelled stream resumed')
+    result = audio.play_tts_stream(tts_stream=chunks(), microphone=mic,
+        vad=Mock(probability=lambda _: 1.), keypress_monitor=None, chime_player=Mock(),
+        sample_rate=16000, use_aec=True, barge_in_threshold_chunks=3)
+    assert result.interrupted and result.alignment_resets == 0
+    assert result.capture_discard_reasons == {'before_playback': 1}
+    assert factory.call_count == 1
+    np.testing.assert_allclose(np.concatenate(result.buffered_chunks), .5)
+    assert mic.capture_phase == 'listening'
+
+
+def test_initial_generation_wait_retires_unused_capture_without_overflow(monkeypatch):
+    now = [10.]
+    monkeypatch.setattr(audio.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(audio.time, 'sleep', lambda delay: now.__setitem__(0, now[0]+delay))
+    monkeypatch.setattr(audio, 'make_aec_processor', lambda rate: lambda mic, ref: mic)
+    mic = audio.MicrophoneStream(16000, 512, max_queue_chunks=4)
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: Mock(latency=0.))
+    async def chunks():
+        for _ in range(100):  # Longer than the production queue's 2.048 seconds.
+            now[0] += .032
+            mic._callback(np.ones((512, 1)), 512, None, False)
+            yield None, None
+        yield np.zeros(512, dtype=np.float32), 24000
+        for _ in range(3):
+            now[0] += .032
+            mic._callback(np.full((512, 1), .5), 512, None, False)
+        yield None, None
+    result = audio.play_tts_stream(tts_stream=chunks(), microphone=mic,
+        vad=Mock(probability=lambda _: 1.), keypress_monitor=None, chime_player=Mock(),
+        sample_rate=16000, use_aec=True, barge_in_threshold_chunks=3)
+    assert result.interrupted and result.alignment_resets == 0
+    assert mic.dropped_chunks == 0
+    assert mic.statistics()['discarded_by_reason'] == {'before_output': 100}
+    np.testing.assert_allclose(np.concatenate(result.buffered_chunks), .5)
+
+
+def test_active_capture_overflow_still_invalidates_interruption_prefix(monkeypatch):
+    now = [10.]
+    monkeypatch.setattr(audio.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(audio.time, 'sleep', lambda delay: now.__setitem__(0, now[0]+delay))
+    monkeypatch.setattr(audio, 'make_aec_processor', lambda rate: lambda mic, ref: mic)
+    mic = audio.MicrophoneStream(16000, 512, max_queue_chunks=3)
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: Mock(latency=0.))
+    def feed(value):
+        now[0] += .032
+        mic._callback(np.full((512, 1), value), 512, None, False)
+    async def chunks():
+        yield np.zeros(512, dtype=np.float32), 24000
+        feed(1.)
+        yield None, None
+        for _ in range(4):
+            feed(1.)
+        yield None, None
+        for _ in range(3):
+            feed(.5)
+        yield None, None
+    result = audio.play_tts_stream(tts_stream=chunks(), microphone=mic,
+        vad=Mock(probability=lambda _: 1.), keypress_monitor=None, chime_player=Mock(),
+        sample_rate=16000, use_aec=True, barge_in_threshold_chunks=3)
+    assert result.interrupted
+    assert result.alignment_reset_reasons == {'capture_overflow': 1}
+    assert mic.statistics()['drops_by_phase'] == {'playback': 1}
+    assert mic.statistics()['discarded_by_reason'] == {'capture_gap': 3}
+    np.testing.assert_allclose(np.concatenate(result.buffered_chunks), .5)
+
+
+def test_intentional_discard_is_bounded_and_does_not_drop_recording(monkeypatch):
+    recorder = Mock()
+    mic = audio.MicrophoneStream(16000, 512, max_queue_chunks=2, recorder=recorder)
+    def feed():
+        mic._callback(np.zeros((512, 1)), 512, None, False)
+    feed()
+    original = mic._audio_q.get_nowait
+    def consume_and_refill():
+        chunk = original()
+        feed()
+        return chunk
+    monkeypatch.setattr(mic._audio_q, 'get_nowait', consume_and_refill)
+    mic.discard_pending('before_output')
+    assert mic.statistics()['queued_chunks'] == 1
+    assert mic.statistics()['discarded_chunks'] == 1
+    assert mic.dropped_chunks == 0
+    assert recorder.append.call_count == 2

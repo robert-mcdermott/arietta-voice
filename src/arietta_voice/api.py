@@ -2233,7 +2233,8 @@ ADMIN_HTML = """<!doctype html>
         <div class="reliability-card"><h4>Microphone buffer</h4><div class="reliability-value">${capacity ? `${queued} / ${capacity}` : "—"}</div>
           <div class="reliability-note">Chunks queued · bounded capture</div>
           <progress aria-label="Microphone buffer usage" max="${capacity || 1}" value="${queued}"></progress>
-          <div class="reliability-note">Dropped ${escapeHtml(audio.dropped_chunks ?? 0)} · Input overruns ${escapeHtml(audio.input_overflows ?? 0)}</div></div>
+          <div class="reliability-note">Queue overruns ${escapeHtml(audio.dropped_chunks ?? 0)} · Input overruns ${escapeHtml(audio.input_overflows ?? 0)}<br>
+          Intentionally discarded ${escapeHtml(audio.discarded_chunks ?? 0)} chunks outside accepted capture windows</div></div>
         <div class="reliability-card"><h4>Recovery · this runtime</h4><div class="reliability-value">${escapeHtml(data.turn_failures ?? 0)} failed turn${data.turn_failures === 1 ? "" : "s"}</div>
           <div class="reliability-note">Timeouts ${escapeHtml(data.turn_timeouts ?? 0)} · Worker resets ${escapeHtml(data.worker_restarts ?? 0)}<br>
           Oversized utterances ${escapeHtml(data.utterances_discarded ?? 0)}<br>Recording drops ${escapeHtml(audio.recording_dropped_chunks ?? 0)}</div></div>

@@ -7,6 +7,13 @@ version policy and the release procedure.
 
 ### Added
 
+- Capture-overrun counts by runtime phase, separate intentional-discard counters
+  in audio status/admin, and reason-specific AEC reset/playback discard events.
+  Expected packets crossing playback startup no longer reset a fresh AEC;
+  transcription and first-output waits retire capture that would otherwise be
+  discarded at their boundary, preventing unused backlogs from filling the queue.
+  Real gaps/overflows still invalidate interruption prefixes and reset alignment.
+
 - Isolated MLX hardware-test overrides, host telemetry and continuous shared-model
   soak checks, including varied synthetic fixtures, configurable turn spacing,
   per-turn allocator samples and failure on worker replacement or missing models.

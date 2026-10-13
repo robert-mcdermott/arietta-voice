@@ -380,8 +380,17 @@ also works before audio starts, between clauses and during final device draining
 Output timing is estimated from blocking PortAudio writes, reported device
 latency and queued sample duration. It is not a measured DAC timestamp or an
 acoustic guarantee. Capture gaps/output underflows reset alignment; playback
-completion events include reset/underflow counts without audio or text. See
+completion events include reset/underflow counts and reset reasons without audio
+or text. Normal ADC packets straddling playback startup are discarded without
+resetting a fresh AEC. Runtime audio status separates actual queue overruns by
+capture phase from intentional discards at turn boundaries, during transcription,
+and while awaiting first output. Those waits already discarded capture before
+resuming listening or starting playback; voice barge-in still begins with output,
+not during initial generation. Endpoint decisions retain capture because an
+unfinished utterance may continue. See
 [AEC and interruption validation](evals/AEC_VALIDATION.md) for evidence and limits.
+The [capture/alignment investigation](evals/CAPTURE_ALIGNMENT_INVESTIGATION.md)
+documents the startup/wait fixes and isolated MLX repeat.
 
 Heavy STT, endpoint, chat, tool, and TTS work runs in a persistent spawned process
 with one operation at a time. On timeout, crash, or model/tool exception, that

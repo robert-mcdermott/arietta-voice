@@ -139,6 +139,21 @@ def test_playback_alignment_and_underflow_counts_are_preserved(tmp_path):
     report = validation.summarize_events(tmp_path)
     assert report['alignment_resets'] == 3
     assert report['output_underflows'] == report['voice_interruptions'] == 1
+    assert report['alignment_reset_reasons'] == {}
+    assert report['capture_discard_reasons'] == {}
+
+
+def test_playback_reason_counters_are_aggregated(tmp_path):
+    rows = [dict(event='assistant_audio_complete', alignment_resets=1,
+                 alignment_reset_reasons={'timestamp_gap': 1},
+                 capture_discard_reasons={'before_playback': 2}),
+            dict(event='assistant_audio_complete', alignment_resets=2,
+                 alignment_reset_reasons={'timestamp_gap': 1, 'output_underflow': 1},
+                 capture_discard_reasons={'before_playback': 1})]
+    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
+    report = validation.summarize_events(tmp_path)
+    assert report['alignment_reset_reasons'] == {'timestamp_gap': 2, 'output_underflow': 1}
+    assert report['capture_discard_reasons'] == {'before_playback': 3}
 
 
 def test_cleanup_never_signals_an_unrelated_process_group(monkeypatch):

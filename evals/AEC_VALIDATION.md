@@ -4,6 +4,10 @@ October 12, 2026. Production remains on the locked model stack, including
 Moonshine 0.0.54. No private config, persona, credentials, knowledge, memory or
 backups are rewritten by these changes or the isolated validation.
 
+The October 13 [capture/alignment follow-up](CAPTURE_ALIGNMENT_INVESTIGATION.md)
+distinguishes normal startup discards from faults, prevents unused capture
+backlogs during model waits, and records a separate live MLX repeat.
+
 ## Changes and boundaries
 
 - Microphone queue entries carry ADC capture times translated from PortAudio's

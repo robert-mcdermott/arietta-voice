@@ -18,6 +18,8 @@ from arietta_voice.audio import (
     UtteranceBuffer,
     AudioReferenceBuffer,
     RecordingWriter,
+    discard_capture,
+    capture_phase,
     play_tts_stream,
     play_tts_stream_passive,
 )
@@ -69,6 +71,7 @@ class AriettaVoiceRuntime:
         self._turn_token = None
         self._turn_keys = None
         self._turn_thread_ident = None
+        self._turn_microphone = None
         self.turn_cancellations = 0
         self.turn_failures = 0
         self.turn_timeouts = 0
@@ -219,6 +222,8 @@ class AriettaVoiceRuntime:
     def _inference_wait(self):
         if self._turn_thread_ident is None or threading.get_ident() == self._turn_thread_ident:
             self._check_audio_health()
+            if self.turn_stage == "transcribe" and self._turn_microphone is not None:
+                discard_capture(self._turn_microphone, "transcribing")
         self._publish_status()
         if (self._turn_keys is not None and threading.get_ident() == self._turn_thread_ident
                 and self._turn_keys.pressed()):
@@ -242,6 +247,8 @@ class AriettaVoiceRuntime:
         foreground = self._turn_thread_ident is None or threading.get_ident() == self._turn_thread_ident
         if foreground:
             self._check_audio_health()
+            if operation == "transcribe":
+                capture_phase(self._turn_microphone, "transcribe")
         result = self.worker.call(operation, payload, timeout_s=self._remaining_time(),
                                   on_wait=self._inference_wait, cancellation=token)
         if foreground:
@@ -333,6 +340,8 @@ class AriettaVoiceRuntime:
         )
         self.event_logger.log("assistant_audio_complete", interrupted=playback.interrupted,
                               alignment_resets=playback.alignment_resets,
+                              alignment_reset_reasons=playback.alignment_reset_reasons,
+                              capture_discard_reasons=playback.capture_discard_reasons,
                               output_underflows=playback.output_underflows)
         self._update_display_speech(0.0, False)
         self.set_state(next_state)
@@ -497,6 +506,7 @@ class AriettaVoiceRuntime:
         self._turn_token = CancellationToken()
         self._turn_keys = keypress_monitor
         self._turn_thread_ident = threading.get_ident()
+        self._turn_microphone = microphone
         self.turn_started_at = time.monotonic()
         self._turn_deadline = self.turn_started_at + self.config.runtime.turn_timeout_s
         self.last_error = None
@@ -526,6 +536,8 @@ class AriettaVoiceRuntime:
                 self.turn_cancellations += 1
                 self.event_logger.log("turn_cancelled")
             self._turn_token = self._turn_keys = self._turn_thread_ident = None
+            self._turn_microphone = None
+            capture_phase(microphone, "listening")
             self.last_turn_duration_ms = round((time.monotonic() - self.turn_started_at) * 1000)
             self.turn_started_at = self._turn_deadline = None
             self.turn_stage = "idle"
@@ -690,6 +702,7 @@ class AriettaVoiceRuntime:
         discard_until_quiet = False
         observed_drops = microphone.dropped_chunks + microphone.input_overflows
         while True:
+            capture_phase(microphone, "listening")
             if self.config.wake_word.enabled and self.session.active and self._session_timed_out(time.monotonic()):
                 self.memory_jobs.suspend()
                 self._end_session(reason="idle_timeout", microphone=microphone, speak_goodbye=False)
@@ -745,12 +758,14 @@ class AriettaVoiceRuntime:
                 if self.config.audio.smart_turn_enabled:
                     self.memory_jobs.suspend()
                     self.turn_stage = "endpoint"
+                    capture_phase(microphone, "endpoint")
                     self._stage_started_at = time.monotonic()
                     endpoint = self.worker.call("endpoint", utterance,
                         timeout_s=self.config.runtime.endpoint_timeout_s, on_wait=self._playback_wait)
                     self._check_audio_health()
                     self.event_logger.log("smart_turn_score", probability=round(endpoint, 4))
                     self.turn_stage = "idle"
+                    capture_phase(microphone, "listening")
                     if endpoint < 0.5:
                         silent_chunks = 0
                         continue

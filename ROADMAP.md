@@ -301,6 +301,19 @@ opt-in: acoustic timing/echo measurement, capture-drop investigation and longer
 representative live/load soaks remain open. See
 [operator evidence, memory results and reproduction](evals/MLX_LIVE_SOAK.md).
 
+**Capture/alignment follow-up (October 13, 2026):** expected ADC packets crossing
+playback startup no longer reset fresh AEC instances. Transcription and
+first-output waits now retire capture that their existing boundaries discarded,
+preventing unused backlogs from filling the queue. Phase/reason counters separate
+actual queue overruns, intentional discards and alignment faults. The 565-test
+suite passes. A 302.7-second isolated MLX repeat recorded zero capture drops,
+zero timestamp-gap resets and passed operator interruption/farewell checks.
+It recorded four genuine output underflows during one answer; their resets
+remain active and visible. Private files and dependency inventories matched.
+Next, investigate output starvation/write scheduling with matched playback
+timings; longer live/load and acoustic acceptance gates remain open. See
+[findings, regression coverage and limits](evals/CAPTURE_ALIGNMENT_INVESTIGATION.md).
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms

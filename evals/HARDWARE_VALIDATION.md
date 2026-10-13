@@ -29,6 +29,11 @@ temporary `--tts-backend mlx --mlx-kokoro-model PATH` overrides. They apply only
 to the disposable test profile. `--host-metrics` records read-only macOS host
 CPU, power, thermal and memory-pressure samples. See
 [the MLX live and continuous-soak protocol](MLX_LIVE_SOAK.md) for commands.
+Playback summaries also include AEC reset reasons and startup/stale packet
+discards; runtime audio status separates real queue overruns by phase from
+intentional queue discards. Inspect these alongside the automatic gates, which
+do not require zero overruns/resets. See the
+[capture/alignment investigation](CAPTURE_ALIGNMENT_INVESTIGATION.md).
 
 In components mode, `--resource-metrics` checks that STT, chat, endpointing and
 TTS remain resident in the same inference worker and records allocator/RSS
