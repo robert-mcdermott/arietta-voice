@@ -7,6 +7,11 @@ version policy and the release procedure.
 
 ### Added
 
+- Isolated ONNX environment diagnostics with dependency/native-code fingerprints,
+  phonemization/inference/trimming timings and guarded conversation comparisons.
+  Reversed-order measurements did not reproduce the earlier trial-environment
+  slowdown; production dependencies and settings remain unchanged.
+
 - Opt-in MLX Kokoro adapter in the shared inference worker, explicit local model
   selection, dependency/asset diagnostics, and bounded materialized audio frames.
   A separate pinned trial environment supports grouped conversation benchmarks,

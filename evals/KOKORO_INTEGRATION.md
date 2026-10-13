@@ -189,6 +189,13 @@ need further controlled investigation; this experiment cannot attribute that
 difference to one package. The production reference was added specifically to
 avoid presenting the matched-trial gain as the expected production gain.
 
+Follow-up: the [ONNX environment investigation](ONNX_ENVIRONMENT_INVESTIGATION.md)
+reversed the comparison order and found trial ONNX 9.1% faster, rather than
+13.2% slower. Resident-model TTS probes differed by only 0.8% and produced
+identical audio. The original gap is not a reproducible dependency penalty;
+retain the numbers above as observations from this round, not a correction
+factor for future MLX measurements.
+
 MLX adds about **313 MiB** of steady active MLX allocation and **1,226 MiB** to
 the shared allocator peak. Active allocations were stable after the first turn
 within these short blocks. Worker RSS high-water values varied by process;

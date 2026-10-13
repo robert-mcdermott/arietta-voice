@@ -239,6 +239,9 @@ An [opt-in MLX integration trial](evals/KOKORO_INTEGRATION.md) now supports the
 shared inference worker and compares conversation latency and memory with the
 other models resident. Use its separate environment and temporary CLI overrides;
 the standard installation still defaults to ONNX.
+The [ONNX environment investigation](evals/ONNX_ENVIRONMENT_INVESTIGATION.md)
+checks the production/trial latency gap with repeated conversations and native
+stage probes; the earlier slowdown did not reproduce.
 
 The tracked [`config/arietta_voice.toml`](./config/arietta_voice.toml) provides
 shared defaults. Create private settings and a private persona before customizing:

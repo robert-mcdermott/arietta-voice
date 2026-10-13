@@ -267,6 +267,15 @@ pending longer workload and live playback/interruption
 validation. See [full integration results and reproduction](evals/KOKORO_INTEGRATION.md),
 including the production dependency control and remaining migration gates.
 
+**ONNX environment follow-up:** a reversed-order repeat completed 44 synthetic
+conversation turns. Trial ONNX was 9.1% faster at the median, reversing the earlier
+13.2% slowdown. Across 120 warm component probes, the ONNX implementation and
+corresponding audio hashes matched; with all four models loaded, median TTS
+latency differed by only 7.3 ms (0.8%). No dependency rollback is justified by
+these results. Keep environments isolated and use longer, counterbalanced
+measurements with host-state context before migration. See
+[the investigation and reproducible probes](evals/ONNX_ENVIRONMENT_INVESTIGATION.md).
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms
