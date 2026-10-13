@@ -16,6 +16,7 @@ from arietta_voice.audio import (
     MicrophoneStream,
     RawKeypressMonitor,
     UtteranceBuffer,
+    AudioReferenceBuffer,
     play_tts_stream,
     play_tts_stream_passive,
 )
@@ -242,7 +243,8 @@ class AriettaVoiceRuntime:
     async def _tts_stream(self, text: str):
         stream = speech_stream(text, infer=self._infer, worker=self.worker,
                                cancellation=self._turn_token or CancellationToken(),
-                               deadline=self._turn_deadline, on_wait=self._inference_wait)
+                               deadline=self._turn_deadline, on_wait=self._publish_status,
+                               playback_events=True)
         try:
             async for frame in stream:
                 yield frame
@@ -258,6 +260,7 @@ class AriettaVoiceRuntime:
             cancellation=self._turn_token,
             deadline=self._turn_deadline,
             chime_player=self.chime_player,
+            keypress_monitor=self._turn_keys,
             playback_level_callback=self._update_display_speech,
         )
         self.event_logger.log("assistant_audio_complete", interrupted=False)
@@ -288,6 +291,8 @@ class AriettaVoiceRuntime:
             cancellation=self._turn_token,
             deadline=self._turn_deadline,
             reference_seconds=self.config.audio.playback_reference_s,
+            pre_roll_ms=self.config.audio.pre_roll_ms,
+            aec_delay_ms=self.config.audio.aec_delay_ms,
             microphone=microphone,
             vad=self.vad,
             keypress_monitor=keypress_monitor,
@@ -297,7 +302,9 @@ class AriettaVoiceRuntime:
             barge_in_threshold_chunks=self.config.audio.barge_in_threshold_chunks,
             playback_level_callback=self._update_display_speech,
         )
-        self.event_logger.log("assistant_audio_complete", interrupted=playback.interrupted)
+        self.event_logger.log("assistant_audio_complete", interrupted=playback.interrupted,
+                              alignment_resets=playback.alignment_resets,
+                              output_underflows=playback.output_underflows)
         self._update_display_speech(0.0, False)
         self.set_state(next_state)
         return list(playback.buffered_chunks)
@@ -312,7 +319,8 @@ class AriettaVoiceRuntime:
         result = {}
         stream = speech_stream(infer=self._infer, worker=self.worker,
                                cancellation=self._turn_token or CancellationToken(),
-                               deadline=self._turn_deadline, on_wait=self._inference_wait,
+                               deadline=self._turn_deadline, on_wait=self._publish_status,
+                               playback_events=True,
                                request=self._chat_request(transcript), on_result=result.update)
         buffered = self._deliver_response('', microphone=microphone,
                                           keypress_monitor=keypress_monitor,
@@ -570,6 +578,10 @@ class AriettaVoiceRuntime:
         silence_limit = max(1, int(self.config.audio.silence_ms * self.config.audio.sample_rate /
                                    (self.config.audio.chunk_samples * 1000)))
         buffer = UtteranceBuffer(int(self.config.audio.max_utterance_s * self.config.audio.sample_rate))
+        pre_roll = AudioReferenceBuffer(max(1, int(self.config.audio.pre_roll_ms * self.config.audio.sample_rate / 1000)))
+        def clear_pre_roll():
+            pre_roll.samples = np.zeros(0, dtype=np.float32)
+            pre_roll.end = 0
         silent_chunks = 0
         discard_until_quiet = False
         observed_drops = microphone.dropped_chunks + microphone.input_overflows
@@ -578,14 +590,22 @@ class AriettaVoiceRuntime:
                 self.memory_jobs.suspend()
                 self._end_session(reason="idle_timeout", microphone=microphone, speak_goodbye=False)
                 buffer.clear()
+                clear_pre_roll()
                 silent_chunks = 0
             chunk = microphone.get(timeout=0.1)
             if chunk is None or len(chunk) != self.config.audio.chunk_samples:
+                if chunk is not None:
+                    buffer.clear()
+                    clear_pre_roll()
+                    discard_until_quiet = True
+                    silent_chunks = 0
+                    self.vad.reset()
                 continue
             drops = microphone.dropped_chunks + microphone.input_overflows
             if drops != observed_drops:
                 observed_drops = drops
                 buffer.clear()
+                clear_pre_roll()
                 discard_until_quiet = True
                 silent_chunks = 0
                 self.event_logger.log("audio_gap", dropped_chunks=drops)
@@ -602,7 +622,12 @@ class AriettaVoiceRuntime:
                         self.vad.reset()
                     continue
                 if not buffer.samples and not is_speech:
+                    if self.config.audio.pre_roll_ms:
+                        pre_roll.append(chunk)
                     continue
+                if not buffer.samples and len(pre_roll.samples):
+                    buffer.append(pre_roll.samples.copy())
+                    clear_pre_roll()
                 if not buffer.append(chunk):
                     self.utterances_discarded += 1
                     self.event_logger.log("utterance_limit", max_seconds=self.config.audio.max_utterance_s)
@@ -628,18 +653,22 @@ class AriettaVoiceRuntime:
                 if not result.buffered_chunks:
                     microphone.drain()
                 buffer.clear()
+                clear_pre_roll()
                 if result.end_session_requested:
                     self._end_session(reason="user_goodbye", microphone=microphone, speak_goodbye=False)
                 else:
                     for buffered in result.buffered_chunks:
                         if not buffer.append(buffered):
                             buffer.clear()
+                            discard_until_quiet = True
+                            self.utterances_discarded += 1
                             break
                 observed_drops = microphone.dropped_chunks + microphone.input_overflows
                 silent_chunks = 0
                 self.vad.reset()
             except Exception as exc:
                 buffer.clear()
+                clear_pre_roll()
                 silent_chunks = 0
                 discard_until_quiet = True
                 self._recover(exc, microphone)

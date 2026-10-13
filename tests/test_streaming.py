@@ -111,3 +111,48 @@ def test_stream_result_only_after_all_clauses_and_error_discards_partial_result(
             asyncio.run(consume())
             assert result['response'] == 'First. Second.'
         assert spoken == ['First.', 'Second.']
+
+
+@pytest.mark.parametrize('outcome', ['failure', 'cancel', 'finished_but_closing'])
+def test_player_aborts_before_pending_native_generator_cleanup(monkeypatch, outcome):
+    from arietta_voice import audio
+    from arietta_voice.worker import WorkerCancelled
+    played, aborted, closing = threading.Event(), threading.Event(), threading.Event()
+    token, calls, order = CancellationToken(), [], []
+    def close_worker(*args, **kwargs):
+        closing.set()
+        if not aborted.wait(1):
+            order.append('cleanup_before_abort')
+        order.append('worker_closed')
+    worker = Mock(pid=42, call=close_worker)
+    def infer(operation, payload=None, **kwargs):
+        if operation == 'tts_next':
+            calls.append(True)
+            if len(calls) == 1:
+                return np.ones(512, dtype=np.float32), 24000
+            assert played.wait(1)
+            if outcome == 'failure':
+                raise RuntimeError('synthetic provider failure')
+            return None
+    device = Mock(latency=.1)
+    def write(_):
+        played.set()
+        if outcome == 'cancel':
+            token.cancel()
+    def abort():
+        order.append('abort')
+        aborted.set()
+    device.write.side_effect, device.abort.side_effect = write, abort
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: device)
+    stream = speech_stream('Synthetic', infer=infer, worker=worker, cancellation=token,
+                           playback_events=True)
+    options = dict(tts_stream=stream, microphone=None, vad=None, chime_player=Mock(),
+                   keypress_monitor=Mock(pressed=lambda: outcome=='finished_but_closing' and closing.is_set()),
+                   sample_rate=16000, use_aec=False, barge_in_threshold_chunks=3, cancellation=token)
+    if outcome == 'finished_but_closing':
+        assert audio.play_tts_stream(**options).interrupted
+    else:
+        with pytest.raises(WorkerCancelled if outcome=='cancel' else RuntimeError):
+            audio.play_tts_stream(**options)
+    assert order == ['abort', 'worker_closed']
+    assert not any(t.name == 'arietta-speech-producer' for t in threading.enumerate())

@@ -7,6 +7,10 @@ version policy and the release procedure.
 
 ### Added
 
+- Timestamped microphone capture and bounded pre-roll for listening and voice
+  interruption, with documented `audio.pre_roll_ms` and `audio.aec_delay_ms`
+  settings. Playback events report alignment resets and output underflows.
+
 - Isolated Moonshine 0.1.5 experiment comparing batch/streaming transcription,
   language catalogs, model assets and terminology hints against locked 0.0.54.
   Synthetic fixtures, bounded subprocess runs and partial/final/error regression
@@ -59,6 +63,11 @@ version policy and the release procedure.
 - Project review, phased roadmap, and release/versioning instructions.
 
 ### Changed
+
+- AEC uses a timeline of submitted playback blocks and continuous 10 ms frames,
+  preserving clause gaps and cleaned interruption audio. Keyboard cancellation
+  now covers generation gaps and final playback draining; capture loss resets
+  alignment and prevents splicing discontinuous follow-up audio.
 
 - Memory extraction/consolidation use an independent background deadline and no
   longer delay return to listening or extend the interactive turn duration. Jobs

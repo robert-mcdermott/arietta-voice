@@ -287,9 +287,10 @@ input and 512-sample chunks.
 
 ### Audio limits and failure recovery
 
-These defaults are included in all three tracked TOML templates. Override only
-the settings you want in your private `.local.toml`; restart the voice runtime
-and API to apply them.
+These defaults are defined in the application and documented in the example
+and distribution TOML configs. Existing configs inherit omitted settings.
+Override only the settings you want in your private `.local.toml`; restart the
+voice runtime and API to apply them.
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
@@ -298,6 +299,8 @@ and API to apply them.
 | `audio.recording_queue_max_chunks` | `256` | Bounded queue for the background WAV writer. |
 | `audio.max_recording_s` | `3600.0` | Maximum saved audio per `--record` run. Listening continues after the limit. |
 | `audio.playback_reference_s` | `4.0` | Rolling echo-cancellation reference, rather than the entire response. |
+| `audio.pre_roll_ms` | `200.0` | Up to 500 ms of local audio before detected speech; `0` disables it. Barge-in rounds up to a 32 ms capture chunk. Included in the utterance limit. |
+| `audio.aec_delay_ms` | `0.0` | Additional measured acoustic/device delay, 0–500 ms, beyond reported output latency. No automatic calibration. |
 | `runtime.turn_timeout_s` | `60.0` | Shared budget for STT, chat/tools and speech generation/playback. Also limits web chat. Background memory gets its own budget, capped at 30 seconds. |
 | `runtime.endpoint_timeout_s` | `5.0` | Separate Smart Turn deadline for each endpoint check. |
 | `runtime.startup_timeout_s` | `300.0` | Model-worker warmup deadline; increase for slow first-run downloads. |
@@ -307,6 +310,21 @@ submitted as a truncated command. Recordings stream to an owner-only WAV file
 instead of accumulating in RAM. A slow disk can drop recording chunks; the
 dashboard reports dropped chunks, recording limits, and write failures. Such
 recordings may be incomplete. A forced process kill can leave an unfinished WAV.
+
+Capture chunks retain their ADC timestamps. AEC aligns them with a bounded
+timeline of submitted speaker blocks, including gaps between clauses, and
+processes continuous 10 ms frames. Its 10 ms framing delay is flushed into the
+cleaned interruption prefix so speech is not lost at handoff. Pre-roll stays
+in bounded RAM and is cleared at turn/session boundaries and capture gaps;
+existing explicit recording remains separate. Voice barge-in requires AEC to be
+enabled and the configured consecutive-speech threshold; keyboard cancellation
+also works before audio starts, between clauses and during final device draining.
+
+Output timing is estimated from blocking PortAudio writes, reported device
+latency and queued sample duration. It is not a measured DAC timestamp or an
+acoustic guarantee. Capture gaps/output underflows reset alignment; playback
+completion events include reset/underflow counts without audio or text. See
+[AEC and interruption validation](evals/AEC_VALIDATION.md) for evidence and limits.
 
 Heavy STT, endpoint, chat, tool, and TTS work runs in a persistent spawned process
 with one operation at a time. On timeout, crash, or model/tool exception, that

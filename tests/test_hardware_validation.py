@@ -132,6 +132,15 @@ def test_partial_event_is_reported_as_failure_without_disclosing_text(tmp_path):
     assert "synthetic private" not in json.dumps(report)
 
 
+def test_playback_alignment_and_underflow_counts_are_preserved(tmp_path):
+    rows = [dict(event='assistant_audio_complete', interrupted=True, alignment_resets=2, output_underflows=1),
+            dict(event='assistant_audio_complete', interrupted=False, alignment_resets=1, output_underflows=0)]
+    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
+    report = validation.summarize_events(tmp_path)
+    assert report['alignment_resets'] == 3
+    assert report['output_underflows'] == report['voice_interruptions'] == 1
+
+
 def test_cleanup_never_signals_an_unrelated_process_group(monkeypatch):
     process = Mock(pid=123)
     process.is_alive.side_effect = [True, False]

@@ -118,6 +118,10 @@ enabled = []
 
 
 @pytest.mark.parametrize("section, setting", [
+    ("audio", 'pre_roll_ms = -1'),
+    ("audio", 'pre_roll_ms = 501'),
+    ("audio", 'aec_delay_ms = nan'),
+    ("audio", 'aec_delay_ms = 501'),
     ("assistant", 'max_history_turns = -1'),
     ("assistant", 'max_history_turns = 1.5'),
     ("assistant", 'max_history_turns = true'),

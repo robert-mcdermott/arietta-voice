@@ -1,5 +1,6 @@
 """Bounded speech handoff with serialized token-generation and TTS ownership."""
 import threading
+import asyncio
 
 from arietta_voice.turns import (
     CancellationToken, BoundedChannel, ChannelClosed, ChannelEmpty,
@@ -9,12 +10,14 @@ from arietta_voice.worker import WorkerFailure
 
 
 async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None, on_wait=None,
-                        request=None, on_result=None):
+                        request=None, on_result=None, playback_events=False):
     """Prefetch at most eight PCM frames with one serialized inference producer.
 
     Pull a clause, synthesize it, then resume tokens while queued audio plays.
     Model and TTS operations stay on one inference owner. A local token stops
     prefetch without cancelling a successful turn's later memory update.
+    With playback_events, (None, None) polls and (exception, None) failures let
+    the player stop the device before calling aclose() and joining the producer.
     """
     stop = CancellationToken()
     cancellation.subscribe(stop.cancel)
@@ -68,8 +71,14 @@ async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None
         producer.start()
         while True:
             try:
-                frame = audio.get(on_wait=on_wait, timeout=.05 if request is not None else None)
+                frame = audio.get(on_wait=on_wait, timeout=.05)
             except ChannelClosed:
+                if playback_events:
+                    # Native generator closure can still be pending. Keep the
+                    # player in control of the device during that wait.
+                    while producer.is_alive():
+                        yield None, None
+                        await asyncio.sleep(.01)
                 return
             except ChannelEmpty:
                 # Let playback poll speech interruption even between clauses.
@@ -77,6 +86,12 @@ async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None
                 continue
             stop.check(deadline)
             yield frame
+    except Exception as exc:
+        if playback_events:
+            # Deliver failure before joining the producer. The player raises it,
+            # aborts its device, then closes this generator and waits for cleanup.
+            yield exc, None
+        raise
     finally:
         stop.cancel()
         if producer is not None:

@@ -42,6 +42,10 @@ max_utterance_s = 30.0
 recording_queue_max_chunks = 256
 max_recording_s = 3600.0
 playback_reference_s = 4.0
+# Listening pre-roll; barge-in pre-roll rounds up to a 32 ms capture chunk.
+pre_roll_ms = 200.0
+# Extra acoustic/device delay after the reported output latency; tune only with measurements.
+aec_delay_ms = 0.0
 
 [runtime]
 # Shared STT + chat/tools + speech + optional memory budget for each voice turn.

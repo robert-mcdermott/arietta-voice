@@ -68,6 +68,7 @@ def collect_environment(config, root):
         "audio": {"sample_rate": config.audio.sample_rate, "chunk_samples": config.audio.chunk_samples,
                   "aec": config.audio.aec_enabled, "smart_turn": config.audio.smart_turn_enabled,
                   "tts": config.audio.tts_enabled,
+                  "pre_roll_ms": config.audio.pre_roll_ms, "aec_delay_ms": config.audio.aec_delay_ms,
                   "tts_speed": config.audio.tts_speed, "queue_max_chunks": config.audio.queue_max_chunks},
         "overrides": ["synthetic persona and default wake phrases", "no knowledge, memory or tools",
                       "content logging off; no recordings", "temperature 0"],
@@ -111,6 +112,7 @@ def collect_environment(config, root):
 def summarize_events(directory):
     counts, reasons = Counter(), Counter()
     interruptions, content_fields, invalid_records = 0, False, 0
+    alignment_resets, output_underflows = 0, 0
     for path in directory.glob("events.jsonl*"):
         if not path.is_file() or path.name.endswith(".lock"):
             continue
@@ -126,9 +128,13 @@ def summarize_events(directory):
             if event.get("event") == "session_ended":
                 reasons[event.get("reason", "unknown")] += 1
             interruptions += event.get("event") == "assistant_audio_complete" and event.get("interrupted", False)
+            if event.get("event") == "assistant_audio_complete":
+                alignment_resets += event.get("alignment_resets", 0)
+                output_underflows += event.get("output_underflows", 0)
             content_fields |= bool({"text", "transcript", "response", "prompt", "content"}.intersection(event))
     return {"event_counts": dict(counts), "session_end_reasons": dict(reasons),
             "voice_interruptions": interruptions, "content_fields_present": content_fields,
+            "alignment_resets": alignment_resets, "output_underflows": output_underflows,
             "invalid_records": invalid_records}
 
 

@@ -109,6 +109,8 @@ class AudioConfig:
     recording_queue_max_chunks: int = 256
     max_recording_s: float = 3600.0
     playback_reference_s: float = 4.0
+    pre_roll_ms: float = 200.0
+    aec_delay_ms: float = 0.0
 
 
 @dataclass(slots=True)
@@ -317,6 +319,8 @@ def load_config(path: Path | None = None) -> AppConfig:
             recording_queue_max_chunks=audio.get("recording_queue_max_chunks", base.audio.recording_queue_max_chunks),
             max_recording_s=float(audio.get("max_recording_s", base.audio.max_recording_s)),
             playback_reference_s=float(audio.get("playback_reference_s", base.audio.playback_reference_s)),
+            pre_roll_ms=float(audio.get("pre_roll_ms", base.audio.pre_roll_ms)),
+            aec_delay_ms=float(audio.get("aec_delay_ms", base.audio.aec_delay_ms)),
         ),
         models=ModelConfig(
             chat_provider=str(models.get("chat_provider", base.models.chat_provider)).strip(),
@@ -450,6 +454,8 @@ def validate_config(config: AppConfig) -> AppConfig:
     number("audio.max_utterance_s", config.audio.max_utterance_s, 1, 120)
     number("audio.max_recording_s", config.audio.max_recording_s, 1, 86400)
     number("audio.playback_reference_s", config.audio.playback_reference_s, 1, 30)
+    number("audio.pre_roll_ms", config.audio.pre_roll_ms, 0, 500)
+    number("audio.aec_delay_ms", config.audio.aec_delay_ms, 0, 500)
     number("runtime.turn_timeout_s", config.runtime.turn_timeout_s, 1, 600)
     number("runtime.endpoint_timeout_s", config.runtime.endpoint_timeout_s, 0.1, 30)
     number("runtime.startup_timeout_s", config.runtime.startup_timeout_s, 1, 1800)

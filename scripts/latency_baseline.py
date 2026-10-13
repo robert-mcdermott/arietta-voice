@@ -246,6 +246,10 @@ def run_child(config, directory, turns, audible, idle_seconds):
                 self.started = time.monotonic()
                 self.stream = original_output(*args, **kwargs)
 
+            @property
+            def latency(self):
+                return self.stream.latency
+
             def start(self):
                 self.stream.start()
                 microphone.row['output_open_ms'] = (time.monotonic() - self.started) * 1000

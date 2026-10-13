@@ -59,6 +59,12 @@ cooperative stream closure, forced termination of stuck native work, independent
 failure counters, atomic proposals, intervening-edit conflicts and shutdown.
 They use synthetic text/files and do not change personal memory or settings.
 
+Audio regressions cover timestamp alignment, continuous 10 ms AEC framing,
+bounded pre-roll and cleaned interruption handoff, discontinuity/underflow
+resets, and abort-before-producer-cleanup during cancellation/failure. The
+[AEC validation report](AEC_VALIDATION.md) records the separate native and live
+checks, observed queue drops/underflow, and acoustic measurement limits.
+
 The opt-in [Moonshine upgrade experiment](MOONSHINE_EXPERIMENT.md) runs real
 decoders in a separate environment against fixed synthetic WAV files. CI runs
 only its synthetic contracts: partial replacement, final snapshot deduplication,

@@ -196,6 +196,19 @@ class ScriptedMicrophone:
         pass
 
 
+@pytest.mark.parametrize('pre_roll_ms,expected', [(0, [1, 0]), (64, [.2, .3, 1, 0])])
+def test_listening_keeps_only_bounded_pre_roll(runtime, pre_roll_ms, expected):
+    from arietta_voice.models import UtteranceResult
+    runtime.config.audio.pre_roll_ms = pre_roll_ms
+    runtime.config.audio.silence_ms = 32
+    runtime.vad.probability.side_effect = lambda chunk: float(chunk[0] >= 1)
+    runtime.process_utterance = Mock(return_value=UtteranceResult(buffered_chunks=[]))
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([.1, .2, .3, 1, 0]), Mock())
+    recorded = runtime.process_utterance.call_args.args[0]
+    np.testing.assert_allclose(recorded[::512], expected)
+
+
 @pytest.mark.parametrize("prefix", [[1, 1, 1, 1, 0], [1, 2, 1, 0]])
 def test_discard_long_or_gapped_speech_until_quiet_then_accept_new_turn(runtime, prefix):
     from arietta_voice.models import UtteranceResult

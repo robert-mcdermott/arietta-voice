@@ -203,6 +203,20 @@ require live capture/backpressure validation. Production dependencies and the
 batch adapter remain unchanged; hardware/language coverage and migration gates
 must pass before promotion. Upstream labels this non-prerelease package alpha.
 
+**AEC/pre-roll/cancellation status (October 12, 2026):** the first part of item 6
+is implemented: ADC-timestamped capture, a bounded playback-reference timeline,
+continuous 10 ms AEC framing, configurable pre-roll, cleaned interruption
+handoff, alignment resets on gaps/underflow, and keyboard cancellation during
+generation gaps and final device draining. Private settings remain unchanged.
+[Validation and timing limitations](evals/AEC_VALIDATION.md) distinguish software
+contracts from physical interruption latency. Device selection, sleep/reconnect,
+measured acoustic calibration and the 300 ms p95 target remain open.
+The five-minute isolated Jabra check passed operator-confirmed early/later
+interruption, quiet playback and farewell checks, with no turn failures. It
+recorded application queue drops and one output underflow, retained as load-test
+follow-ups. A final-code muted three-turn smoke passed with zero underflows or
+failures. The synthetic suite now passes 460 tests.
+
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.
 2. Extend the Phase 1 serialized inference workers with cancellation tokens and bounded text/audio

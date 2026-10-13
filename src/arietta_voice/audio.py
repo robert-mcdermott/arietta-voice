@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from collections import deque
 import threading
+import math
 import os
 from pathlib import Path
 import queue
@@ -152,6 +153,12 @@ class RecordingWriter:
             self.error = "RecordingCloseTimeout"
 
 
+@dataclass(slots=True)
+class CaptureChunk:
+    samples: np.ndarray
+    captured_at: float
+
+
 class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
     def __init__(self, sample_rate: int, chunk_samples: int, *, channels: int = 1,
                  record_path: Path | None = None, max_queue_chunks: int = 64,
@@ -160,21 +167,29 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
             raise ValueError("Microphone queue limit must be positive")
         self.sample_rate, self.chunk_samples, self.channels = sample_rate, chunk_samples, channels
         self.record_path = record_path
-        self._audio_q: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_queue_chunks)
+        self._audio_q: queue.Queue[CaptureChunk] = queue.Queue(maxsize=max_queue_chunks)
         self.dropped_chunks = 0
         self.input_overflows = 0
         self._recorder = RecordingWriter(record_path, sample_rate, recording_queue_max_chunks, max_recording_s) if record_path else None
         self._stream = None
 
     def _callback(self, indata, frames, time_info, status) -> None:
-        del frames, time_info
         if status:
             self.input_overflows += 1
         chunk = indata[:, 0].copy()
+        now = time.monotonic()
+        # PortAudio times share a device clock; translate its ADC age into the
+        # monotonic domain used by playback. Never infer capture time at dequeue.
+        captured_at = now - len(chunk) / self.sample_rate
+        if time_info is not None:
+            age = float(time_info.currentTime - time_info.inputBufferAdcTime)
+            if math.isfinite(age) and 0 <= age <= 10:
+                captured_at = now - age
+        packet = CaptureChunk(chunk, captured_at)
         if self._recorder is not None:
             self._recorder.append(chunk)
         try:
-            self._audio_q.put_nowait(chunk)
+            self._audio_q.put_nowait(packet)
         except queue.Full:
             # Preserve recent audio without blocking PortAudio's callback.
             try:
@@ -183,7 +198,7 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
             except queue.Empty:
                 pass
             try:
-                self._audio_q.put_nowait(chunk)
+                self._audio_q.put_nowait(packet)
             except queue.Full:
                 self.dropped_chunks += 1
 
@@ -222,11 +237,14 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
 
     def get(self, timeout: float | None = None) -> np.ndarray | None:
         try:
-            return self._audio_q.get(timeout=timeout)
+            return self._audio_q.get(timeout=timeout).samples
         except queue.Empty:
             return None
 
     def get_nowait(self) -> np.ndarray:
+        return self.get_capture_nowait().samples
+
+    def get_capture_nowait(self) -> CaptureChunk:
         return self._audio_q.get_nowait()
 
     def empty(self) -> bool:
@@ -280,6 +298,39 @@ class AudioReferenceBuffer:
         return result
 
 
+class TimedAudioReferenceBuffer:
+    """Only submitted output, on a monotonic timeline; gaps remain silence."""
+    def __init__(self, max_seconds: float) -> None:
+        self.max_seconds = max_seconds
+        self.blocks = deque()
+
+    def clear(self) -> None:
+        self.blocks.clear()
+
+    def append(self, samples: np.ndarray, rate: int, started_at: float) -> None:
+        end = started_at + len(samples) / rate
+        # Bound even a single oversized producer block.
+        samples = samples[-max(1, int(self.max_seconds * rate)):].copy()
+        started_at = end - len(samples) / rate
+        self.blocks.append((started_at, rate, samples))
+        while self.blocks and self.blocks[0][0] < end - self.max_seconds:
+            start, old_rate, old = self.blocks.popleft()
+            skip = max(0, math.ceil((end - self.max_seconds - start) * old_rate))
+            if skip < len(old):
+                self.blocks.appendleft((start + skip / old_rate, old_rate, old[skip:].copy()))
+                break
+
+    def read(self, captured_at: float, length: int, sample_rate: int) -> np.ndarray:
+        times = captured_at + np.arange(length) / sample_rate
+        result = np.zeros(length, dtype=np.float32)
+        for start, rate, samples in self.blocks:
+            selected = (times >= start) & (times < start + len(samples) / rate)
+            if selected.any():
+                result[selected] = np.interp((times[selected] - start) * rate,
+                                             np.arange(len(samples)), samples)
+        return result
+
+
 class RawKeypressMonitor(AbstractContextManager["RawKeypressMonitor"]):
     def __init__(self) -> None:
         self.enabled = os.name == "posix" and sys.stdin.isatty()
@@ -308,7 +359,9 @@ def make_aec_processor(sample_rate: int):
     from livekit.rtc import AudioFrame
     from livekit.rtc.apm import AudioProcessingModule
 
-    frame_width = 160
+    if sample_rate != 16000:
+        raise ValueError("AEC requires 16 kHz input")
+    frame_width = sample_rate // 100
 
     def to_i16(chunk: np.ndarray) -> np.ndarray:
         scaled = (chunk * 32767).clip(-32768, 32767).astype(np.int16)
@@ -325,19 +378,46 @@ def make_aec_processor(sample_rate: int):
         )
 
     apm = AudioProcessingModule(echo_cancellation=True, noise_suppression=True)
+    pending_mic = np.zeros(0, dtype=np.float32)
+    pending_ref = np.zeros(0, dtype=np.float32)
+    # One fixed frame of algorithmic delay, rather than padding each 32ms chunk
+    # and incorrectly advancing the native AEC clock by 40ms.
+    output = np.zeros(frame_width, dtype=np.float32)
+
+    def process_frame(mic, ref):
+        mic_frame = to_frame(to_i16(mic))
+        apm.process_reverse_stream(to_frame(to_i16(ref)))
+        # Reference was already aligned to capture time before entering APM.
+        apm.set_stream_delay_ms(0)
+        apm.process_stream(mic_frame)
+        return np.frombuffer(bytes(mic_frame.data), dtype=np.int16).astype(np.float32) / 32767
 
     def process(mic: np.ndarray, reference: np.ndarray) -> np.ndarray:
-        cleaned = np.zeros_like(mic)
-        for offset in range(0, len(mic), frame_width):
-            mic_piece = mic[offset : offset + frame_width]
-            ref_piece = reference[offset : offset + frame_width]
-            mic_frame = to_frame(to_i16(mic_piece))
-            apm.process_reverse_stream(to_frame(to_i16(ref_piece)))
-            apm.process_stream(mic_frame)
-            cleaned[offset : offset + len(mic_piece)] = (
-                np.frombuffer(bytes(mic_frame.data), dtype=np.int16).astype(np.float32) / 32767
-            )[: len(mic_piece)]
+        nonlocal pending_mic, pending_ref, output
+        if len(mic) != len(reference):
+            raise ValueError("AEC inputs must have matching lengths")
+        pending_mic = np.concatenate((pending_mic, mic))
+        pending_ref = np.concatenate((pending_ref, reference))
+        frames = len(pending_mic) // frame_width
+        pieces = [output]
+        for offset in range(0, frames * frame_width, frame_width):
+            pieces.append(process_frame(pending_mic[offset:offset+frame_width],
+                                        pending_ref[offset:offset+frame_width]))
+        pending_mic = pending_mic[frames*frame_width:].copy()
+        pending_ref = pending_ref[frames*frame_width:].copy()
+        output = np.concatenate(pieces)
+        cleaned, output = output[:len(mic)].copy(), output[len(mic):].copy()
         return cleaned
+
+    def flush():
+        nonlocal pending_mic, pending_ref, output
+        if len(pending_mic):
+            output = np.concatenate((output, process_frame(pending_mic, pending_ref)[:len(pending_mic)]))
+        result = output.copy()
+        pending_mic = pending_ref = output = np.zeros(0, dtype=np.float32)
+        return result
+
+    process.flush = flush
 
     return process
 
@@ -355,6 +435,8 @@ def _get_reference_segment(tts_audio: np.ndarray, offset: int, length: int) -> n
 class PlaybackResult:
     interrupted: bool
     buffered_chunks: list[np.ndarray] = field(default_factory=list)
+    alignment_resets: int = 0
+    output_underflows: int = 0
 
 
 def _playback_level_from_chunk(playback_chunk: np.ndarray) -> float:
@@ -364,8 +446,9 @@ def _playback_level_from_chunk(playback_chunk: np.ndarray) -> float:
 
 
 def play_tts_stream_passive(*, tts_stream, chime_player: ChimePlayer,
-                            playback_level_callback=None, deadline: float | None = None, cancellation=None) -> None:
-    play_tts_stream(tts_stream=tts_stream, microphone=None, vad=None, keypress_monitor=None,
+                            playback_level_callback=None, deadline: float | None = None, cancellation=None,
+                            keypress_monitor=None) -> None:
+    play_tts_stream(tts_stream=tts_stream, microphone=None, vad=None, keypress_monitor=keypress_monitor,
                     chime_player=chime_player, sample_rate=16000, use_aec=False,
                     barge_in_threshold_chunks=5, playback_level_callback=playback_level_callback,
                     deadline=deadline, cancellation=cancellation)
@@ -374,47 +457,83 @@ def play_tts_stream_passive(*, tts_stream, chime_player: ChimePlayer,
 def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_player: ChimePlayer,
                     sample_rate: int, use_aec: bool, barge_in_threshold_chunks: int,
                     playback_level_callback=None, reference_seconds: float = 4.0,
-                    deadline: float | None = None, cancellation=None) -> PlaybackResult:
+                    deadline: float | None = None, cancellation=None,
+                    pre_roll_ms: float = 0, aec_delay_ms: float = 0) -> PlaybackResult:
     from contextlib import ExitStack
     from arietta_voice.worker import WorkerTimeout
 
     if microphone is not None:
         microphone.drain()
     aec_process = make_aec_processor(sample_rate) if use_aec else None
-    reference = AudioReferenceBuffer(int(reference_seconds * sample_rate))
-    speech_chunks = deque(maxlen=barge_in_threshold_chunks)
+    reference = TimedAudioReferenceBuffer(reference_seconds)
+    speech_chunks = deque(maxlen=barge_in_threshold_chunks + math.ceil(pre_roll_ms * sample_rate / 512000))
+    consecutive_speech = 0
     playback_started = None
-    mic_offset = 0
     observed_drops = None
+    capture_end = None
+    output_end = None
+    alignment_resets = 0
+    output_underflows = 0
+
+    def reset_capture():
+        nonlocal aec_process, consecutive_speech, capture_end, alignment_resets
+        alignment_resets += 1
+        speech_chunks.clear()
+        consecutive_speech = 0
+        capture_end = None
+        if vad is not None:
+            vad.reset()
+        if use_aec:
+            aec_process = make_aec_processor(sample_rate)
 
     def check_barge_in() -> tuple[bool, list[np.ndarray]]:
-        nonlocal mic_offset, observed_drops
-        if aec_process is None or playback_started is None or time.monotonic() - playback_started < 0.5:
+        nonlocal observed_drops, capture_end, consecutive_speech
+        if keypress_monitor is not None and keypress_monitor.pressed():
+            return True, []
+        if aec_process is None or playback_started is None or microphone is None:
             return False, []
         drops = microphone.dropped_chunks + microphone.input_overflows
         if drops != observed_drops:
             observed_drops = drops
             microphone.drain()
-            speech_chunks.clear()
-            mic_offset = int((time.monotonic() - playback_started) * sample_rate)
+            reset_capture()
             return False, []
-        while microphone is not None:
+        # Bound work per poll even when capture continues while VAD runs.
+        for _ in range(64):
             try:
-                chunk = microphone.get_nowait()
+                if hasattr(type(microphone), 'get_capture_nowait'):
+                    packet = microphone.get_capture_nowait()
+                    chunk, captured_at = packet.samples, packet.captured_at
+                else:
+                    chunk = microphone.get_nowait()
+                    captured_at = time.monotonic() - len(chunk) / sample_rate
             except queue.Empty:
                 break
-            cleaned = aec_process(chunk, reference.read(mic_offset, len(chunk)))
-            mic_offset += len(chunk)
+            if len(chunk) != 512:
+                reset_capture()
+                continue
+            if capture_end is not None and abs(captured_at - capture_end) > .02:
+                reset_capture()
+            capture_end = captured_at + len(chunk) / sample_rate
+            if captured_at < playback_started or time.monotonic() - capture_end > reference_seconds:
+                reset_capture()
+                continue
+            cleaned = aec_process(chunk, reference.read(captured_at - aec_delay_ms / 1000,
+                                                       len(chunk), sample_rate))
+            speech_chunks.append(cleaned.copy())
             if vad.probability(cleaned.astype(np.float32)) > 0.8:
-                speech_chunks.append(chunk)
-                if len(speech_chunks) >= barge_in_threshold_chunks:
-                    return True, list(speech_chunks)
+                consecutive_speech += 1
+                if consecutive_speech >= barge_in_threshold_chunks:
+                    buffered = list(speech_chunks)
+                    if hasattr(aec_process, 'flush'):
+                        buffered.append(aec_process.flush())
+                    return True, buffered
             else:
-                speech_chunks.clear()
+                consecutive_speech = 0
         return False, []
 
     async def _play() -> PlaybackResult:
-        nonlocal playback_started, observed_drops
+        nonlocal playback_started, observed_drops, output_end, output_underflows
         output_stream = None
         buffered_chunks: list[np.ndarray] = []
         interrupted = False
@@ -425,6 +544,8 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     cancellation.check()
                 if deadline is not None and time.monotonic() >= deadline:
                     raise WorkerTimeout("Speech playback exceeded the turn time limit")
+                if isinstance(chunk_samples, Exception):
+                    raise chunk_samples
                 if chunk_samples is None:
                     voice_interrupt, buffered_chunks = check_barge_in()
                     if voice_interrupt:
@@ -443,20 +564,15 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     if vad is not None:
                         vad.reset()
                     playback_started = time.monotonic()
-                if aec_process is not None:
-                    positions = np.arange(0, len(chunk_samples), sr / sample_rate)
-                    reference.append(np.interp(positions, np.arange(len(chunk_samples)), chunk_samples).astype(np.float32))
+                elif sr != output_rate:
+                    raise ValueError("Sample rate changed during playback")
+                output_rate = sr
                 frame = chunk_samples.reshape(-1, 1)
                 for offset in range(0, len(frame), 1024):
                     if cancellation is not None:
                         cancellation.check()
                     if deadline is not None and time.monotonic() >= deadline:
                         raise WorkerTimeout("Speech playback exceeded the turn time limit")
-                    if keypress_monitor is not None and keypress_monitor.pressed():
-                        interrupted = True
-                        if cancellation is not None:
-                            cancellation.cancel()
-                        break
                     voice_interrupt, buffered_chunks = check_barge_in()
                     if voice_interrupt:
                         interrupted = True
@@ -466,11 +582,42 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     playback_chunk = frame[offset:offset + 1024]
                     if playback_level_callback is not None:
                         playback_level_callback(_playback_level_from_chunk(playback_chunk), True)
-                    output_stream.write(playback_chunk)
+                    # Blocking PortAudio does not expose DAC timestamps. Estimate
+                    # presentation from reported latency and queued sample duration,
+                    # and preserve real gaps between clauses. Never stage an entire
+                    # future TTS chunk in the rolling echo reference.
+                    latency = output_stream.latency
+                    latency = float(latency) if isinstance(latency, (int, float)) else 0.0
+                    if not math.isfinite(latency) or latency < 0:
+                        raise ValueError("Invalid output latency")
+                    presented_at = max(time.monotonic() + latency, output_end or 0)
+                    underflow = output_stream.write(playback_chunk)
+                    output_end = presented_at + len(playback_chunk) / sr
+                    if underflow is True:
+                        output_underflows += 1
+                        reference.clear()
+                        reset_capture()
+                        output_end = None
+                    elif aec_process is not None:
+                        reference.append(playback_chunk[:, 0], sr, presented_at)
                 if interrupted:
                     break
+            # Remain interruptible while the final submitted samples are still
+            # queued at the device; stop() itself would otherwise block this poll.
+            while not interrupted and output_end is not None and time.monotonic() < output_end:
+                if cancellation is not None:
+                    cancellation.check()
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise WorkerTimeout("Speech playback exceeded the turn time limit")
+                interrupted, buffered_chunks = check_barge_in()
+                if interrupted:
+                    if cancellation is not None:
+                        cancellation.cancel()
+                    break
+                time.sleep(.01)
             completed = True
-            return PlaybackResult(interrupted=interrupted, buffered_chunks=buffered_chunks)
+            return PlaybackResult(interrupted=interrupted, buffered_chunks=buffered_chunks,
+                                  alignment_resets=alignment_resets, output_underflows=output_underflows)
         finally:
             # Release/abort the device before waiting for inference cancellation.
             # Generator cleanup still runs even if a device cleanup raises.
@@ -490,5 +637,11 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
             finally:
                 if hasattr(tts_stream, "aclose"):
                     await tts_stream.aclose()
+                # Generator shutdown may take long enough for capture to overflow.
+                # Never splice a preserved prefix onto discontinuous later audio.
+                if buffered_chunks and microphone is not None:
+                    if microphone.dropped_chunks + microphone.input_overflows != observed_drops:
+                        buffered_chunks.clear()
+                        microphone.drain()
 
     return asyncio.run(_play())

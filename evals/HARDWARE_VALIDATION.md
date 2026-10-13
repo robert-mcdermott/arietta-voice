@@ -36,6 +36,12 @@ interrupt to terminate/kill also cover native calls that do not return. Only
 the test's owned process group is signalled. The harness caps each run at 60
 minutes; eight-hour and 24-hour release soaks need a separate longer-run plan.
 
+For the Phase 2 AEC/pre-roll changes and completed operator interruption checks,
+see [AEC validation](AEC_VALIDATION.md). Hardware reports include the configured
+pre-roll/delay and playback alignment-reset/output-underflow totals. Existing
+live gates do not require zero application queue drops or output underflows;
+review these counts separately before claiming glitch-free playback.
+
 ## Isolation and artifacts
 
 The harness reads the selected config, then builds a separate configuration under
