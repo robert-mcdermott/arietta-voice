@@ -7,6 +7,11 @@ version policy and the release procedure.
 
 ### Added
 
+- Isolated Moonshine 0.1.5 experiment comparing batch/streaming transcription,
+  language catalogs, model assets and terminology hints against locked 0.0.54.
+  Synthetic fixtures, bounded subprocess runs and partial/final/error regression
+  tests accompany the measured upgrade assessment; production STT is unchanged.
+
 - Bounded background memory jobs after delivered voice responses, scheduled during
   quiet listening on the existing model worker. New speech takes priority; memory
   queue, completion, cancellation, failure, drop and conflict counters are exposed.

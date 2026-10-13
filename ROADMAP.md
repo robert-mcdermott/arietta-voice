@@ -192,6 +192,17 @@ the background, then answered the next synthetic chat on the same worker with
 zero restarts. Enqueueing took 0.04 ms in that check. Only a temporary synthetic
 memory file was written; this is a functional check, not a latency percentile.
 
+**Moonshine experiment status (October 12, 2026):** the isolated portion of item
+5 is complete. A separate pinned 0.1.5 environment exercises batch and paced
+streaming against the same ten synthetic fixtures as 0.0.54, plus explicit
+keyterms and context-derived hints. Finalization, silence, partial revisions,
+language defaults and asset changes are documented in
+[the experiment report](evals/MOONSHINE_EXPERIMENT.md). The candidate remains
+experimental: no normalized accuracy gain was observed, and chunk-feed delays
+require live capture/backpressure validation. Production dependencies and the
+batch adapter remain unchanged; hardware/language coverage and migration gates
+must pass before promotion. Upstream labels this non-prerelease package alpha.
+
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.
 2. Extend the Phase 1 serialized inference workers with cancellation tokens and bounded text/audio
@@ -199,8 +210,8 @@ memory file was written; this is a functional check, not a latency percentile.
 3. Extend the MLX and Bedrock adapters with structured streaming events. Send
    speakable clauses to Kokoro while generation continues; withhold tool payloads.
 4. Move memory work after first response delivery and off the interactive path.
-5. Migrate Moonshine in an isolated experiment from `0.0.54` to a chosen stable
-   streaming release, covering asset formats, language selection, partial/final
+5. Evaluate Moonshine in an isolated experiment from `0.0.54` to a pinned
+   streaming candidate, covering asset formats, language selection, partial/final
    transcript semantics, and terminology hints. Retain the old path until validated.
 6. Improve AEC alignment, pre-roll capture, and interruption cancellation. Add
    input/output device selection and sleep/reconnect handling.

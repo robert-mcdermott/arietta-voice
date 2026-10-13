@@ -214,6 +214,10 @@ For repeatable stage timings and 100 warm no-tool turns on the local Mac, see
 [the Phase 2 latency baseline](evals/LATENCY_BASELINE.md). It uses paced synthetic
 input and real speaker output, with an explicit software timing boundary.
 
+For the isolated Moonshine 0.1.5 streaming comparison and repeatable commands,
+see [the upgrade experiment](evals/MOONSHINE_EXPERIMENT.md). It uses synthetic
+WAV files and a separate environment; production remains on locked 0.0.54.
+
 ## Wake Word Behavior
 
 The initial wake-word implementation is local and transcript-based:
