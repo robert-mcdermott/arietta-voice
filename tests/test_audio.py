@@ -101,7 +101,11 @@ def test_playback_always_releases_audio_and_stream(monkeypatch, failure):
         with pytest.raises((RuntimeError, WorkerTimeout)):
             audio.play_tts_stream(**options)
     if failure != "timeout":
-        stream.stop.assert_called_once()
+        if failure in {"interrupt", "generation", "write", "start"}:
+            stream.abort.assert_called_once()
+            stream.stop.assert_not_called()
+        else:
+            stream.stop.assert_called_once()
         stream.close.assert_called_once()
     assert closed == [True]
     chime.stop.assert_called_once()
@@ -143,3 +147,24 @@ def test_voice_interruption_preserves_bounded_followup_audio(monkeypatch):
     assert len(result.buffered_chunks) == 3
     assert microphone.statistics()['queued_chunks'] == 1
     output.close.assert_called_once()
+
+
+def test_cancel_aborts_device_before_waiting_for_generator_cleanup(monkeypatch):
+    from arietta_voice.turns import CancellationToken
+    order = []
+    device = Mock()
+    device.abort.side_effect = lambda: order.append('abort')
+    device.close.side_effect = lambda: order.append('device_closed')
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: device)
+    token = CancellationToken()
+    async def chunks():
+        try:
+            yield np.ones(4096, dtype=np.float32), 24000
+        finally:
+            order.append('generator_closed')
+    result = audio.play_tts_stream(tts_stream=chunks(), microphone=None, vad=None,
+        keypress_monitor=Mock(pressed=Mock(return_value=True)), chime_player=Mock(),
+        sample_rate=16000, use_aec=False, barge_in_threshold_chunks=3, cancellation=token)
+    assert result.interrupted and token.cancelled
+    assert order == ['abort', 'device_closed', 'generator_closed']
+    device.write.assert_not_called()

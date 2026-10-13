@@ -148,7 +148,18 @@ with cached assets was 6.112 seconds; startup, first-turn and warm measurements
 are separate. See [the latency/resource baseline](evals/LATENCY_BASELINE.md) for
 stage timings, RSS/CPU, repeatable commands and the failed wake-prefix pilot.
 This is a software timing boundary; physical capture/acoustic onset and
-interruption latency remain unmeasured. Streaming implementation has not started.
+interruption latency remain unmeasured.
+
+**Cancellation and queue status (October 12, 2026):** item 2 is implemented.
+Per-turn cancellation reaches inference, bounded text/audio handoffs and speaker
+playback. The console has a Stop action, and console/voice share conversation
+policy. Regression coverage checks cancellation, stale-result rejection,
+backpressure, cleanup and subsequent-turn recovery. An isolated muted real-model
+smoke passed its first turn plus two warm turns on the Jabra without failures or
+underflows; an isolated browser check passed Stop and next-chat recovery. Private
+settings were preserved. This is a correctness check, not a new latency baseline
+or evidence that the interruption target is met. Provider token/early-clause
+streaming remains item 3; generation still completes before speech starts.
 
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.

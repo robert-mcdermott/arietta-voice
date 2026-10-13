@@ -7,6 +7,10 @@ version policy and the release procedure.
 
 ### Added
 
+- Per-turn cancellation across inference and speech, a web Chat Test Stop action,
+  and bounded text/audio handoffs with backpressure and turn deadlines.
+- Cancellation, queue-pressure, stale-result and recovery regression coverage;
+  a short isolated real-model smoke and browser Stop/recovery check.
 - Opt-in Phase 2 latency benchmark with paced synthetic questions, real output
   device writes, separate startup/first-turn/warm timings, stage and resource
   reports, and private-settings preservation.
@@ -44,6 +48,9 @@ version policy and the release procedure.
 
 ### Changed
 
+- Console and voice share conversation, prompt, history and tool policy through
+  one service implementation, with separate worker processes. Model replies still
+  finish before speech starts; provider streaming is the next Phase 2 item.
 - Removed the built-in admin password and authentication bypass. Credential
   setup must complete before starting the API.
 - Tool creation/source writes require `admin.allow_source_editing = true`.
@@ -74,6 +81,9 @@ version policy and the release procedure.
 
 ### Fixed
 
+- Interrupted speech aborts output before generation cleanup and drops queued
+  audio. Cancelled partial replies are not stored or memorized; cancellation of
+  post-delivery memory work preserves the answer without reporting a turn failure.
 - Malformed, incomplete or incompatible semantic index files fall back to keyword
   search in hybrid mode (no result in vector mode); explicit builds repair corrupt
   caches instead of treating them as current. Source documents remain untouched.

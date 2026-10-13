@@ -1,10 +1,32 @@
 from unittest.mock import Mock
 
 import numpy as np
+import pytest
 
 from arietta_voice.config import default_config
 from arietta_voice.inference import InferenceEngine
 from arietta_voice.models import ToolResponse
+
+
+@pytest.mark.parametrize("samples, rate", [
+    (np.zeros(24000 * 30 + 1), 24000),
+    (np.zeros((2, 512)), 24000),
+    (np.array([np.nan]), 24000),
+    (np.zeros(512), 192000),
+])
+def test_invalid_backend_audio_is_rejected_before_queueing(tmp_path, samples, rate):
+    engine = InferenceEngine(default_config(tmp_path))
+    async def stream(text):
+        yield samples, rate
+    engine._speaker = Mock(create_stream=stream)
+    try:
+        engine.handle("tts_start", "Synthetic")
+        with pytest.raises(ValueError, match="TTS output"):
+            engine.handle("tts_next", None)
+        assert engine._tts_pending is None
+    finally:
+        engine.handle("tts_close", None)
+        engine._loop.close()
 
 
 def test_tts_pieces_are_bounded_and_closing_clears_generator(tmp_path):
@@ -43,5 +65,4 @@ def test_voice_tool_instances_survive_successful_turns(tmp_path, monkeypatch):
         constructor.assert_called_once()
         assert engine.service()._llm is None
     finally:
-        engine.service().worker.close()
         engine._loop.close()

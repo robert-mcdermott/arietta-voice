@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 import time
+import threading
 
 import numpy as np
 
@@ -25,7 +26,9 @@ from arietta_voice.models import AssistantState, ConversationTurn, SessionContex
 from arietta_voice.prompts import sanitize_for_speech
 from arietta_voice.runtime_status import RuntimeStatusPublisher
 from arietta_voice.turn_detection import SileroVoiceActivityDetector
-from arietta_voice.worker import InferenceWorker, WorkerTimeout
+from arietta_voice.worker import InferenceWorker, WorkerTimeout, WorkerCancelled
+from arietta_voice.turns import CancellationToken
+from arietta_voice.streaming import speech_stream
 from arietta_voice.wake import WakeWordMatch, build_wake_word_detector
 
 
@@ -58,6 +61,10 @@ class AriettaVoiceRuntime:
         self.turn_started_at: float | None = None
         self._stage_started_at: float | None = None
         self._turn_deadline: float | None = None
+        self._turn_token = None
+        self._turn_keys = None
+        self._turn_thread_ident = None
+        self.turn_cancellations = 0
         self.turn_failures = 0
         self.turn_timeouts = 0
         self.utterances_discarded = 0
@@ -193,15 +200,28 @@ class AriettaVoiceRuntime:
             raise WorkerTimeout("Turn exceeded its time limit")
         return remaining
 
-    def _infer(self, operation: str, payload=None):
+    def cancel_turn(self):
+        token = self._turn_token
+        if token is not None:
+            token.cancel()
+
+    def _inference_wait(self):
+        self._publish_status()
+        if (self._turn_keys is not None and threading.get_ident() == self._turn_thread_ident
+                and self._turn_keys.pressed()):
+            self.cancel_turn()
+
+    def _infer(self, operation: str, payload=None, *, cancellation=None):
+        token = cancellation or self._turn_token
+        if token is not None:
+            token.check()
         self.turn_stage = operation
         self._publish_status(force=True)
         return self.worker.call(operation, payload, timeout_s=self._remaining_time(),
-                                on_wait=self._publish_status)
+                                on_wait=self._inference_wait, cancellation=token)
 
     def _respond(self, user_text: str) -> str:
         result = self._infer("chat", {"message": user_text,
-            "voice_turn": True,
             "history": [asdict(turn) for turn in self.session.history], "use_tools": True,
             "enabled_tools": self.config.tools.enabled,
             "enabled_model_tools": self.config.model_tools.enabled})
@@ -212,19 +232,14 @@ class AriettaVoiceRuntime:
         return result["response"]
 
     async def _tts_stream(self, text: str):
-        self._infer("tts_start", text)
+        stream = speech_stream(text, infer=self._infer, worker=self.worker,
+                               cancellation=self._turn_token or CancellationToken(),
+                               deadline=self._turn_deadline, on_wait=self._inference_wait)
         try:
-            while True:
-                item = self._infer("tts_next")
-                if item is None:
-                    return
-                yield item
+            async for frame in stream:
+                yield frame
         finally:
-            if self.worker.pid is not None:
-                try:
-                    self.worker.call("tts_close", timeout_s=1)
-                except Exception:
-                    pass  # The worker already stopped and discarded this stream.
+            await stream.aclose()
 
     def _speak_blocking(self, text: str) -> None:
         if not self.config.audio.tts_enabled:
@@ -232,6 +247,7 @@ class AriettaVoiceRuntime:
 
         play_tts_stream_passive(
             tts_stream=self._tts_stream(text),
+            cancellation=self._turn_token,
             deadline=self._turn_deadline,
             chime_player=self.chime_player,
             playback_level_callback=self._update_display_speech,
@@ -262,6 +278,7 @@ class AriettaVoiceRuntime:
         self.set_state(AssistantState.SPEAKING)
         playback = play_tts_stream(
             tts_stream=self._tts_stream(response),
+            cancellation=self._turn_token,
             deadline=self._turn_deadline,
             reference_seconds=self.config.audio.playback_reference_s,
             microphone=microphone,
@@ -305,6 +322,8 @@ class AriettaVoiceRuntime:
             result = self._infer("memory", {"user": transcript, "assistant": response,
                                             "turn_count": self.session.turn_count})
             self.event_logger.log("memory_updated", **result)
+        except WorkerCancelled:
+            self.event_logger.log("memory_update_cancelled")
         except Exception as exc:
             # The answer was already delivered. Memory failure must not erase
             # that success or cause the tool/action to be repeated.
@@ -340,7 +359,8 @@ class AriettaVoiceRuntime:
             keypress_monitor=keypress_monitor,
             next_state=AssistantState.LISTENING,
         )
-        if transcript and not end_session_requested:
+        if (transcript and not end_session_requested
+                and not (self._turn_token is not None and self._turn_token.cancelled)):
             self._store_turn(transcript, response)
             if not buffered_chunks:
                 self._remember_turn(transcript, response)
@@ -413,6 +433,9 @@ class AriettaVoiceRuntime:
 
     def process_utterance(self, audio: np.ndarray, microphone: MicrophoneStream,
                           keypress_monitor: RawKeypressMonitor) -> UtteranceResult:
+        self._turn_token = CancellationToken()
+        self._turn_keys = keypress_monitor
+        self._turn_thread_ident = threading.get_ident()
         self.turn_started_at = time.monotonic()
         self._turn_deadline = self.turn_started_at + self.config.runtime.turn_timeout_s
         self.last_error = None
@@ -421,10 +444,23 @@ class AriettaVoiceRuntime:
                 self.utterances_discarded += 1
                 raise ValueError("Utterance exceeds the audio limit")
             return self._process_utterance(audio, microphone, keypress_monitor)
+        except WorkerCancelled:
+            self.chime_player.stop()
+            microphone.drain()
+            self.vad.reset()
+            self._update_display_speech(0, False)
+            self._touch_session()
+            self.set_state(AssistantState.LISTENING if self.session.active or not self.config.wake_word.enabled
+                           else AssistantState.WAITING_FOR_WAKE)
+            return UtteranceResult(buffered_chunks=[])
         except Exception as exc:
             self._recover(exc, microphone)
             return UtteranceResult(buffered_chunks=[])
         finally:
+            if self._turn_token.cancelled:
+                self.turn_cancellations += 1
+                self.event_logger.log("turn_cancelled")
+            self._turn_token = self._turn_keys = self._turn_thread_ident = None
             self.last_turn_duration_ms = round((time.monotonic() - self.turn_started_at) * 1000)
             self.turn_started_at = self._turn_deadline = None
             self.turn_stage = "idle"
@@ -468,7 +504,7 @@ class AriettaVoiceRuntime:
                 "turn_elapsed_s": round(time.monotonic() - started_at, 1) if started_at else None,
                 "turn_timeout_s": self.config.runtime.turn_timeout_s,
                 "stage_timeout_s": stage_limit,
-                "turn_failures": self.turn_failures, "turn_timeouts": self.turn_timeouts,
+                "turn_failures": self.turn_failures, "turn_cancellations": self.turn_cancellations, "turn_timeouts": self.turn_timeouts,
                 "utterances_discarded": self.utterances_discarded,
                 "last_turn_duration_ms": self.last_turn_duration_ms,
                 "worker_pid": self.worker.pid, "worker_restarts": self.worker.restarts,

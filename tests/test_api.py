@@ -263,7 +263,9 @@ def test_chat_without_tools_does_not_load_or_execute_plugins(tmp_path: Path, mon
         return '{"tool_call":{"name":"forbidden","arguments":{}}}'
 
     monkeypatch.setattr(service, "probe_tools", forbidden)
-    monkeypatch.setattr(api, "_AdHocModelToolRegistry", forbidden)
+    from arietta_voice import tools, model_tools
+    monkeypatch.setattr(tools, "ToolRegistry", forbidden)
+    monkeypatch.setattr(model_tools, "ModelToolRegistry", forbidden)
     monkeypatch.setattr(service, "_llm_generate", generate)
     response = client.post("/api/chat", auth=("admin", "test-only-long-password"),
                            json={"message": "What is your name?", "use_tools": False})
@@ -749,3 +751,48 @@ def test_chat_failure_has_safe_actionable_error_and_can_recover(tmp_path, failur
     assert response.status_code == 200
     assert service.chat_turns == 1
     assert service.last_error is None
+
+
+def test_cancel_route_requires_auth_and_remembers_early_stop(tmp_path):
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    auth = ('admin', 'test-only-long-password')
+    assert client.post('/api/chat/turn-one/cancel').status_code == 401
+    assert client.post('/api/chat/turn-one/cancel', auth=auth).json() == {'cancelled': True}
+    result = client.post('/api/chat', auth=auth, json={'message':'Synthetic', 'request_id':'turn-one'})
+    assert result.status_code == 409
+    assert service.chat_turns == 0
+    assert client.post('/api/chat/turn-one/cancel', auth=auth).json() == {'cancelled': False}
+    assert client.post('/api/chat', auth=auth,
+                       json={'message':'What is your name?', 'request_id':'turn-two'}).status_code == 200
+
+
+def test_cancel_active_chat_suppresses_late_result_and_preserves_new_turn(tmp_path):
+    import threading
+    from unittest.mock import Mock
+    from arietta_voice.api import ChatRequest
+    from arietta_voice.worker import WorkerCancelled
+    _, service = _client_with_service(_write_api_config(tmp_path))
+    entered, release, errors = threading.Event(), threading.Event(), []
+    def late_result(*args, **kwargs):
+        entered.set()
+        assert release.wait(2)
+        # Deliberately ignore the token here; service must still reject stale output.
+        return dict(response='Late answer', source='model', used_tool=None, model_tool=None)
+    service.worker = Mock(call=late_result, pid=None)
+    def run():
+        try:
+            service.chat(ChatRequest(message='Synthetic', request_id='old'))
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=run)
+    thread.start()
+    assert entered.wait(2)
+    assert service.cancel_chat('old')
+    release.set()
+    thread.join(2)
+    assert not thread.is_alive() and isinstance(errors[0], WorkerCancelled)
+    assert service.chat_turns == 0
+    service.worker.call = lambda *a, **kw: dict(response='New', source='model', used_tool=None, model_tool=None)
+    assert service.chat(ChatRequest(message='New', request_id='new')).response == 'New'
+    assert not service.cancel_chat('old')
+    assert service.chat_turns == 1

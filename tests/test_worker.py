@@ -99,3 +99,37 @@ def test_busy_request_has_no_queue_and_shutdown_cancels_active_work(worker):
     assert worker.pid is None
     with pytest.raises(WorkerFailure, match="closed"):
         worker.call("ok", timeout_s=5)
+
+
+def test_explicit_cancellation_kills_tool_before_late_action_and_allows_next_turn(worker, tmp_path):
+    from arietta_voice.turns import CancellationToken
+    from arietta_voice.worker import WorkerCancelled
+    first = worker.call('ok', timeout_s=5)
+    token, entered, errors = CancellationToken(), threading.Event(), []
+    marker = tmp_path / 'cancelled-tool-action'
+    def run():
+        try:
+            worker.call('late_write', str(marker), timeout_s=5, cancellation=token, on_wait=entered.set)
+        except Exception as exc:
+            errors.append(exc)
+    thread = threading.Thread(target=run)
+    thread.start()
+    assert entered.wait(2)
+    token.cancel()
+    thread.join(2)
+    assert not thread.is_alive() and isinstance(errors[0], WorkerCancelled)
+    assert worker.pid is None
+    assert worker.cancellations == 1 and worker.restarts == 0
+    assert worker.call('ok', timeout_s=5) != first
+    time.sleep(1.1)
+    assert not marker.exists()
+
+
+def test_cancelled_request_never_starts_a_worker(worker):
+    from arietta_voice.turns import CancellationToken
+    from arietta_voice.worker import WorkerCancelled
+    token = CancellationToken()
+    token.cancel()
+    with pytest.raises(WorkerCancelled):
+        worker.call('ok', timeout_s=5, cancellation=token)
+    assert worker.pid is None

@@ -170,6 +170,27 @@ def test_memory_failure_does_not_erase_delivered_turn(runtime):
     assert runtime.turn_failures == 0
 
 
+def test_cancelled_memory_preserves_delivered_turn_without_failure(runtime):
+    runtime.config.wake_word.enabled = False
+    runtime.config.memory.enabled = True
+    runtime.worker.transcript = "Remember a synthetic fact"
+    original = runtime.worker.call
+
+    def cancel_memory(operation, payload=None, **kwargs):
+        if operation == "memory":
+            runtime.cancel_turn()
+            kwargs["cancellation"].check()
+        return original(operation, payload, **kwargs)
+
+    runtime.worker.call = cancel_memory
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert runtime.session.turn_count == 1
+    assert len(runtime.session.history) == 2
+    assert runtime.last_error is None
+    assert runtime.turn_cancellations == 1
+    assert runtime.turn_failures == 0
+
+
 class ScriptedMicrophone:
     dropped_chunks = 0
     input_overflows = 0
@@ -240,3 +261,40 @@ def test_startup_failure_stops_worker_and_publishes_final_status(runtime):
     assert payload["lifecycle"] == "stopped"
     assert payload["reliability"]["turn_stage"] == "stopped"
     assert runtime.status_publisher._thread is None
+
+
+def test_cancelled_generation_is_not_a_failure_or_history_entry_and_next_turn_works(runtime):
+    runtime.config.wake_word.enabled = False
+    runtime.worker.transcript = 'Synthetic question'
+    original = runtime.worker.call
+    def cancel(operation, payload=None, **kwargs):
+        if operation == 'chat':
+            runtime.cancel_turn()
+            kwargs['cancellation'].check()
+        return original(operation, payload, **kwargs)
+    runtime.worker.call = cancel
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert runtime.turn_cancellations == 1
+    assert runtime.turn_failures == runtime.turn_timeouts == 0
+    assert not runtime.session.history
+    assert runtime.state == AssistantState.LISTENING
+    runtime.worker.call = original
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert runtime.session.turn_count == 1
+
+
+def test_interrupted_reply_is_not_stored_or_memorized(runtime, monkeypatch):
+    runtime.config.wake_word.enabled = False
+    runtime.worker.transcript = 'Synthetic question'
+    followup = [np.ones(512)]
+    def deliver(*args, **kwargs):
+        runtime.cancel_turn()
+        return followup
+    monkeypatch.setattr(runtime, '_deliver_response', deliver)
+    remember = Mock()
+    monkeypatch.setattr(runtime, '_remember_turn', remember)
+    result = runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert result.buffered_chunks is followup
+    assert runtime.turn_cancellations == 1
+    assert not runtime.session.history
+    remember.assert_not_called()

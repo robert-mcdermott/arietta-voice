@@ -364,17 +364,17 @@ def _playback_level_from_chunk(playback_chunk: np.ndarray) -> float:
 
 
 def play_tts_stream_passive(*, tts_stream, chime_player: ChimePlayer,
-                            playback_level_callback=None, deadline: float | None = None) -> None:
+                            playback_level_callback=None, deadline: float | None = None, cancellation=None) -> None:
     play_tts_stream(tts_stream=tts_stream, microphone=None, vad=None, keypress_monitor=None,
                     chime_player=chime_player, sample_rate=16000, use_aec=False,
                     barge_in_threshold_chunks=5, playback_level_callback=playback_level_callback,
-                    deadline=deadline)
+                    deadline=deadline, cancellation=cancellation)
 
 
 def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_player: ChimePlayer,
                     sample_rate: int, use_aec: bool, barge_in_threshold_chunks: int,
                     playback_level_callback=None, reference_seconds: float = 4.0,
-                    deadline: float | None = None) -> PlaybackResult:
+                    deadline: float | None = None, cancellation=None) -> PlaybackResult:
     from contextlib import ExitStack
     from arietta_voice.worker import WorkerTimeout
 
@@ -418,8 +418,11 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
         output_stream = None
         buffered_chunks: list[np.ndarray] = []
         interrupted = False
+        completed = False
         try:
             async for chunk_samples, sr in tts_stream:
+                if cancellation is not None:
+                    cancellation.check()
                 if deadline is not None and time.monotonic() >= deadline:
                     raise WorkerTimeout("Speech playback exceeded the turn time limit")
                 if output_stream is None:
@@ -437,14 +440,20 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     reference.append(np.interp(positions, np.arange(len(chunk_samples)), chunk_samples).astype(np.float32))
                 frame = chunk_samples.reshape(-1, 1)
                 for offset in range(0, len(frame), 1024):
+                    if cancellation is not None:
+                        cancellation.check()
                     if deadline is not None and time.monotonic() >= deadline:
                         raise WorkerTimeout("Speech playback exceeded the turn time limit")
                     if keypress_monitor is not None and keypress_monitor.pressed():
                         interrupted = True
+                        if cancellation is not None:
+                            cancellation.cancel()
                         break
                     voice_interrupt, buffered_chunks = check_barge_in()
                     if voice_interrupt:
                         interrupted = True
+                        if cancellation is not None:
+                            cancellation.cancel()
                         break
                     playback_chunk = frame[offset:offset + 1024]
                     if playback_level_callback is not None:
@@ -452,20 +461,25 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     output_stream.write(playback_chunk)
                 if interrupted:
                     break
+            completed = True
             return PlaybackResult(interrupted=interrupted, buffered_chunks=buffered_chunks)
         finally:
-            # ExitStack runs every cleanup even when stop/close itself fails.
-            with ExitStack() as cleanup:
-                if playback_level_callback is not None:
-                    cleanup.callback(playback_level_callback, 0.0, False)
-                cleanup.callback(chime_player.stop)
-                if microphone is not None and not buffered_chunks:
-                    cleanup.callback(microphone.drain)
-                if vad is not None:
-                    cleanup.callback(vad.reset)
-                if output_stream is not None:
-                    cleanup.callback(output_stream.close)
-                    cleanup.callback(output_stream.stop)
+            # Release/abort the device before waiting for inference cancellation.
+            # Generator cleanup still runs even if a device cleanup raises.
+            try:
+                with ExitStack() as cleanup:
+                    if playback_level_callback is not None:
+                        cleanup.callback(playback_level_callback, 0.0, False)
+                    cleanup.callback(chime_player.stop)
+                    if microphone is not None and not buffered_chunks:
+                        cleanup.callback(microphone.drain)
+                    if vad is not None:
+                        cleanup.callback(vad.reset)
+                    if output_stream is not None:
+                        cleanup.callback(output_stream.close)
+                        abort = not completed or interrupted or (cancellation is not None and cancellation.cancelled)
+                        cleanup.callback(output_stream.abort if abort else output_stream.stop)
+            finally:
                 if hasattr(tts_stream, "aclose"):
                     await tts_stream.aclose()
 

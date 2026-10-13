@@ -16,14 +16,12 @@ class InferenceEngine:
         self._speaker = None
         self._tts = None
         self._tts_pending = None
-        self._voice_tools = None
-        self._voice_model_tools = None
         self._loop = asyncio.new_event_loop()
 
     def service(self):
         if self._service is None:
-            from arietta_voice.api import AriettaApiService
-            self._service = AriettaApiService(config=self.config)
+            from arietta_voice.conversation import ConversationService
+            self._service = ConversationService(self.config)
         return self._service
 
     def stt(self):
@@ -62,14 +60,12 @@ class InferenceEngine:
         if operation == "endpoint":
             return self.endpoint().probability(payload)
         if operation == "chat":
-            from arietta_voice.api import ChatRequest
+            payload = dict(payload)
             service = self.service()
             service.config.tools.enabled = tuple(payload.pop("enabled_tools"))
             service.config.model_tools.enabled = tuple(payload.pop("enabled_model_tools"))
-            if payload.pop("voice_turn", False):
-                result = self._voice_chat(payload)
-            else:
-                result = service._chat_in_process(ChatRequest(**payload), record=False)
+            payload.pop("voice_turn", None)  # Compatibility with older runtime callers.
+            result = service.chat(**payload)
             if len(result.response) > 12_000:
                 raise ValueError("Response exceeds the speech limit")
             return {**asdict(result), "model_loaded": service._llm is not None and service._llm.is_loaded()}
@@ -86,6 +82,9 @@ class InferenceEngine:
             consolidated = memory.maybe_consolidate(service._llm, payload["turn_count"])
             return {"facts_added": added, "consolidated": consolidated}
         if operation == "tts_start":
+            if not isinstance(payload, str) or len(payload) > 12_000:
+                raise ValueError("Speech text exceeds its limit")
+            self.handle("tts_close", None)
             self._tts_pending = None
             self._tts = self.speaker().create_stream(payload).__aiter__()
             return None
@@ -96,7 +95,13 @@ class InferenceEngine:
                 except StopAsyncIteration:
                     self._tts = None
                     return None
-                self._tts_pending = (np.asarray(samples, dtype=np.float32), rate)
+                samples = np.asarray(samples, dtype=np.float32)
+                # The backend may produce a whole sentence before slicing IPC
+                # frames; cap retained backend output as well as the wire chunk.
+                if (samples.ndim != 1 or not 8000 <= rate <= 96000
+                        or len(samples) > rate * 30 or not np.isfinite(samples).all()):
+                    raise ValueError("Invalid or oversized TTS output")
+                self._tts_pending = (samples, rate)
             samples, rate = self._tts_pending
             piece = samples[:4096].copy()
             self._tts_pending = (samples[4096:], rate) if len(samples) > 4096 else None
@@ -107,30 +112,3 @@ class InferenceEngine:
             self._tts = self._tts_pending = None
             return None
         raise ValueError("Unknown inference operation")
-
-    def _voice_chat(self, payload):
-        """Keep voice plugin instances alive across turns, as before isolation."""
-        from arietta_voice.api import ChatResult
-        from arietta_voice.model_tooling import maybe_generate_with_model_tools
-        from arietta_voice.model_tools import ModelToolRegistry
-        from arietta_voice.models import ConversationTurn
-        from arietta_voice.prompts import sanitize_for_speech
-        from arietta_voice.tools import ToolRegistry
-
-        service = self.service()
-        knowledge = service.knowledge if self.config.knowledge.enabled else None
-        if self._voice_tools is None:
-            self._voice_tools = ToolRegistry(self.config, knowledge_retriever=knowledge)
-        tool_response = self._voice_tools.maybe_handle(payload["message"])
-        used_tool = tool_response.name if tool_response else None
-        if tool_response and tool_response.bypass_model:
-            return ChatResult(sanitize_for_speech(tool_response.content), "tool", used_tool, None)
-        messages = service.prompt_manager.build_messages(
-            [ConversationTurn(**turn) for turn in payload["history"]], payload["message"], tool_response)
-        if self._voice_model_tools is None:
-            self._voice_model_tools = ModelToolRegistry(self.config, knowledge_retriever=knowledge)
-        response, model_tool = maybe_generate_with_model_tools(
-            messages, model_tool_registry=self._voice_model_tools,
-            llm_generate=lambda messages: service._llm_generate(messages, max_tokens=None, temperature=None))
-        return ChatResult(sanitize_for_speech(response), "model", used_tool,
-                          model_tool.name if model_tool else None)

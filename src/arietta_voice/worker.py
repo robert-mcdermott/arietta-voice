@@ -9,8 +9,7 @@ import time
 from typing import Any, Callable
 
 
-class WorkerTimeout(TimeoutError):
-    pass
+from arietta_voice.turns import CancellationToken, TurnCancelled as WorkerCancelled, TurnTimeout as WorkerTimeout
 
 
 class WorkerBusy(RuntimeError):
@@ -59,6 +58,7 @@ class InferenceWorker:
         self._invalidated = False
         self.operation: str | None = None
         self.restarts = 0
+        self.cancellations = 0
         atexit.register(self.close)
 
     @property
@@ -71,8 +71,9 @@ class InferenceWorker:
         with self._lifecycle_lock:
             self._invalidated = True
 
-    def _receive(self, deadline: float, on_wait: Callable | None):
+    def _receive(self, deadline: float, on_wait: Callable | None, cancellation):
         while True:
+            cancellation.check()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise WorkerTimeout(f"{self.operation} exceeded its time limit")
@@ -80,7 +81,7 @@ class InferenceWorker:
             try:
                 if connection is None:
                     raise WorkerFailure("Inference worker stopped")
-                if connection.poll(min(remaining, 0.1)):
+                if connection.poll(min(remaining, 0.05)):
                     return connection.recv()
             except (EOFError, OSError, ValueError) as exc:
                 raise WorkerFailure("Inference worker connection closed") from exc
@@ -89,7 +90,10 @@ class InferenceWorker:
             if self.pid is None:
                 raise WorkerFailure("Inference worker exited")
 
-    def call(self, operation: str, payload: Any = None, *, timeout_s: float, on_wait: Callable | None = None):
+    def call(self, operation: str, payload: Any = None, *, timeout_s: float,
+             on_wait: Callable | None = None, cancellation: CancellationToken | None = None):
+        cancellation = cancellation or CancellationToken()
+        cancellation.check()
         if not self._lock.acquire(blocking=False):
             raise WorkerBusy("Inference is busy; wait for the current operation")
         self.operation = operation
@@ -110,13 +114,19 @@ class InferenceWorker:
                         child.close()
                     self._invalidated = False
             if needs_start:
-                if self._receive(deadline, on_wait)[0] != "ready":
+                if self._receive(deadline, on_wait, cancellation)[0] != "ready":
                     raise WorkerFailure("Inference worker did not start")
+            cancellation.check()
             self._connection.send((operation, payload))
-            kind, result = self._receive(deadline, on_wait)
+            kind, result = self._receive(deadline, on_wait, cancellation)
             if kind != "ok":
                 raise WorkerFailure(f"{operation} failed ({result})")
+            cancellation.check()
             return result
+        except WorkerCancelled:
+            self.cancellations += 1
+            self._stop()
+            raise
         except BaseException:
             self.restarts += 1
             self._stop()

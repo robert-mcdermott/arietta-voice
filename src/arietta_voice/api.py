@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from collections import deque
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import platform
 import time
+import threading
+import uuid
 from typing import Any, Literal
 
+from fastapi import Path as ApiPath
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -24,13 +26,13 @@ from arietta_voice.diagnostics import run_startup_diagnostics
 from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
 from arietta_voice.llm import ChatModel, build_chat_model
 from arietta_voice.logging_utils import EventLogger
-from arietta_voice.model_tooling import maybe_generate_with_model_tools
-from arietta_voice.models import ConversationTurn
-from arietta_voice.prompts import PromptManager, sanitize_for_speech
+from arietta_voice.conversation import ChatResult, ConversationService
+from arietta_voice.turns import CancellationToken
+from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
 from arietta_voice.tool_admin import ModelToolAdmin, ToolAdmin
-from arietta_voice.worker import InferenceWorker, WorkerBusy, WorkerFailure, WorkerTimeout
+from arietta_voice.worker import InferenceWorker, WorkerBusy, WorkerCancelled, WorkerFailure, WorkerTimeout
 
 
 # Retain the existing API field names while reporting the application version.
@@ -49,6 +51,7 @@ class ChatRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     use_tools: bool = True
+    request_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class KnowledgeSearchRequest(BaseModel):
@@ -102,14 +105,6 @@ class ModelToolCreateRequest(BaseModel):
     enable: bool = True
 
 
-@dataclass(slots=True)
-class ChatResult:
-    response: str
-    source: str
-    used_tool: str | None
-    model_tool: str | None
-
-
 class AriettaApiService:
     def __init__(self, config_path: Path | None = None, *, config: AppConfig | None = None) -> None:
         self.config_path = config_path.resolve() if config_path is not None else None
@@ -133,6 +128,11 @@ class AriettaApiService:
         self._llm: ChatModel | None = None
         self.worker = InferenceWorker(self.config)
         self._worker_model_pid: int | None = None
+        self._chat_lock = threading.Lock()
+        self._active_chat = None
+        self._retired_chat_ids = deque(maxlen=128)
+        self._conversation = ConversationService(self.config, prompt_manager=self.prompt_manager,
+            knowledge=self.knowledge, generate=lambda *a, **kw: self._llm_generate(*a, **kw))
         self.chat_turns = 0
         self.last_chat_at: str | None = None
         self.last_error: str | None = None
@@ -528,80 +528,54 @@ class AriettaApiService:
         }
 
     def chat(self, request: ChatRequest) -> ChatResult:
-        payload = request.model_dump()
-        payload.update(enabled_tools=self.config.tools.enabled,
-                       enabled_model_tools=self.config.model_tools.enabled)
-        response = self.worker.call("chat", payload, timeout_s=self.config.runtime.turn_timeout_s)
-        self._worker_model_pid = self.worker.pid if response.pop("model_loaded", False) else None
-        result = ChatResult(**response)
-        self.last_error = None
-        self._record_chat(request.message, result.response, source=result.source,
-                          used_tool=result.used_tool, model_tool=result.model_tool)
-        return result
+        token = CancellationToken()
+        request_id = request.request_id or uuid.uuid4().hex
+        with self._chat_lock:
+            if request_id in self._retired_chat_ids:
+                raise WorkerCancelled("Request ID already cancelled or completed; use a fresh ID")
+            if self._active_chat is not None:
+                raise WorkerBusy("Inference is busy")
+            self._active_chat = (request_id, token)
+        try:
+            payload = request.model_dump(exclude={"request_id"})
+            payload.update(enabled_tools=self.config.tools.enabled,
+                           enabled_model_tools=self.config.model_tools.enabled)
+            response = self.worker.call("chat", payload, timeout_s=self.config.runtime.turn_timeout_s,
+                                        cancellation=token)
+            with self._chat_lock:
+                token.check()
+                self._worker_model_pid = self.worker.pid if response.pop("model_loaded", False) else None
+                result = ChatResult(**response)
+                self.last_error = None
+                self._record_chat(request.message, result.response, source=result.source,
+                                  used_tool=result.used_tool, model_tool=result.model_tool)
+                self._retired_chat_ids.append(request_id)
+                self._active_chat = None
+                return result
+        finally:
+            with self._chat_lock:
+                if self._active_chat is not None and self._active_chat[1] is token:
+                    self._retired_chat_ids.append(request_id)
+                    self._active_chat = None
+
+    def cancel_chat(self, request_id: str) -> bool:
+        with self._chat_lock:
+            if self._active_chat is not None and self._active_chat[0] == request_id:
+                self._active_chat[1].cancel()
+                return True
+            if request_id in self._retired_chat_ids:
+                return False
+            # Remember early cancellation if the HTTP stop request overtakes chat.
+            self._retired_chat_ids.append(request_id)
+            return True
 
     def _chat_in_process(self, request: ChatRequest, *, record: bool = True) -> ChatResult:
-        message = request.message.strip()
-        history = [
-            ConversationTurn(role=item.role, content=item.content.strip())
-            for item in request.history
-            if item.content.strip()
-        ]
-        used_tool: str | None = None
-        model_tool: str | None = None
-
-        tool_response = None
-        if request.use_tools:
-            probe = self.probe_tools(message)
-            if probe["matched"]:
-                used_tool = str(probe["tool"])
-                if probe["bypass_model"]:
-                    response = sanitize_for_speech(str(probe["content"]))
-                    if record:
-                        self._record_chat(message, response, source="tool", used_tool=used_tool)
-                    return ChatResult(
-                        response=response,
-                        source="tool",
-                        used_tool=used_tool,
-                        model_tool=None,
-                    )
-                from arietta_voice.models import ToolResponse
-
-                tool_response = ToolResponse(
-                    name=str(probe["tool"]),
-                    content=str(probe["content"] or ""),
-                    bypass_model=False,
-                    context=None if probe["context"] is None else str(probe["context"]),
-                )
-
-        messages = self.prompt_manager.build_messages(history, message, tool_response)
-
-        def generate(model_messages: list[dict[str, str]]) -> str:
-            return self._llm_generate(
-                model_messages,
-                max_tokens=request.max_tokens,
-                temperature=request.temperature,
-            )
-
-        if request.use_tools:
-            response, model_tool_use = maybe_generate_with_model_tools(
-                messages,
-                model_tool_registry=_AdHocModelToolRegistry(self.config, self.knowledge),
-                llm_generate=generate,
-            )
-        else:
-            # Do not even import/construct plugins when tools are disabled.
-            response, model_tool_use = generate(messages), None
-        if model_tool_use is not None:
-            model_tool = model_tool_use.name
-        clean_response = sanitize_for_speech(response)
+        # In-process test/embedding entry point; production calls run in the worker.
+        result = self._conversation.chat(**request.model_dump(exclude={"request_id"}))
         if record:
-            self._record_chat(message, clean_response, source="model", used_tool=used_tool, model_tool=model_tool)
-        return ChatResult(
-            response=clean_response,
-            source="model",
-            used_tool=used_tool,
-            model_tool=model_tool,
-        )
+            self._record_chat(request.message, result.response, source=result.source,
+                              used_tool=result.used_tool, model_tool=result.model_tool)
+        return result
 
     def uptime_seconds(self) -> int:
         return int(time.monotonic() - self.started_monotonic)
@@ -647,22 +621,6 @@ class AriettaApiService:
             return 0
         with path.open("r", encoding="utf-8") as handle:
             return sum(1 for _ in handle)
-
-
-class _AdHocModelToolRegistry:
-    def __init__(self, config: AppConfig, knowledge: KnowledgeRetriever) -> None:
-        from arietta_voice.model_tools import ModelToolRegistry
-
-        self._registry = ModelToolRegistry(
-            config,
-            knowledge_retriever=knowledge if config.knowledge.enabled else None,
-        )
-
-    def instruction_text(self) -> str | None:
-        return self._registry.instruction_text()
-
-    def execute(self, name: str, arguments: dict[str, object]):
-        return self._registry.execute(name, arguments)
 
 
 def create_app(
@@ -1019,6 +977,10 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    @app.post("/api/chat/{request_id}/cancel")
+    def cancel_api_chat(request_id: str = ApiPath(pattern=r"^[A-Za-z0-9_-]{1,64}$"), _user: str = Depends(require_admin)) -> dict:
+        return {"cancelled": svc().cancel_chat(request_id)}
+
     @app.post("/api/chat")
     def api_chat(payload: ChatRequest, _user: str = Depends(require_admin)) -> dict[str, Any]:
         try:
@@ -1030,6 +992,8 @@ def create_app(
             code, detail = 502, "The model or tool failed. The next request will use a fresh worker."
             if isinstance(exc, WorkerBusy):
                 code, detail = 503, "Inference is busy. Wait for the current request to finish."
+            elif isinstance(exc, WorkerCancelled):
+                code, detail = 409, "Turn cancelled. Any external action already completed is not undone."
             elif isinstance(exc, WorkerTimeout):
                 code, detail = 504, "The turn timed out and was stopped. No automatic retry was made; check any external action before repeating it."
             raise HTTPException(
@@ -1893,6 +1857,7 @@ ADMIN_HTML = """<!doctype html>
             <textarea id="chat-message" maxlength="12000" placeholder="Type a message for the assistant"></textarea>
             <div class="form-row">
               <button class="button primary" id="chat-send">Send</button>
+              <button class="button" id="chat-stop" disabled>Stop</button>
               <button class="button" id="tool-probe">Probe Tools</button>
             </div>
             <div id="chat-status" class="reliability-note" role="status">Ready</div>
@@ -2082,6 +2047,7 @@ ADMIN_HTML = """<!doctype html>
     const state = {
       chatHistory: [],
       chatPending: false,
+      chatRequestId: null,
       knowledgeDirty: false,
       currentKnowledgeFile: null,
       currentView: "dashboard",
@@ -2120,7 +2086,9 @@ ADMIN_HTML = """<!doctype html>
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         const detail = typeof body.detail === "string" ? body.detail : response.statusText;
-        throw new Error(response.status === 401 ? "Your admin session needs authentication. Reload this page to sign in." : `${detail} (${response.status})`);
+        const error = new Error(response.status === 401 ? "Your admin session needs authentication. Reload this page to sign in." : `${detail} (${response.status})`);
+        error.status = response.status;
+        throw error;
       }
       return response.json();
     }
@@ -3024,6 +2992,8 @@ ADMIN_HTML = """<!doctype html>
       if (!message || state.chatPending) return;
       const history = state.chatHistory.slice(-10);
       state.chatPending = true;
+      state.chatRequestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+      $("#chat-stop").disabled = false;
       ["chat-send", "chat-clear", "tool-probe"].forEach((id) => { $("#" + id).disabled = true; });
       textarea.disabled = true;
       $("#chat-send").textContent = "Thinking…";
@@ -3033,7 +3003,7 @@ ADMIN_HTML = """<!doctype html>
       renderChat();
       try {
         const payload = await api("/api/chat", {
-          method: "POST", body: JSON.stringify({ message, history })
+          method: "POST", body: JSON.stringify({ message, history, request_id: state.chatRequestId })
         });
         state.chatHistory.push({ role: "assistant", content: payload.response });
         state.chatHistory = state.chatHistory.slice(-40);
@@ -3043,9 +3013,11 @@ ADMIN_HTML = """<!doctype html>
         state.chatHistory.pop();
         textarea.value = message;
         $("#chat-status").textContent = error.message;
-        throw error;
+        if (error.status !== 409) throw error;
       } finally {
         state.chatPending = false;
+        state.chatRequestId = null;
+        $("#chat-stop").disabled = true;
         ["chat-send", "chat-clear", "tool-probe"].forEach((id) => { $("#" + id).disabled = false; });
         textarea.disabled = false;
         $("#chat-send").textContent = "Send";
@@ -3169,6 +3141,20 @@ ADMIN_HTML = """<!doctype html>
     $("#knowledge-file-list").addEventListener("click", (event) => {
       const target = event.target.closest("[data-knowledge-file]");
       if (target) openKnowledgeFile(target.dataset.knowledgeFile).catch((error) => setError(error.message));
+    });
+    $("#chat-stop").addEventListener("click", async () => {
+      const requestId = state.chatRequestId;
+      if (!requestId) return;
+      $("#chat-stop").disabled = true;
+      try {
+        const result = await api(`/api/chat/${requestId}/cancel`, { method: "POST" });
+        if (state.chatRequestId === requestId) {
+          $("#chat-status").textContent = result.cancelled ? "Stopping…" : "The turn has already finished";
+        }
+      } catch (error) {
+        if (state.chatRequestId === requestId) $("#chat-stop").disabled = false;
+        setError(error.message);
+      }
     });
     $("#chat-send").addEventListener("click", () => sendChat().catch((error) => setError(error.message)));
     $("#tool-probe").addEventListener("click", () => probeTools().catch((error) => setError(error.message)));

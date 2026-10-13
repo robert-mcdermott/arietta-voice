@@ -259,6 +259,9 @@ def run_child(config, directory, turns, audible, idle_seconds):
             def stop(self):
                 return self.stream.stop()
 
+            def abort(self):
+                return self.stream.abort()
+
             def close(self):
                 return self.stream.close()
 

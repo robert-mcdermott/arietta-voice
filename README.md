@@ -319,6 +319,34 @@ single GPU scheduler. The timeout bounds inference work, not a stuck native audi
 driver or arbitrary subprocesses started by a custom plugin. Admin tool-validation,
 probe/invoke, and knowledge-index maintenance actions are outside the chat deadline.
 
+Each turn has a cancellation token. The web console's Chat Test has a **Stop**
+button; terminal keypresses interrupt voice generation/playback, and detected
+speech interrupts playback. Cancellation discards queued output, aborts speaker
+output before waiting for generation cleanup, and terminates a worker blocked
+in model/tool code. The next turn can start with a fresh worker. Cancelled or
+partially spoken replies are excluded from history and memory; cancelling memory
+work after a fully delivered answer preserves that answer. Cancellation has its
+own counter and is not reported as a failed turn. It cannot undo an external
+action or memory write that already completed.
+
+API clients can supply a fresh `request_id` with each `POST /api/chat` (1–64
+letters, digits, underscores or hyphens), then use authenticated
+`POST /api/chat/{request_id}/cancel`. Cancelled chat requests return `409`.
+Cancellation can arrive before its chat request; the last 128 completed/cancelled
+IDs are retained to reject stale requests. Always generate a new ID per turn.
+Closing a browser tab alone does not request cancellation.
+
+Voice and web chat now use the same conversation service for prompts, history,
+tool policy and speech sanitization, while retaining separate worker processes.
+The speech handoff has fixed bounds: two text items of at most 12,000 characters
+each, and eight audio frames of at most 4,096 mono float32 samples each (128 KiB
+queued PCM), plus one producer-held and one consumer-held frame. A full queue
+pauses its producer within the shared turn deadline. Backend TTS chunks are
+validated and limited to 30 seconds before slicing; temporary allocations inside
+native models are outside these queue limits. These internal bounds need no new
+TOML settings. The current text adapter still waits for a completed model reply;
+provider token streaming and early clause playback are the next roadmap item.
+
 The admin dashboard shows the processing stage, turn budget, microphone queue,
 recovery counters, and recording warnings while a background heartbeat continues
 during model work. Technical process/file details are expandable. Chat prevents
