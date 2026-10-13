@@ -75,6 +75,8 @@ def read_runtime_status(
     elif is_running:
         state = str(payload.get("state") or "running")
         note = "The separate voice runtime is publishing a fresh heartbeat."
+        if payload.get("state") == "waiting_for_audio":
+            note = "Waiting for the configured audio devices; the interrupted turn was discarded."
     else:
         state = str(payload.get("state") or "unknown")
         note = "The voice runtime status file exists, but its lifecycle is not active."

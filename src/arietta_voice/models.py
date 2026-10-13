@@ -12,6 +12,7 @@ class AssistantState(str, Enum):
     THINKING = "thinking"
     SPEAKING = "speaking"
     STOPPING = "stopping"
+    WAITING_FOR_AUDIO = "waiting_for_audio"
 
 
 @dataclass(slots=True)

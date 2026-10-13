@@ -2210,17 +2210,19 @@ ADMIN_HTML = """<!doctype html>
     function renderReliability(runtime, apiState) {
       const data = runtime.reliability || {};
       const audio = data.audio || {};
+      const devices = data.devices || {};
+      const waitingForAudio = runtime.state === "waiting_for_audio";
       const active = Boolean(runtime.is_running);
       const badge = $("#runtime-badge");
       badge.textContent = String(runtime.state || "unknown").replaceAll("_", " ");
       badge.classList.toggle("offline", !active);
-      $("#runtime-summary").textContent = active
+      $("#runtime-summary").textContent = active && !waitingForAudio
         ? `Heartbeat ${runtime.heartbeat_age_seconds ?? 0}s ago · ${runtime.session_active ? "Conversation active" : "Ready for wake word"}`
         : runtime.note;
       const elapsed = Number(data.turn_elapsed_s || 0);
       const limit = Number(data.stage_timeout_s || data.turn_timeout_s || 60);
       const stageNames = { idle: "Ready", transcribe: "Transcribing", endpoint: "Checking turn end", chat: "Thinking", tts_start: "Preparing speech", tts_next: "Speaking", memory: "Updating memory", loading_models: "Loading models", stopped: "Stopped" };
-      const stage = active ? (stageNames[data.turn_stage] || "Starting") : "Offline";
+      const stage = active ? (waitingForAudio ? "Waiting for audio" : (stageNames[data.turn_stage] || "Starting")) : "Offline";
       const queued = Math.max(0, Number(audio.queued_chunks) || 0);
       const capacity = Math.max(0, Number(audio.queue_max_chunks) || 0);
       $("#runtime-reliability").innerHTML = `
@@ -2234,9 +2236,14 @@ ADMIN_HTML = """<!doctype html>
           <div class="reliability-note">Dropped ${escapeHtml(audio.dropped_chunks ?? 0)} · Input overruns ${escapeHtml(audio.input_overflows ?? 0)}</div></div>
         <div class="reliability-card"><h4>Recovery · this runtime</h4><div class="reliability-value">${escapeHtml(data.turn_failures ?? 0)} failed turn${data.turn_failures === 1 ? "" : "s"}</div>
           <div class="reliability-note">Timeouts ${escapeHtml(data.turn_timeouts ?? 0)} · Worker resets ${escapeHtml(data.worker_restarts ?? 0)}<br>
-          Oversized utterances ${escapeHtml(data.utterances_discarded ?? 0)}<br>Recording drops ${escapeHtml(audio.recording_dropped_chunks ?? 0)}</div></div>`;
+          Oversized utterances ${escapeHtml(data.utterances_discarded ?? 0)}<br>Recording drops ${escapeHtml(audio.recording_dropped_chunks ?? 0)}</div></div>
+        <div class="reliability-card"><h4>Audio devices</h4><div class="reliability-value">${escapeHtml(devices.connection || "Unknown")}</div>
+          <div class="reliability-note">Input: ${escapeHtml(devices.input || "Not connected")}<br>
+          Output: ${escapeHtml(devices.output || "Not connected")}<br>
+          Connection failures ${escapeHtml(devices.reconnect_attempts ?? 0)} · Recoveries ${escapeHtml(devices.recoveries ?? 0)}</div></div>`;
       const warnings = [];
-      if (runtime.last_error) warnings.push(`Last error: ${runtime.last_error}. No automatic retry was made. Check any external action before repeating it.`);
+      if (waitingForAudio) warnings.push(`Audio unavailable (${devices.last_error || "unknown"}). Retrying the connection. The interrupted turn was discarded; check any external action before repeating it.`);
+      else if (runtime.last_error) warnings.push(`Last error: ${runtime.last_error}. No automatic retry was made. Check any external action before repeating it.`);
       if (audio.recording_limit_reached) warnings.push("Recording reached its duration limit; voice interaction can continue.");
       if (audio.recording_error) warnings.push(`Recording stopped: ${audio.recording_error}. The recording may be incomplete.`);
       if (audio.recording_dropped_chunks) warnings.push("Recording lost audio under load; the saved file has gaps.");

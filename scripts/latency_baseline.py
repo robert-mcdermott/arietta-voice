@@ -205,6 +205,9 @@ def run_child(config, directory, turns, audible, idle_seconds):
         runtime = AriettaVoiceRuntime(config)
         runtime.status_publisher.start(runtime)
         started = time.monotonic()
+        from arietta_voice.devices import resolve_device
+        output = resolve_device(config.audio.output_device, 'output')
+        runtime.output_device = runtime.chime_player.device = output['index']
         runtime.warmup()
         report['cached_process_startup_s'] = time.monotonic() - started
         report.update(phase='idle', ready=True)

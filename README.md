@@ -287,6 +287,46 @@ input and 512-sample chunks.
 
 ### Audio limits and failure recovery
 
+Choose devices with `uv run arietta-voice devices`. It reports exact names,
+host-qualified selectors, direction capabilities and current OS defaults.
+Copy a `selector` into the `[audio]` section of your ignored
+`config/arietta_voice.local.toml`, for example:
+
+```toml
+[audio]
+input_device = "Core Audio::Jabra SPEAK 410 USB"
+output_device = "Core Audio::Jabra SPEAK 410 USB"
+```
+
+Use the names reported on your own machine. Matching is exact and ignores case;
+the input/output direction disambiguates separate microphone and speaker entries.
+Identical names on different hosts require `HOST::NAME`. Remaining duplicates or
+missing explicit devices wait for correction/reconnection, without falling back.
+Numeric indices are diagnostic only and must not be saved as selectors.
+Empty strings (the example defaults) or omitted settings use the OS defaults
+when connecting. CLI `run --input-device "NAME" --output-device "NAME"`
+overrides config for that run; an empty argument restores default selection.
+Restart after changing config or changing the OS default during a healthy session.
+
+Capture inactivity, callback stalls, long sleep/scheduling gaps and returned
+PortAudio errors stop the current turn. The runtime closes streams, clears the
+conversation and buffered audio, and enters `waiting_for_audio` while keeping its
+heartbeat alive. It refreshes the device inventory and retries acquisition with
+exponential backoff, capped at 30 seconds, until the selected devices return.
+A fresh microphone callback is required before resuming. Say the wake phrase
+again after recovery (wake-disabled mode starts a fresh session). Interrupted
+turns and tool actions are never automatically replayed. Speech and chimes use
+the selected output. An explicit WAV recording continues in the same file across
+reconnects, with a gap for unavailable capture.
+
+`audio.device_stall_s` defaults to `3.0` (range 1–30 seconds), and
+`audio.reconnect_delay_s` to `1.0` (range 0.1–30 seconds). The admin reliability
+panel shows device state, last selected routes, failures and recoveries.
+Long scheduling pauses or forward wall-clock jumps may conservatively reset a
+session. Recovery cannot interrupt a native audio call that never returns;
+that case still requires restarting the voice process. Physical USB disconnect
+and sleep/wake checks remain pending; see [device recovery validation](evals/DEVICE_RECOVERY_VALIDATION.md).
+
 These defaults are defined in the application and documented in the example
 and distribution TOML configs. Existing configs inherit omitted settings.
 Override only the settings you want in your private `.local.toml`; restart the

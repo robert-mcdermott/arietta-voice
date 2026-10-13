@@ -111,6 +111,10 @@ class AudioConfig:
     playback_reference_s: float = 4.0
     pre_roll_ms: float = 200.0
     aec_delay_ms: float = 0.0
+    input_device: str | None = None
+    output_device: str | None = None
+    device_stall_s: float = 3.0
+    reconnect_delay_s: float = 1.0
 
 
 @dataclass(slots=True)
@@ -321,6 +325,10 @@ def load_config(path: Path | None = None) -> AppConfig:
             playback_reference_s=float(audio.get("playback_reference_s", base.audio.playback_reference_s)),
             pre_roll_ms=float(audio.get("pre_roll_ms", base.audio.pre_roll_ms)),
             aec_delay_ms=float(audio.get("aec_delay_ms", base.audio.aec_delay_ms)),
+            input_device=(audio.get("input_device") or "").strip() or None,
+            output_device=(audio.get("output_device") or "").strip() or None,
+            device_stall_s=float(audio.get("device_stall_s", base.audio.device_stall_s)),
+            reconnect_delay_s=float(audio.get("reconnect_delay_s", base.audio.reconnect_delay_s)),
         ),
         models=ModelConfig(
             chat_provider=str(models.get("chat_provider", base.models.chat_provider)).strip(),
@@ -456,6 +464,12 @@ def validate_config(config: AppConfig) -> AppConfig:
     number("audio.playback_reference_s", config.audio.playback_reference_s, 1, 30)
     number("audio.pre_roll_ms", config.audio.pre_roll_ms, 0, 500)
     number("audio.aec_delay_ms", config.audio.aec_delay_ms, 0, 500)
+    number("audio.device_stall_s", config.audio.device_stall_s, 1, 30)
+    number("audio.reconnect_delay_s", config.audio.reconnect_delay_s, 0.1, 30)
+    for name in ("input_device", "output_device"):
+        value = getattr(config.audio, name)
+        require(value is None or isinstance(value, str) and bool(value.strip()) and len(value) <= 512,
+                f"audio.{name} must be a nonempty device name or omitted")
     number("runtime.turn_timeout_s", config.runtime.turn_timeout_s, 1, 600)
     number("runtime.endpoint_timeout_s", config.runtime.endpoint_timeout_s, 0.1, 30)
     number("runtime.startup_timeout_s", config.runtime.startup_timeout_s, 1, 1800)

@@ -6,6 +6,18 @@ import pytest
 from arietta_voice import cli
 
 
+def test_cli_device_overrides_are_ephemeral_and_allow_default(tmp_path):
+    from arietta_voice.config import default_config
+    config = default_config(tmp_path)
+    config.audio.input_device = config.audio.output_device = 'Saved device'
+    args = cli.build_parser().parse_args(['run', '--input-device', 'New microphone', '--output-device', ''])
+    cli._apply_runtime_overrides(config, args)
+    assert config.audio.input_device == 'New microphone'
+    assert config.audio.output_device is None
+    assert not list(tmp_path.iterdir())
+
+
+
 @pytest.mark.parametrize("arguments, field", [
     (["--session-timeout", "nan"], "wake_word.session_timeout_s"),
     (["--session-timeout", "-1"], "wake_word.session_timeout_s"),

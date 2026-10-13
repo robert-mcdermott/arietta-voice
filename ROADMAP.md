@@ -209,13 +209,23 @@ continuous 10 ms AEC framing, configurable pre-roll, cleaned interruption
 handoff, alignment resets on gaps/underflow, and keyboard cancellation during
 generation gaps and final device draining. Private settings remain unchanged.
 [Validation and timing limitations](evals/AEC_VALIDATION.md) distinguish software
-contracts from physical interruption latency. Device selection, sleep/reconnect,
-measured acoustic calibration and the 300 ms p95 target remain open.
+contracts from physical interruption latency. Measured acoustic calibration and
+the 300 ms p95 target remain open.
 The five-minute isolated Jabra check passed operator-confirmed early/later
 interruption, quiet playback and farewell checks, with no turn failures. It
 recorded application queue drops and one output underflow, retained as load-test
 follow-ups. A final-code muted three-turn smoke passed with zero underflows or
 failures. The synthetic suite now passes 460 tests.
+
+**Device selection/recovery status (October 12, 2026):** the remaining software
+portion of item 6 is implemented: exact input/output selectors, private/CLI
+overrides, direction-aware diagnostics, stale capture and sleep-gap detection,
+stream teardown, inventory refresh and bounded reconnect backoff. Recovery
+discards the interrupted turn/session; it does not replay external actions.
+Admin status distinguishes a live process waiting for audio from a ready one.
+[Validation](evals/DEVICE_RECOVERY_VALIDATION.md) records automated coverage and
+native checks. Physical unplug/replug and sleep/wake checks are deferred at the
+user's request, so those hardware acceptance gates remain open.
 
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.

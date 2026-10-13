@@ -76,9 +76,10 @@ def collect_environment(config, root):
     }
     metadata["chip"] = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
     metadata["ram_gib"] = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)) / 2**30
-    devices = sd.query_devices()
-    metadata["devices"] = {kind: {"index": int(index), "name": devices[index]["name"]}
-                           for kind, index in zip(("input", "output"), sd.default.device) if index >= 0}
+    from arietta_voice.devices import select_devices
+    selected_input, selected_output = select_devices(config.audio)
+    metadata["devices"] = {kind: {key: row[key] for key in ("index", "name", "selector")}
+                           for kind, row in (("input", selected_input), ("output", selected_output)) if row}
     metadata["cached_revisions"] = {}
     for model in (config.models.chat_model, "openai/whisper-tiny"):
         if Path(model).is_dir():
@@ -265,6 +266,8 @@ def _components(config, report, path, minutes, microphone_seconds, playback):
     runtime.status_publisher.start(runtime)
     timings = []
     try:
+        from arietta_voice.devices import select_devices
+        selected_input, selected_output = select_devices(config.audio)
         start = time.monotonic()
         runtime.warmup()
         report["warmup_seconds"] = round(time.monotonic() - start, 3)
@@ -283,6 +286,7 @@ def _components(config, report, path, minutes, microphone_seconds, playback):
         if microphone_seconds:
             captured, square_sum, maximum = 0, 0.0, 0.0
             with MicrophoneStream(config.audio.sample_rate, config.audio.chunk_samples,
+                                  device=selected_input['index'], stall_s=config.audio.device_stall_s,
                                   max_queue_chunks=config.audio.queue_max_chunks) as microphone:
                 deadline = time.monotonic() + microphone_seconds
                 while time.monotonic() < deadline:
@@ -299,7 +303,8 @@ def _components(config, report, path, minutes, microphone_seconds, playback):
                 raise ValueError("Insufficient microphone callbacks")
         if playback:
             # Fixed synthetic phrase, conservative gain; no system volume changes.
-            with sd.OutputStream(samplerate=source_rate, channels=1, dtype="float32") as stream:
+            with sd.OutputStream(samplerate=source_rate, channels=1, dtype="float32",
+                                 device=selected_output['index'] if selected_output else None) as stream:
                 underflow = stream.write(source_audio * 0.25)
             report["playback"] = {"seconds": round(len(source_audio) / source_rate, 3),
                                   "underflow": bool(underflow), "audibility": "requires_human_confirmation"}

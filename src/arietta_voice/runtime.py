@@ -17,6 +17,7 @@ from arietta_voice.audio import (
     RawKeypressMonitor,
     UtteranceBuffer,
     AudioReferenceBuffer,
+    RecordingWriter,
     play_tts_stream,
     play_tts_stream_passive,
 )
@@ -32,6 +33,7 @@ from arietta_voice.turns import CancellationToken
 from arietta_voice.streaming import speech_stream
 from arietta_voice.memory_jobs import MemoryJobs
 from arietta_voice.wake import WakeWordMatch, build_wake_word_detector
+from arietta_voice.devices import AudioDeviceError, DEVICE_ERRORS, select_devices, refresh_audio_backend
 
 
 GOODBYE_PATTERN = re.compile(
@@ -84,6 +86,12 @@ class AriettaVoiceRuntime:
         self.display_speaking_active = False
         self._greeting_index = 0
         self._goodbye_index = 0
+        self.device_connection = "starting"
+        self.audio_reconnect_attempts = 0
+        self.audio_recoveries = 0
+        self.audio_device_error = None
+        self.selected_input = self.selected_output = None
+        self.output_device = None
         self.status_publisher = RuntimeStatusPublisher(config)
 
     def set_state(self, state: AssistantState) -> None:
@@ -209,10 +217,21 @@ class AriettaVoiceRuntime:
             token.cancel()
 
     def _inference_wait(self):
+        if self._turn_thread_ident is None or threading.get_ident() == self._turn_thread_ident:
+            self._check_audio_health()
         self._publish_status()
         if (self._turn_keys is not None and threading.get_ident() == self._turn_thread_ident
                 and self._turn_keys.pressed()):
             self.cancel_turn()
+
+    def _check_audio_health(self):
+        microphone = self.microphone
+        if microphone is not None and hasattr(type(microphone), 'check_health'):
+            microphone.check_health()
+
+    def _playback_wait(self):
+        self._check_audio_health()
+        self._publish_status()
 
     def _infer(self, operation: str, payload=None, *, cancellation=None):
         token = cancellation or self._turn_token
@@ -220,8 +239,14 @@ class AriettaVoiceRuntime:
             token.check()
         self.turn_stage = operation
         self._publish_status(force=True)
-        return self.worker.call(operation, payload, timeout_s=self._remaining_time(),
-                                on_wait=self._inference_wait, cancellation=token)
+        foreground = self._turn_thread_ident is None or threading.get_ident() == self._turn_thread_ident
+        if foreground:
+            self._check_audio_health()
+        result = self.worker.call(operation, payload, timeout_s=self._remaining_time(),
+                                  on_wait=self._inference_wait, cancellation=token)
+        if foreground:
+            self._check_audio_health()
+        return result
 
     def _chat_request(self, user_text):
         return {"message": user_text,
@@ -243,7 +268,7 @@ class AriettaVoiceRuntime:
     async def _tts_stream(self, text: str):
         stream = speech_stream(text, infer=self._infer, worker=self.worker,
                                cancellation=self._turn_token or CancellationToken(),
-                               deadline=self._turn_deadline, on_wait=self._publish_status,
+                               deadline=self._turn_deadline, on_wait=self._playback_wait,
                                playback_events=True)
         try:
             async for frame in stream:
@@ -261,6 +286,8 @@ class AriettaVoiceRuntime:
             deadline=self._turn_deadline,
             chime_player=self.chime_player,
             keypress_monitor=self._turn_keys,
+            output_device=self.output_device,
+            health_check=self._check_audio_health,
             playback_level_callback=self._update_display_speech,
         )
         self.event_logger.log("assistant_audio_complete", interrupted=False)
@@ -292,6 +319,8 @@ class AriettaVoiceRuntime:
             deadline=self._turn_deadline,
             reference_seconds=self.config.audio.playback_reference_s,
             pre_roll_ms=self.config.audio.pre_roll_ms,
+            output_device=self.output_device,
+            health_check=self._check_audio_health,
             aec_delay_ms=self.config.audio.aec_delay_ms,
             microphone=microphone,
             vad=self.vad,
@@ -319,7 +348,7 @@ class AriettaVoiceRuntime:
         result = {}
         stream = speech_stream(infer=self._infer, worker=self.worker,
                                cancellation=self._turn_token or CancellationToken(),
-                               deadline=self._turn_deadline, on_wait=self._publish_status,
+                               deadline=self._turn_deadline, on_wait=self._playback_wait,
                                playback_events=True,
                                request=self._chat_request(transcript), on_result=result.update)
         buffered = self._deliver_response('', microphone=microphone,
@@ -477,6 +506,9 @@ class AriettaVoiceRuntime:
                 self.utterances_discarded += 1
                 raise ValueError("Utterance exceeds the audio limit")
             return self._process_utterance(audio, microphone, keypress_monitor)
+        except DEVICE_ERRORS:
+            self.cancel_turn()
+            raise
         except WorkerCancelled:
             self.chime_player.stop()
             microphone.drain()
@@ -542,22 +574,19 @@ class AriettaVoiceRuntime:
                 "last_turn_duration_ms": self.last_turn_duration_ms,
                 "worker_pid": self.worker.pid, "worker_restarts": self.worker.restarts,
                 "memory": self.memory_jobs.snapshot(),
+                "devices": {"connection": self.device_connection,
+                            "reconnect_attempts": self.audio_reconnect_attempts,
+                            "recoveries": self.audio_recoveries,
+                            "last_error": self.audio_device_error,
+                            "input": self.selected_input, "output": self.selected_output},
                 "audio": microphone.statistics() if microphone is not None else self._last_audio_statistics}
 
     def run(self) -> None:
         self.status_publisher.start(self)
         try:
             self.warmup()
-            with RawKeypressMonitor() as keypress_monitor, MicrophoneStream(
-                self.config.audio.sample_rate, self.config.audio.chunk_samples,
-                record_path=self.options.record_path, max_queue_chunks=self.config.audio.queue_max_chunks,
-                recording_queue_max_chunks=self.config.audio.recording_queue_max_chunks,
-                max_recording_s=self.config.audio.max_recording_s,
-            ) as microphone:
-                self.microphone = microphone
-                if not self.config.wake_word.enabled:
-                    self._open_session(None)
-                self._listen(microphone, keypress_monitor)
+            with RawKeypressMonitor() as keypress_monitor:
+                self._run_audio(keypress_monitor)
         except KeyboardInterrupt:
             self.set_state(AssistantState.STOPPING)
         except Exception as exc:
@@ -567,12 +596,87 @@ class AriettaVoiceRuntime:
             if self.microphone is not None:
                 self._last_audio_statistics = self.microphone.statistics()
             self.microphone = None
+            self.device_connection = "stopped"
             self.turn_stage = "stopped"
             with ExitStack() as cleanup:
                 cleanup.callback(self.status_publisher.stop, self)
                 cleanup.callback(self.worker.close)
                 cleanup.callback(self.memory_jobs.close)
                 cleanup.callback(self.chime_player.stop)
+
+    def _run_audio(self, keypress_monitor):
+        # Recording has one owner for this invocation, including reconnects.
+        # Reopening a microphone must never truncate the requested WAV file.
+        recorder = None
+        if self.options.record_path:
+            recorder = RecordingWriter(self.options.record_path, self.config.audio.sample_rate,
+                                       self.config.audio.recording_queue_max_chunks,
+                                       self.config.audio.max_recording_s)
+            recorder.start()
+        failures = 0
+        try:
+            while True:
+                try:
+                    if failures:
+                        refresh_audio_backend()
+                    source, output = select_devices(self.config.audio)
+                    self.selected_input, self.selected_output = source['selector'], output['selector'] if output else None
+                    self.output_device = output['index'] if output else None
+                    self.chime_player.device = self.output_device
+                    with MicrophoneStream(self.config.audio.sample_rate, self.config.audio.chunk_samples,
+                            device=source['index'], stall_s=self.config.audio.device_stall_s,
+                            max_queue_chunks=self.config.audio.queue_max_chunks, recorder=recorder) as microphone:
+                        self.microphone = microphone
+                        # Require a fresh callback before reporting recovery.
+                        while microphone.get(timeout=0.1) is None:
+                            self._publish_status()
+                        self.reset_session()
+                        self.vad.reset()
+                        if failures:
+                            self.audio_recoveries += 1
+                        recovered = bool(failures)
+                        failures = 0
+                        self.device_connection = "connected"
+                        self.audio_device_error = self.last_error = None
+                        self.turn_stage = "idle"
+                        self.set_state(AssistantState.WAITING_FOR_WAKE if self.config.wake_word.enabled else AssistantState.LISTENING)
+                        if not self.config.wake_word.enabled:
+                            self._open_session(None)
+                        self.event_logger.log("audio_connected", recovery=recovered)
+                        try:
+                            self._listen(microphone, keypress_monitor)
+                            return
+                        finally:
+                            self._last_audio_statistics = microphone.statistics()
+                except DEVICE_ERRORS as exc:
+                    self.cancel_turn()
+                    self.memory_jobs.suspend()
+                    # All microphone/output contexts have unwound before refresh.
+                    try:
+                        self.chime_player.stop()
+                    except DEVICE_ERRORS:
+                        pass
+                    self.reset_session()
+                    self.vad.reset()
+                    self._update_display_speech(0, False)
+                    failures += 1
+                    self.audio_reconnect_attempts += 1
+                    self.device_connection = "waiting"
+                    self.audio_device_error = (str(exc) if isinstance(exc, AudioDeviceError)
+                                               else type(exc).__name__)
+                    self.last_error = self.audio_device_error
+                    self.turn_stage = "waiting_for_audio"
+                    self.set_state(AssistantState.WAITING_FOR_AUDIO)
+                    self.event_logger.log("audio_disconnected", error_type=self.audio_device_error,
+                                          attempt=self.audio_reconnect_attempts)
+                    self._publish_status(force=True)
+                    delay = min(30., self.config.audio.reconnect_delay_s * 2 ** min(failures-1, 5))
+                    time.sleep(delay)
+                finally:
+                    self.microphone = None
+        finally:
+            if recorder is not None:
+                recorder.close()
 
     def _listen(self, microphone, keypress_monitor) -> None:
         silence_limit = max(1, int(self.config.audio.silence_ms * self.config.audio.sample_rate /
@@ -643,7 +747,8 @@ class AriettaVoiceRuntime:
                     self.turn_stage = "endpoint"
                     self._stage_started_at = time.monotonic()
                     endpoint = self.worker.call("endpoint", utterance,
-                        timeout_s=self.config.runtime.endpoint_timeout_s, on_wait=self._publish_status)
+                        timeout_s=self.config.runtime.endpoint_timeout_s, on_wait=self._playback_wait)
+                    self._check_audio_health()
                     self.event_logger.log("smart_turn_score", probability=round(endpoint, 4))
                     self.turn_stage = "idle"
                     if endpoint < 0.5:
@@ -666,6 +771,8 @@ class AriettaVoiceRuntime:
                 observed_drops = microphone.dropped_chunks + microphone.input_overflows
                 silent_chunks = 0
                 self.vad.reset()
+            except DEVICE_ERRORS:
+                raise
             except Exception as exc:
                 buffer.clear()
                 clear_pre_roll()

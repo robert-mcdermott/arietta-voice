@@ -9,6 +9,80 @@ from arietta_voice import audio
 from arietta_voice.worker import WorkerTimeout
 
 
+def test_external_recording_survives_microphone_reopen(monkeypatch, tmp_path):
+    writer = audio.RecordingWriter(tmp_path / 'reconnect.wav', 16000, 8, 10)
+    writer.start()
+    stream_factory = Mock(side_effect=lambda **kw: Mock(active=True))
+    monkeypatch.setattr(audio.sd, 'InputStream', stream_factory)
+    for index in (3, 7):
+        with audio.MicrophoneStream(16000, 512, device=index, recorder=writer) as mic:
+            mic._callback(np.ones((512, 1), dtype=np.float32), 512, None, False)
+        assert writer._thread.is_alive()
+    writer.close()
+    with wave.open(str(writer.path)) as recording:
+        assert recording.getnframes() == 1024
+    assert [call.kwargs['device'] for call in stream_factory.call_args_list] == [3, 7]
+
+
+def test_inactive_capture_rejects_already_queued_audio(monkeypatch):
+    from arietta_voice.devices import AudioDeviceError
+    monkeypatch.setattr(audio.sd, 'InputStream', lambda **kw: Mock(active=False))
+    with audio.MicrophoneStream(16000, 512) as mic:
+        mic._callback(np.ones((512, 1)), 512, None, False)
+        with pytest.raises(AudioDeviceError, match='Inactive'):
+            mic.get()
+
+
+def test_health_failure_aborts_selected_output_before_generator_cleanup(monkeypatch):
+    from arietta_voice.devices import AudioDeviceError
+    order = []
+    device = Mock()
+    device.abort.side_effect = lambda: order.append('abort')
+    device.close.side_effect = lambda: order.append('close')
+    output = Mock(return_value=device)
+    monkeypatch.setattr(audio.sd, 'OutputStream', output)
+    async def chunks():
+        try:
+            yield np.zeros(512, dtype=np.float32), 24000
+            yield None, None
+        finally:
+            order.append('generator_close')
+    def health():
+        if device.write.called:
+            raise AudioDeviceError('CaptureStalled')
+    with pytest.raises(AudioDeviceError):
+        audio.play_tts_stream_passive(tts_stream=chunks(), chime_player=Mock(),
+                                     output_device=8, health_check=health)
+    assert output.call_args.kwargs['device'] == 8
+    assert order == ['abort', 'close', 'generator_close']
+
+
+def test_chime_routes_and_closes_selected_device(monkeypatch):
+    play, stop, stream = Mock(), Mock(), Mock()
+    monkeypatch.setattr(audio.sd, 'play', play)
+    monkeypatch.setattr(audio.sd, 'stop', stop)
+    monkeypatch.setattr(audio.sd, 'get_stream', lambda: stream)
+    chime = audio.ChimePlayer(True, device=9)
+    chime.start()
+    chime.stop()
+    assert play.call_args.kwargs['device'] == 9
+    stop.assert_called_once()
+    stream.close.assert_called_once()
+
+
+def test_failed_chime_start_closes_partially_opened_stream(monkeypatch):
+    from arietta_voice.devices import AudioDeviceError
+    stream = Mock()
+    monkeypatch.setattr(audio.sd, 'play', Mock(side_effect=AudioDeviceError('OutputUnavailable')))
+    monkeypatch.setattr(audio.sd, 'stop', Mock())
+    monkeypatch.setattr(audio.sd, 'get_stream', lambda: stream)
+    chime = audio.ChimePlayer(True, device=9)
+    with pytest.raises(AudioDeviceError, match='OutputUnavailable'):
+        chime.start()
+    assert chime.started_at == 0
+    stream.close.assert_called_once()
+
+
 def test_microphone_overflow_is_bounded_and_keeps_recent_audio():
     microphone = audio.MicrophoneStream(16000, 512, max_queue_chunks=2)
     for value in range(10):

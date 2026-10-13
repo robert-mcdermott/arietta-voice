@@ -11,6 +11,110 @@ from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import runtime_status_path
 
 
+@pytest.mark.parametrize('wake_enabled', [False, True])
+def test_device_failure_closes_before_refresh_clears_session_and_never_replays(runtime, monkeypatch, wake_enabled):
+    from arietta_voice.devices import AudioDeviceError
+    from arietta_voice.turns import CancellationToken
+    runtime.config.wake_word.enabled = wake_enabled
+    order, waits = [], []
+    opened = []
+    token = CancellationToken()
+    monkeypatch.setattr(runtime, 'cancel_turn', token.cancel)
+    runtime.memory_jobs = Mock(snapshot=Mock(return_value={}))
+    def select(_):
+        return {'selector': 'CoreAudio::Mic', 'index': len(opened)+1}, {'selector': 'CoreAudio::Speaker', 'index': 9}
+    monkeypatch.setattr(runtime_module, 'select_devices', select)
+    class Mic:
+        def __init__(self, *a, **kw):
+            self.device = kw['device']
+        def __enter__(self):
+            opened.append(self.device)
+            order.append('open')
+            return self
+        def __exit__(self, *a):
+            order.append('close')
+        def get(self, **kw):
+            return np.zeros(512)
+        def statistics(self):
+            return {}
+    monkeypatch.setattr(runtime_module, 'MicrophoneStream', Mic)
+    monkeypatch.setattr(runtime_module, 'refresh_audio_backend', lambda: order.append('refresh'))
+    def backoff(delay):
+        assert runtime.state == AssistantState.WAITING_FOR_AUDIO
+        assert not runtime.session.active and not runtime.session.history
+        assert runtime.last_user_transcript == ''
+        assert token.cancelled
+        waits.append(delay)
+    monkeypatch.setattr(runtime_module.time, 'sleep', backoff)
+    def listen(mic, keys):
+        assert runtime.output_device == runtime.chime_player.device == 9
+        assert runtime.session.active is (not wake_enabled)
+        assert not runtime.session.history
+        if len(opened) == 1:
+            runtime._store_turn('old question', 'old answer')
+            runtime.last_user_transcript = 'old'
+            raise AudioDeviceError('InputStreamInactive')
+    monkeypatch.setattr(runtime, '_listen', listen)
+    runtime._run_audio(Mock())
+    assert order == ['open', 'close', 'refresh', 'open', 'close']
+    assert opened == [1, 2] and waits == [1.0]
+    assert runtime.audio_reconnect_attempts == runtime.audio_recoveries == 1
+    assert runtime.device_connection == 'connected'
+    assert runtime.microphone is None
+    runtime.memory_jobs.suspend.assert_called_once()
+
+
+def test_missing_device_backs_off_without_falling_back(runtime, monkeypatch):
+    from arietta_voice.devices import AudioDeviceError
+    select = Mock(side_effect=AudioDeviceError('InputUnavailable'))
+    mic = Mock()
+    monkeypatch.setattr(runtime_module, 'select_devices', select)
+    monkeypatch.setattr(runtime_module, 'MicrophoneStream', mic)
+    monkeypatch.setattr(runtime_module, 'refresh_audio_backend', lambda: None)
+    delays = []
+    def sleep(delay):
+        delays.append(delay)
+        if len(delays) == 8:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(runtime_module.time, 'sleep', sleep)
+    with pytest.raises(KeyboardInterrupt):
+        runtime._run_audio(Mock())
+    assert delays == [1, 2, 4, 8, 16, 30, 30, 30]
+    mic.assert_not_called()
+    assert runtime.audio_recoveries == 0
+
+
+def test_open_stream_without_callback_is_not_reported_as_recovered(runtime, monkeypatch):
+    from arietta_voice.devices import AudioDeviceError
+    stream = Mock()
+    stream.__enter__ = Mock(return_value=stream)
+    stream.__exit__ = Mock(return_value=False)
+    stream.get.side_effect = [None, AudioDeviceError('CaptureStalled')]
+    stream.statistics.return_value = {}
+    monkeypatch.setattr(runtime_module, 'select_devices', lambda _: ({'selector': 'Mic', 'index': 1}, None))
+    monkeypatch.setattr(runtime_module, 'MicrophoneStream', lambda *a, **kw: stream)
+    monkeypatch.setattr(runtime_module.time, 'sleep', Mock(side_effect=KeyboardInterrupt))
+    listen = Mock()
+    monkeypatch.setattr(runtime, '_listen', listen)
+    with pytest.raises(KeyboardInterrupt):
+        runtime._run_audio(Mock())
+    listen.assert_not_called()
+    stream.__exit__.assert_called_once()
+    assert runtime.device_connection == 'waiting'
+    assert runtime.audio_recoveries == 0
+
+
+def test_device_error_escapes_turn_recovery(runtime, monkeypatch):
+    from arietta_voice.devices import AudioDeviceError
+    monkeypatch.setattr(runtime, '_infer', Mock(side_effect=AudioDeviceError('CaptureStalled')))
+    recover = Mock()
+    monkeypatch.setattr(runtime, '_recover', recover)
+    with pytest.raises(AudioDeviceError):
+        runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    recover.assert_not_called()
+    assert not runtime.session.history
+
+
 class FakeWorker:
     pid = None
     restarts = 0

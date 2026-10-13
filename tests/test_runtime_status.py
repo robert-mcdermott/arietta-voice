@@ -22,6 +22,17 @@ def _iso(seconds_ago: float = 0.0) -> str:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def test_waiting_for_audio_is_alive_but_not_ready(tmp_path):
+    config = _config(tmp_path)
+    write_runtime_status(config, {'heartbeat_at': _iso(), 'lifecycle': 'running',
+        'state': 'waiting_for_audio', 'session_active': False,
+        'reliability': {'devices': {'connection': 'waiting', 'reconnect_attempts': 2}}})
+    status = read_runtime_status(config)
+    assert status['is_running'] and not status['session_active']
+    assert 'Waiting for the configured audio devices' in status['note']
+    assert status['reliability']['devices']['reconnect_attempts'] == 2
+
+
 def test_missing_runtime_status_reports_not_running(tmp_path: Path) -> None:
     config = _config(tmp_path)
 

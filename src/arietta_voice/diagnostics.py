@@ -22,20 +22,8 @@ def _check(name: str, ok: bool, detail: str, **metadata: Any) -> dict[str, Any]:
 
 
 def list_audio_devices() -> list[dict[str, Any]]:
-    import sounddevice as sd
-
-    devices = []
-    for index, device in enumerate(sd.query_devices()):
-        devices.append(
-            {
-                "index": index,
-                "name": device["name"],
-                "max_input_channels": int(device.get("max_input_channels", 0)),
-                "max_output_channels": int(device.get("max_output_channels", 0)),
-                "default_samplerate": float(device.get("default_samplerate", 0)),
-            }
-        )
-    return devices
+    from arietta_voice.devices import device_inventory
+    return device_inventory()
 
 
 def run_startup_diagnostics(config: AppConfig, *, include_hardware: bool = True) -> dict[str, Any]:
@@ -106,18 +94,23 @@ def run_startup_diagnostics(config: AppConfig, *, include_hardware: bool = True)
             checks.append(
                 _check(
                     "audio_devices",
-                    input_count > 0 and output_count > 0,
+                    input_count > 0 and (output_count > 0 or not (config.audio.tts_enabled or config.audio.chime_enabled)),
                     f"Found {input_count} input and {output_count} output audio devices",
                     input_count=input_count,
                     output_count=output_count,
                 )
             )
+            from arietta_voice.devices import select_devices
+            selected_input, selected_output = select_devices(config.audio)
+            checks.append(_check('audio_selection', True, 'Selected audio devices support the required formats',
+                                 input=selected_input['selector'],
+                                 output=selected_output['selector'] if selected_output else None))
         except Exception as exc:
             checks.append(
                 _check(
                     "audio_devices",
                     False,
-                    f"Audio device enumeration failed: {type(exc).__name__}",
+                    f"Audio device enumeration or selection failed: {type(exc).__name__}",
                     error=type(exc).__name__,
                 )
             )

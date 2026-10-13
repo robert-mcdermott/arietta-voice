@@ -27,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--chime", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--wake", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--voice", help="Kokoro voice id")
+    run_parser.add_argument("--input-device", help="Exact device name or HOST::NAME from devices; empty uses system default")
+    run_parser.add_argument("--output-device", help="Exact device name or HOST::NAME from devices; empty uses system default")
     run_parser.add_argument(
         "--model",
         help="Chat model id. Use an MLX model for local chat or a Bedrock model id when chat_provider=bedrock.",
@@ -82,6 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _apply_runtime_overrides(config, args):
+    for name in ('input_device', 'output_device'):
+        value = getattr(args, name, None)
+        if value is not None:
+            setattr(config.audio, name, value.strip() or None)
     if args.memory is not None:
         config.memory.enabled = args.memory
     if args.tts is not None:

@@ -25,6 +25,13 @@ session_timeout_s = 20.0
 allow_inline_commands = true
 
 [audio]
+# Empty = OS default when connecting. Use an exact name or HOST::NAME from `devices`.
+# Store personal selections in arietta_voice.local.toml; indices are not stable.
+input_device = ""
+output_device = ""
+# Recover after callback stalls or sleep/scheduling gaps; retry backs off to 30 s.
+device_stall_s = 3.0
+reconnect_delay_s = 1.0
 sample_rate = 16000
 chunk_samples = 512
 silence_ms = 700

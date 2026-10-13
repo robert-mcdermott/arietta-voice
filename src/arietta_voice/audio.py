@@ -19,6 +19,7 @@ import wave
 
 import numpy as np
 import sounddevice as sd
+from arietta_voice.devices import CaptureHealth
 
 sd.default.latency = "high"
 
@@ -60,20 +61,35 @@ def make_chime(duration: float = 30.0, tick_every: float = 1.5) -> np.ndarray:
 
 
 class ChimePlayer:
-    def __init__(self, enabled: bool) -> None:
+    def __init__(self, enabled: bool, device=None) -> None:
         self.sound = make_chime() if enabled else None
         self.started_at = 0.0
+        self.device = device
 
     def stop(self) -> None:
         if self.started_at:
-            sd.stop()
-            self.started_at = 0.0
+            try:
+                try:
+                    sd.stop()
+                finally:
+                    sd.get_stream().close()
+            finally:
+                self.started_at = 0.0
 
     def start(self) -> None:
         if self.sound is None:
             return
-        sd.play(self.sound, CHIME_SR)
         self.started_at = time.monotonic()
+        try:
+            sd.play(self.sound, CHIME_SR, device=self.device)
+        except BaseException:
+            # A convenience stream can be created before its start fails.
+            # Release it before the runtime reinitializes PortAudio.
+            try:
+                self.stop()
+            except Exception:
+                pass
+            raise
 
     def stop_at_gap(self) -> None:
         if self.sound is None or self.started_at == 0:
@@ -88,8 +104,7 @@ class ChimePlayer:
             phase = (elapsed - chime_head) % tick_every
             if phase < tick_duration:
                 time.sleep(tick_duration - phase + 0.005)
-        sd.stop()
-        self.started_at = 0.0
+        self.stop()
 
 
 class RecordingWriter:
@@ -162,18 +177,24 @@ class CaptureChunk:
 class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
     def __init__(self, sample_rate: int, chunk_samples: int, *, channels: int = 1,
                  record_path: Path | None = None, max_queue_chunks: int = 64,
-                 recording_queue_max_chunks: int = 256, max_recording_s: float = 3600.0) -> None:
+                 recording_queue_max_chunks: int = 256, max_recording_s: float = 3600.0,
+                 device=None, stall_s: float = 3.0, recorder: RecordingWriter | None = None) -> None:
         if max_queue_chunks < 1:
             raise ValueError("Microphone queue limit must be positive")
         self.sample_rate, self.chunk_samples, self.channels = sample_rate, chunk_samples, channels
         self.record_path = record_path
+        self.device, self.stall_s = device, stall_s
+        self._health = None
         self._audio_q: queue.Queue[CaptureChunk] = queue.Queue(maxsize=max_queue_chunks)
         self.dropped_chunks = 0
         self.input_overflows = 0
-        self._recorder = RecordingWriter(record_path, sample_rate, recording_queue_max_chunks, max_recording_s) if record_path else None
+        self._owns_recorder = recorder is None
+        self._recorder = recorder or (RecordingWriter(record_path, sample_rate, recording_queue_max_chunks, max_recording_s) if record_path else None)
         self._stream = None
 
     def _callback(self, indata, frames, time_info, status) -> None:
+        if self._health is not None:
+            self._health.captured()
         if status:
             self.input_overflows += 1
         chunk = indata[:, 0].copy()
@@ -203,11 +224,13 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
                 self.dropped_chunks += 1
 
     def __enter__(self) -> "MicrophoneStream":
-        if self._recorder is not None:
+        if self._recorder is not None and self._owns_recorder:
             self._recorder.start()
         try:
+            self._health = CaptureHealth(self.stall_s)
             self._stream = sd.InputStream(samplerate=self.sample_rate, channels=self.channels,
-                                          dtype="float32", blocksize=self.chunk_samples, callback=self._callback)
+                                          dtype="float32", blocksize=self.chunk_samples, callback=self._callback,
+                                          device=self.device)
             self._stream.start()
         except BaseException:
             self.__exit__(None, None, None)
@@ -223,9 +246,13 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
                     self._stream.close()
         finally:
             self._stream = None
-            if self._recorder is not None:
+            if self._recorder is not None and self._owns_recorder:
                 self._recorder.close()
             self.drain()
+
+    def check_health(self) -> None:
+        if self._health is not None and self._stream is not None:
+            self._health.check(self._stream.active)
 
     def statistics(self) -> dict:
         recorder = self._recorder
@@ -236,6 +263,7 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
                 "recording_error": recorder.error if recorder else None}
 
     def get(self, timeout: float | None = None) -> np.ndarray | None:
+        self.check_health()
         try:
             return self._audio_q.get(timeout=timeout).samples
         except queue.Empty:
@@ -245,6 +273,7 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
         return self.get_capture_nowait().samples
 
     def get_capture_nowait(self) -> CaptureChunk:
+        self.check_health()
         return self._audio_q.get_nowait()
 
     def empty(self) -> bool:
@@ -447,18 +476,20 @@ def _playback_level_from_chunk(playback_chunk: np.ndarray) -> float:
 
 def play_tts_stream_passive(*, tts_stream, chime_player: ChimePlayer,
                             playback_level_callback=None, deadline: float | None = None, cancellation=None,
-                            keypress_monitor=None) -> None:
+                            keypress_monitor=None, output_device=None, health_check=None) -> None:
     play_tts_stream(tts_stream=tts_stream, microphone=None, vad=None, keypress_monitor=keypress_monitor,
                     chime_player=chime_player, sample_rate=16000, use_aec=False,
                     barge_in_threshold_chunks=5, playback_level_callback=playback_level_callback,
-                    deadline=deadline, cancellation=cancellation)
+                    deadline=deadline, cancellation=cancellation, output_device=output_device,
+                    health_check=health_check)
 
 
 def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_player: ChimePlayer,
                     sample_rate: int, use_aec: bool, barge_in_threshold_chunks: int,
                     playback_level_callback=None, reference_seconds: float = 4.0,
                     deadline: float | None = None, cancellation=None,
-                    pre_roll_ms: float = 0, aec_delay_ms: float = 0) -> PlaybackResult:
+                    pre_roll_ms: float = 0, aec_delay_ms: float = 0,
+                    output_device=None, health_check=None) -> PlaybackResult:
     from contextlib import ExitStack
     from arietta_voice.worker import WorkerTimeout
 
@@ -540,6 +571,8 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
         completed = False
         try:
             async for chunk_samples, sr in tts_stream:
+                if health_check is not None:
+                    health_check()
                 if cancellation is not None:
                     cancellation.check()
                 if deadline is not None and time.monotonic() >= deadline:
@@ -556,7 +589,7 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     continue
                 if output_stream is None:
                     chime_player.stop_at_gap()
-                    output_stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32")
+                    output_stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32", device=output_device)
                     output_stream.start()
                     if microphone is not None:
                         microphone.drain()
@@ -569,6 +602,8 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                 output_rate = sr
                 frame = chunk_samples.reshape(-1, 1)
                 for offset in range(0, len(frame), 1024):
+                    if health_check is not None:
+                        health_check()
                     if cancellation is not None:
                         cancellation.check()
                     if deadline is not None and time.monotonic() >= deadline:
@@ -605,6 +640,8 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
             # Remain interruptible while the final submitted samples are still
             # queued at the device; stop() itself would otherwise block this poll.
             while not interrupted and output_end is not None and time.monotonic() < output_end:
+                if health_check is not None:
+                    health_check()
                 if cancellation is not None:
                     cancellation.check()
                 if deadline is not None and time.monotonic() >= deadline:

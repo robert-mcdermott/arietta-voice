@@ -7,6 +7,14 @@ version policy and the release procedure.
 
 ### Added
 
+- Input/output selection by exact or host-qualified name in private config and
+  CLI, direction/default metadata in `devices`, and selected-format diagnostics.
+- Automatic audio reacquisition after returned device errors, callback stalls
+  and sleep/scheduling gaps, with bounded backoff, fresh sessions and no turn or
+  tool replay. Explicit recordings survive stream reopens without truncation.
+- Admin device/recovery status and synthetic device failure regression coverage.
+  Physical USB and sleep/wake validation is still pending.
+
 - Timestamped microphone capture and bounded pre-roll for listening and voice
   interruption, with documented `audio.pre_roll_ms` and `audio.aec_delay_ms`
   settings. Playback events report alignment resets and output underflows.
