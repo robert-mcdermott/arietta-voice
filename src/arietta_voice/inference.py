@@ -16,6 +16,7 @@ class InferenceEngine:
         self._speaker = None
         self._tts = None
         self._tts_pending = None
+        self._chat = None
         self._loop = asyncio.new_event_loop()
 
     def service(self):
@@ -59,16 +60,35 @@ class InferenceEngine:
             return self.stt().transcribe(payload, self.config.audio.sample_rate)
         if operation == "endpoint":
             return self.endpoint().probability(payload)
-        if operation == "chat":
+        if operation in {"chat", "chat_start"}:
             payload = dict(payload)
             service = self.service()
             service.config.tools.enabled = tuple(payload.pop("enabled_tools"))
             service.config.model_tools.enabled = tuple(payload.pop("enabled_model_tools"))
             payload.pop("voice_turn", None)  # Compatibility with older runtime callers.
+            if operation == "chat_start":
+                self.handle("chat_close", None)
+                self._chat = service.stream(**payload)
+                return None
             result = service.chat(**payload)
             if len(result.response) > 12_000:
                 raise ValueError("Response exceeds the speech limit")
             return {**asdict(result), "model_loaded": service._llm is not None and service._llm.is_loaded()}
+        if operation == "chat_next":
+            if self._chat is None:
+                raise ValueError("No active conversation stream")
+            return next(self._chat)
+        if operation == "chat_close":
+            if self._chat is not None:
+                self._chat.close()
+            self._chat = None
+            return None
+        if operation == "speech_close":
+            try:
+                self.handle("tts_close", None)
+            finally:
+                self.handle("chat_close", None)
+            return None
         if operation == "memory":
             from arietta_voice.llm import build_chat_model
             from arietta_voice.memory import MemoryStore

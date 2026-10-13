@@ -158,8 +158,24 @@ backpressure, cleanup and subsequent-turn recovery. An isolated muted real-model
 smoke passed its first turn plus two warm turns on the Jabra without failures or
 underflows; an isolated browser check passed Stop and next-chat recovery. Private
 settings were preserved. This is a correctness check, not a new latency baseline
-or evidence that the interruption target is met. Provider token/early-clause
-streaming remains item 3; generation still completes before speech starts.
+or evidence that the interruption target is met.
+
+**Provider streaming status (October 12, 2026):** item 3 is implemented for MLX
+and Bedrock, with structured text/completion events and incremental clauses sent
+to Kokoro. One inference owner alternates generation and synthesis while the
+speaker plays queued frames. Tool planning remains buffered; final post-tool
+answers stream, while direct planner answers are already complete. Console HTTP
+responses remain aggregated. Regression tests cover provider completion/errors,
+early audio, clause limits, cancellation during generation gaps, tool-payload
+withholding and partial-turn exclusion. Cloud behavior is checked with synthetic
+Bedrock events; live AWS validation remains a release check. The original
+100-turn baseline remains unchanged; no performance target is claimed yet.
+An isolated muted Mac smoke passed its first turn plus two warm turns through
+STT and the real output device. A separate three-sentence MLX/Kokoro check wrote
+its first audio 1802.5 ms before model generation completed, delivered all three
+clauses and reported zero output underflows. Both used synthetic context; local
+reports stay in ignored `tmp/`. This single response establishes ordering only,
+not a latency percentile, perceived speech quality or the acoustic interrupt target.
 
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.

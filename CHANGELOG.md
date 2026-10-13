@@ -7,6 +7,9 @@ version policy and the release procedure.
 
 ### Added
 
+- MLX and Bedrock token streaming with early clause-based voice playback,
+  bounded sentence segmentation, and interruption polling between clauses.
+- Provider stream, early-audio, tool-planning and partial-turn regression tests.
 - Per-turn cancellation across inference and speech, a web Chat Test Stop action,
   and bounded text/audio handoffs with backpressure and turn deadlines.
 - Cancellation, queue-pressure, stale-result and recovery regression coverage;
@@ -49,8 +52,8 @@ version policy and the release procedure.
 ### Changed
 
 - Console and voice share conversation, prompt, history and tool policy through
-  one service implementation, with separate worker processes. Model replies still
-  finish before speech starts; provider streaming is the next Phase 2 item.
+  one service implementation, with separate worker processes. Voice streams
+  speakable clauses; web chat continues to return one complete response.
 - Removed the built-in admin password and authentication bypass. Credential
   setup must complete before starting the API.
 - Tool creation/source writes require `admin.allow_source_editing = true`.
@@ -81,6 +84,9 @@ version policy and the release procedure.
 
 ### Fixed
 
+- Tool-planning payloads are withheld from speech; malformed or unavailable model
+  tool requests fail without exposing their JSON. Failed/incomplete provider
+  streams discard pending audio and do not store a partial conversation turn.
 - Interrupted speech aborts output before generation cleanup and drops queued
   audio. Cancelled partial replies are not stored or memorized; cancellation of
   post-delivery memory work preserves the answer without reporting a turn failure.
@@ -111,6 +117,9 @@ version policy and the release procedure.
 
 ### Migration notes
 
+- Bedrock streaming needs `bedrock:InvokeModelWithResponseStream` permission and
+  a compatible model. Streaming failures are not retried through the batch API.
+  Existing private settings remain valid; restart the runtime/API after updating.
 - New audio/runtime limits apply through defaults without changing private
   settings. Restart the runtime and API. Slow first-run model downloads may need
   a larger `runtime.startup_timeout_s`; see README for limits and recovery scope.

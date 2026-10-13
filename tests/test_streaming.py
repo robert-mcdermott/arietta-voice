@@ -48,3 +48,66 @@ def test_stream_errors_do_not_leave_background_work_or_stale_audio(failure):
         await stream.aclose()
     asyncio.run(consume())
     assert not any(t.name == 'arietta-speech-producer' for t in threading.enumerate())
+
+
+def test_early_audio_precedes_later_tokens_and_cancellation_closes_both_streams():
+    token, worker = CancellationToken(), Mock(pid=42)
+    first_played = threading.Event()
+    blocked = threading.Event()
+    chat_calls, tts_calls = [], []
+    def infer(operation, payload=None, *, cancellation):
+        cancellation.check()
+        if operation == 'chat_next':
+            chat_calls.append(True)
+            if len(chat_calls) == 1:
+                return {'kind':'clause', 'text':'First sentence.'}
+            blocked.set()
+            assert first_played.wait(1), 'Generation outran early playback'
+            while not cancellation.cancelled:
+                cancellation._event.wait(.01)
+            cancellation.check()
+        if operation == 'tts_next':
+            tts_calls.append(True)
+            return (np.zeros(4096, dtype=np.float32), 24000) if len(tts_calls) == 1 else None
+    async def consume():
+        stream = speech_stream(infer=infer, worker=worker, cancellation=token, request={})
+        frame, rate = await anext(stream)
+        assert rate == 24000 and len(frame) == 4096
+        first_played.set()
+        assert blocked.wait(1)
+        # Closing during pending generation must cancel and join its producer.
+        await stream.aclose()
+    asyncio.run(consume())
+    worker.call.assert_called_once_with('speech_close', timeout_s=1)
+    assert not any(t.name == 'arietta-speech-producer' for t in threading.enumerate())
+
+
+def test_stream_result_only_after_all_clauses_and_error_discards_partial_result():
+    for fail in (False, True):
+        result, spoken = {}, []
+        events = iter([{'kind':'clause','text':'First.'}, {'kind':'clause','text':'Second.'},
+                       {'kind':'done','result':{'response':'First. Second.'}}])
+        frames = []
+        def infer(operation, payload=None, **kwargs):
+            if operation == 'chat_next':
+                event = next(events)
+                if fail and event['kind'] == 'done':
+                    raise RuntimeError('Synthetic provider failure')
+                return event
+            if operation == 'tts_start':
+                spoken.append(payload)
+                frames[:] = [(np.zeros(4096,dtype=np.float32),24000), None]
+            if operation == 'tts_next':
+                return frames.pop(0)
+        async def consume():
+            async for _ in speech_stream(infer=infer, worker=Mock(pid=1), cancellation=CancellationToken(),
+                                         request={}, on_result=result.update):
+                pass
+        if fail:
+            with pytest.raises(RuntimeError):
+                asyncio.run(consume())
+            assert result == {}
+        else:
+            asyncio.run(consume())
+            assert result['response'] == 'First. Second.'
+        assert spoken == ['First.', 'Second.']

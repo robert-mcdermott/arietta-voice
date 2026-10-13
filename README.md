@@ -344,8 +344,43 @@ queued PCM), plus one producer-held and one consumer-held frame. A full queue
 pauses its producer within the shared turn deadline. Backend TTS chunks are
 validated and limited to 30 seconds before slicing; temporary allocations inside
 native models are outside these queue limits. These internal bounds need no new
-TOML settings. The current text adapter still waits for a completed model reply;
-provider token streaming and early clause playback are the next roadmap item.
+TOML settings.
+
+### Token streaming and early speech
+
+The local MLX adapter and Bedrock adapter emit incremental text and completion
+events. Voice sends completed sentences or clauses to Kokoro as they become
+available, with a 240-character clause limit and a 12,000-character response
+limit. Sentence splitting preserves decimals and common abbreviations, flushes
+the final fragment, and splits long unpunctuated text at a word boundary when
+possible. Very short answers may finish generating before playback begins.
+
+One worker alternates token generation and clause synthesis; the speaker drains
+the bounded audio queue concurrently. Models are not accessed from competing
+threads. This starts speech early without adding a second loaded model or an
+unbounded token backlog. Output polling continues between clauses so detected
+speech can interrupt during a generation gap, using the existing AEC/barge-in
+settings. Cancellation closes the provider stream and speech generator, or
+terminates their worker when blocked. A later stream failure can leave a spoken
+fragment, but it never commits a partial answer or retries an external action.
+
+Tool planning remains buffered until the complete response has been parsed and
+the requested tool has executed. The final answer then streams; malformed or
+unavailable tool requests fail without speaking the payload. When model tools
+are enabled and the planner answers directly, that answer is already complete
+before speech begins. Deterministic tool replies are also already complete.
+The web Chat Test shares this conversation policy but still displays one final
+response; this change does not introduce an HTTP streaming endpoint.
+
+Bedrock uses [ConverseStream](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html),
+which requires `bedrock:InvokeModelWithResponseStream` permission and a model
+that supports streaming. Reasoning and native tool payloads are not treated as
+speakable text; incomplete/error streams are rejected. There is no automatic
+fallback/retry to the batch API after a streaming failure. MLX uses the locked
+[`mlx-vlm` streaming adapter](https://github.com/Blaizzy/mlx-vlm).
+No private settings are migrated or rewritten; restart the voice runtime and
+API to load this code. Full latency and acoustic interruption targets still
+require the Phase 2 benchmark and hardware validation.
 
 The admin dashboard shows the processing stage, turn budget, microphone queue,
 recovery counters, and recording warnings while a background heartbeat continues

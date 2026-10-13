@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from arietta_voice.config import ModelConfig
+
+
+@dataclass(frozen=True, slots=True)
+class ModelEvent:
+    kind: str  # text or done; reasoning/tool payloads are never text events.
+    text: str = ""
+    stop_reason: str | None = None
 
 
 class ChatModel(Protocol):
@@ -14,6 +22,8 @@ class ChatModel(Protocol):
     def ensure_loaded(self) -> None: ...
 
     def is_loaded(self) -> bool: ...
+
+    def stream(self, messages, *, max_tokens=200, temperature=0.7): ...
 
     def generate(
         self,
@@ -69,6 +79,25 @@ class GemmaChatModel:
             verbose=False,
         )
         return result.text if hasattr(result, "text") else str(result)
+
+    def stream(self, messages, *, max_tokens=200, temperature=0.7):
+        self.ensure_loaded()
+        from mlx_vlm import stream_generate
+
+        prompt = self._processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True)
+        chunks = stream_generate(self._model, self._processor, prompt,
+                                 max_tokens=max_tokens, temperature=temperature,
+                                 repetition_penalty=1.2)
+        try:
+            for chunk in chunks:
+                # mlx-vlm emits incremental detokenizer segments, including its
+                # final flush. These are not cumulative response strings.
+                if chunk.text:
+                    yield ModelEvent("text", chunk.text)
+            yield ModelEvent("done")
+        finally:
+            chunks.close()
 
     def generate_with_image(
         self,
@@ -183,6 +212,38 @@ class BedrockChatModel:
         content_blocks = response.get("output", {}).get("message", {}).get("content", [])
         text_parts = [block["text"] for block in content_blocks if "text" in block]
         return "\n".join(part.strip() for part in text_parts if part and part.strip()).strip()
+
+
+    def stream(self, messages, *, max_tokens=200, temperature=0.7):
+        self.ensure_loaded()
+        system, conversation = _bedrock_messages(messages)
+        request = {"modelId": self.model_name, "messages": conversation,
+                   "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens}}
+        if system:
+            request["system"] = system
+        events = self._client.converse_stream(**request)["stream"]
+        reason = None
+        try:
+            for event in events:
+                if any(key.endswith("Exception") for key in event):
+                    raise RuntimeError("Bedrock streaming failure")
+                start = event.get("contentBlockStart", {}).get("start", {})
+                delta = event.get("contentBlockDelta", {}).get("delta", {})
+                if "toolUse" in start or "toolUse" in delta:
+                    raise ValueError("Unexpected native tool call in text generation")
+                if "text" in delta:
+                    if reason is not None:
+                        raise ValueError("Text after stream completion")
+                    yield ModelEvent("text", delta["text"])
+                if "messageStop" in event:
+                    reason = event["messageStop"]["stopReason"]
+                    if reason not in {"end_turn", "stop_sequence", "max_tokens"}:
+                        raise RuntimeError("Bedrock did not finish a text answer")
+            if reason is None:
+                raise RuntimeError("Incomplete Bedrock stream")
+            yield ModelEvent("done", stop_reason=reason)
+        finally:
+            events.close()
 
 
 def build_chat_model(config: ModelConfig) -> ChatModel:

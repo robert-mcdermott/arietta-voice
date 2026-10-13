@@ -425,6 +425,14 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     cancellation.check()
                 if deadline is not None and time.monotonic() >= deadline:
                     raise WorkerTimeout("Speech playback exceeded the turn time limit")
+                if chunk_samples is None:
+                    voice_interrupt, buffered_chunks = check_barge_in()
+                    if voice_interrupt:
+                        interrupted = True
+                        if cancellation is not None:
+                            cancellation.cancel()
+                        break
+                    continue
                 if output_stream is None:
                     chime_player.stop_at_gap()
                     output_stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32")

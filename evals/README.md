@@ -47,6 +47,13 @@ writes. These are orchestration checks using synthetic handlers, not model
 inference tests. Process tests run serially; do not add `pytest-xdist` without
 reviewing resource ownership and timing assumptions.
 
+Streaming regressions use synthetic MLX segments and Bedrock events to verify
+incremental text, final flushes, transport closure, missing completion and error
+handling. They exercise clause boundaries/size limits, audio before later tokens,
+backpressure, cancellation during generation gaps, tool-payload withholding, and
+history/memory exclusion after partial playback. These do not establish live
+Bedrock compatibility, cloud permissions, natural prosody, or latency targets.
+
 The root [`conftest.py`](../conftest.py) requires explicit temporary config roots,
 clears ambient admin/AWS credentials, redirects AWS/Hugging Face settings to
 temporary paths, and blocks pytest-process network connections, live model

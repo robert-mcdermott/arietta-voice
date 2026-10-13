@@ -1,19 +1,20 @@
-"""Bounded text-to-audio handoff; provider token streaming is a separate adapter."""
+"""Bounded speech handoff with serialized token-generation and TTS ownership."""
 import threading
 
 from arietta_voice.turns import (
-    CancellationToken, BoundedChannel, ChannelClosed, TurnCancelled,
+    CancellationToken, BoundedChannel, ChannelClosed, ChannelEmpty,
     TEXT_QUEUE_ITEMS, TEXT_ITEM_CHARS, AUDIO_QUEUE_ITEMS, AUDIO_ITEM_SAMPLES,
 )
 from arietta_voice.worker import WorkerFailure
 
 
-async def speech_stream(text, *, infer, worker, cancellation, deadline=None, on_wait=None):
+async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None, on_wait=None,
+                        request=None, on_result=None):
     """Prefetch at most eight PCM frames with one serialized inference producer.
 
-    The current adapter supplies one completed reply. Text/channel contracts are
-    also suitable for future speakable clauses; no provider token streaming is
-    implied. A local token stops prefetch without cancelling a successful turn.
+    Pull a clause, synthesize it, then resume tokens while queued audio plays.
+    Model and TTS operations stay on one inference owner. A local token stops
+    prefetch without cancelling a successful turn's later memory update.
     """
     stop = CancellationToken()
     cancellation.subscribe(stop.cancel)
@@ -22,12 +23,24 @@ async def speech_stream(text, *, infer, worker, cancellation, deadline=None, on_
                            size=lambda frame: frame[0].nbytes, deadline=deadline)
     producer = None
     try:
-        texts.put(text)
-        texts.finish()
+        if request is None:
+            texts.put(text)
+            texts.finish()
 
         def produce():
             try:
+                if request is not None:
+                    infer('chat_start', request, cancellation=stop)
                 while True:
+                    if request is not None:
+                        event = infer('chat_next', cancellation=stop)
+                        if event['kind'] == 'done':
+                            if on_result is not None:
+                                on_result(event['result'])
+                            break
+                        if event['kind'] != 'clause':
+                            raise ValueError('Invalid conversation event')
+                        texts.put(event['text'])
                     try:
                         sentence = texts.get()
                     except ChannelClosed:
@@ -47,7 +60,7 @@ async def speech_stream(text, *, infer, worker, cancellation, deadline=None, on_
             finally:
                 if worker.pid is not None:
                     try:
-                        worker.call('tts_close', timeout_s=1)
+                        worker.call('speech_close' if request is not None else 'tts_close', timeout_s=1)
                     except Exception:
                         pass  # Worker failure already discards the generator.
 
@@ -55,9 +68,13 @@ async def speech_stream(text, *, infer, worker, cancellation, deadline=None, on_
         producer.start()
         while True:
             try:
-                frame = audio.get(on_wait=on_wait)
+                frame = audio.get(on_wait=on_wait, timeout=.05 if request is not None else None)
             except ChannelClosed:
                 return
+            except ChannelEmpty:
+                # Let playback poll speech interruption even between clauses.
+                yield None, None
+                continue
             stop.check(deadline)
             yield frame
     finally:

@@ -220,16 +220,22 @@ class AriettaVoiceRuntime:
         return self.worker.call(operation, payload, timeout_s=self._remaining_time(),
                                 on_wait=self._inference_wait, cancellation=token)
 
-    def _respond(self, user_text: str) -> str:
-        result = self._infer("chat", {"message": user_text,
+    def _chat_request(self, user_text):
+        return {"message": user_text,
             "history": [asdict(turn) for turn in self.session.history], "use_tools": True,
             "enabled_tools": self.config.tools.enabled,
-            "enabled_model_tools": self.config.model_tools.enabled})
+            "enabled_model_tools": self.config.model_tools.enabled}
+
+    def _respond(self, user_text: str) -> str:
+        result = self._infer("chat", self._chat_request(user_text))
+        self._log_tool_result(result)
+        return result["response"]
+
+    def _log_tool_result(self, result):
         tool = result.get("model_tool") or result.get("used_tool")
         if tool:
             self.event_logger.log("tool_call", tool=tool,
                                   mode="model_requested" if result.get("model_tool") else result["source"])
-        return result["response"]
 
     async def _tts_stream(self, text: str):
         stream = speech_stream(text, infer=self._infer, worker=self.worker,
@@ -262,11 +268,10 @@ class AriettaVoiceRuntime:
         microphone: MicrophoneStream,
         keypress_monitor: RawKeypressMonitor,
         next_state: AssistantState,
+        stream=None,
     ) -> list[np.ndarray]:
-        if self.config.logging.content_enabled:
-            self.logger.info("Assistant: %s", response)
-        self.last_assistant_text = response
-        self.event_logger.log("assistant_response", content={"text": response}, chars=len(response))
+        if stream is None:
+            self._record_response(response)
 
         if not self.config.audio.tts_enabled:
             self.chime_player.stop_at_gap()
@@ -277,7 +282,7 @@ class AriettaVoiceRuntime:
 
         self.set_state(AssistantState.SPEAKING)
         playback = play_tts_stream(
-            tts_stream=self._tts_stream(response),
+            tts_stream=stream if stream is not None else self._tts_stream(response),
             cancellation=self._turn_token,
             deadline=self._turn_deadline,
             reference_seconds=self.config.audio.playback_reference_s,
@@ -294,6 +299,29 @@ class AriettaVoiceRuntime:
         self._update_display_speech(0.0, False)
         self.set_state(next_state)
         return list(playback.buffered_chunks)
+
+    def _record_response(self, response):
+        if self.config.logging.content_enabled:
+            self.logger.info("Assistant: %s", response)
+        self.last_assistant_text = response
+        self.event_logger.log("assistant_response", content={"text": response}, chars=len(response))
+
+    def _respond_with_speech(self, transcript, microphone, keypress_monitor):
+        result = {}
+        stream = speech_stream(infer=self._infer, worker=self.worker,
+                               cancellation=self._turn_token or CancellationToken(),
+                               deadline=self._turn_deadline, on_wait=self._inference_wait,
+                               request=self._chat_request(transcript), on_result=result.update)
+        buffered = self._deliver_response('', microphone=microphone,
+                                          keypress_monitor=keypress_monitor,
+                                          next_state=AssistantState.LISTENING, stream=stream)
+        if self._turn_token is not None and self._turn_token.cancelled:
+            return '', buffered
+        if 'response' not in result:
+            raise RuntimeError('Speech ended without a completed answer')
+        self._log_tool_result(result)
+        self._record_response(result['response'])
+        return result['response'], buffered
 
     def _print_response(self, response: str) -> None:
         # Interactive text-only use still needs an answer. Redirected output
@@ -342,23 +370,28 @@ class AriettaVoiceRuntime:
         self.last_user_transcript = transcript
 
         end_session_requested = False
+        delivered = False
         if not transcript:
             response = "I didn't catch that. Could you repeat it?"
         elif GOODBYE_PATTERN.fullmatch(transcript.strip().replace("’", "'")):
             response = self.next_goodbye()
             end_session_requested = True
+        elif self.config.audio.tts_enabled:
+            response, buffered_chunks = self._respond_with_speech(transcript, microphone, keypress_monitor)
+            delivered = True
         else:
             response = self._respond(transcript)
             if not response:
                 response = "I don't have a good answer for that yet."
             response = sanitize_for_speech(response)
 
-        buffered_chunks = self._deliver_response(
-            response,
-            microphone=microphone,
-            keypress_monitor=keypress_monitor,
-            next_state=AssistantState.LISTENING,
-        )
+        if not delivered:
+            buffered_chunks = self._deliver_response(
+                response,
+                microphone=microphone,
+                keypress_monitor=keypress_monitor,
+                next_state=AssistantState.LISTENING,
+            )
         if (transcript and not end_session_requested
                 and not (self._turn_token is not None and self._turn_token.cancelled)):
             self._store_turn(transcript, response)

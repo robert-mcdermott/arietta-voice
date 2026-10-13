@@ -220,7 +220,10 @@ def run_child(config, directory, turns, audible, idle_seconds):
             end = time.monotonic()
             row = microphone.row
             if row is not None:
-                row['calls'].append((operation, start, end))
+                # Preserve the baseline's chat-stage total across incremental
+                # calls; it is now interleaved with TTS and playback.
+                stage = 'chat' if operation in {'chat_start', 'chat_next'} else operation
+                row['calls'].append((stage, start, end))
                 if operation == 'tts_next' and value is not None:
                     row.setdefault('tts_ready', end)
                     row.setdefault('first_tts_chunk_ms', (end - start) * 1000)
@@ -229,6 +232,8 @@ def run_child(config, directory, turns, audible, idle_seconds):
                     row['transcript_matches_fixture'] = normalize(value) == normalize(QUESTIONS[row['case_id']])
                 if operation == 'chat':
                     row['response_chars'] = len(value['response'])
+                if operation == 'chat_next' and value['kind'] == 'done':
+                    row['response_chars'] = len(value['result']['response'])
                 if operation == 'endpoint' and value < .5:
                     row['endpoint_rejections'] = row.get('endpoint_rejections', 0) + 1
             return value

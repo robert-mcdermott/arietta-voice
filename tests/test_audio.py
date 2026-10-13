@@ -168,3 +168,28 @@ def test_cancel_aborts_device_before_waiting_for_generator_cleanup(monkeypatch):
     assert result.interrupted and token.cancelled
     assert order == ['abort', 'device_closed', 'generator_closed']
     device.write.assert_not_called()
+
+
+def test_voice_interrupt_during_gap_between_clauses(monkeypatch):
+    import itertools
+    from arietta_voice.turns import CancellationToken
+    ticks = itertools.count()
+    monkeypatch.setattr(audio.time, 'monotonic', lambda: next(ticks))
+    monkeypatch.setattr(audio, 'make_aec_processor', lambda rate: lambda chunk, reference: chunk)
+    microphone = audio.MicrophoneStream(16000,512,max_queue_chunks=8)
+    device = Mock()
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: device)
+    token = CancellationToken()
+    async def chunks():
+        yield np.zeros(512,dtype=np.float32),24000
+        for _ in range(3):
+            microphone._callback(np.ones((512,1),dtype=np.float32),512,None,False)
+        yield None, None
+        raise AssertionError('Cancelled stream was resumed')
+    result = audio.play_tts_stream(tts_stream=chunks(), microphone=microphone,
+        vad=Mock(probability=lambda _: 1.), keypress_monitor=Mock(pressed=lambda: False),
+        chime_player=Mock(), sample_rate=16000,use_aec=True,barge_in_threshold_chunks=3,cancellation=token)
+    assert result.interrupted and token.cancelled
+    assert len(result.buffered_chunks) == 3
+    device.abort.assert_called_once()
+    assert device.write.call_count == 1

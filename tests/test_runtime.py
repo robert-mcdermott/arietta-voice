@@ -298,3 +298,47 @@ def test_interrupted_reply_is_not_stored_or_memorized(runtime, monkeypatch):
     assert runtime.turn_cancellations == 1
     assert not runtime.session.history
     remember.assert_not_called()
+
+
+@pytest.mark.parametrize('outcome', ['complete', 'cancel', 'failure'])
+def test_streamed_voice_only_commits_fully_delivered_answers(runtime, monkeypatch, outcome):
+    import asyncio
+    runtime.config.audio.tts_enabled = True
+    runtime.config.wake_word.enabled = False
+    runtime.worker.transcript = 'Synthetic question'
+    original = runtime.worker.call
+    events = iter([{'kind':'clause','text':'First sentence.'},
+                   {'kind':'done','result':{'response':'First sentence.','source':'model','used_tool':None,'model_tool':None}}])
+    frames = []
+    def infer(operation, payload=None, **kwargs):
+        kwargs['cancellation'].check()
+        if operation == 'chat_next':
+            event = next(events)
+            if outcome == 'failure' and event['kind'] == 'done':
+                raise RuntimeError('Synthetic streaming failure')
+            return event
+        if operation == 'tts_start':
+            frames[:] = [(np.zeros(4096,dtype=np.float32),24000), None]
+        if operation == 'tts_next':
+            return frames.pop(0)
+        return original(operation,payload,**kwargs)
+    runtime.worker.call = infer
+    def play(*, tts_stream, **kwargs):
+        async def consume():
+            try:
+                async for samples, rate in tts_stream:
+                    if samples is not None and outcome == 'cancel':
+                        runtime.cancel_turn()
+                        break
+            finally:
+                await tts_stream.aclose()
+        asyncio.run(consume())
+        return PlaybackResult(interrupted=outcome=='cancel', buffered_chunks=[])
+    from arietta_voice.audio import PlaybackResult
+    monkeypatch.setattr(runtime_module, 'play_tts_stream', play)
+    runtime.process_utterance(np.zeros(512), Mock(), Mock(pressed=lambda: False))
+    assert runtime.session.turn_count == (1 if outcome == 'complete' else 0)
+    assert runtime.turn_failures == (1 if outcome == 'failure' else 0)
+    assert runtime.turn_cancellations == (1 if outcome == 'cancel' else 0)
+    if outcome == 'complete':
+        assert runtime.session.history[-1].content == 'First sentence.'

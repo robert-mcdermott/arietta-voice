@@ -20,6 +20,10 @@ class ChannelClosed(Exception):
     pass
 
 
+class ChannelEmpty(Exception):
+    pass
+
+
 class CancellationToken:
     def __init__(self):
         self._event = threading.Event()
@@ -91,7 +95,8 @@ class BoundedChannel:
                     return
                 self._condition.wait(.05)
 
-    def get(self, on_wait=None):
+    def get(self, on_wait=None, timeout=None):
+        until = time.monotonic() + timeout if timeout is not None else None
         with self._condition:
             while True:
                 self.token.check(self.deadline)
@@ -103,6 +108,8 @@ class BoundedChannel:
                     return item
                 if self._finished:
                     raise ChannelClosed('Channel drained')
+                if until is not None and time.monotonic() >= until:
+                    raise ChannelEmpty()
                 self._condition.wait(.05)
                 if on_wait is not None:
                     on_wait()
