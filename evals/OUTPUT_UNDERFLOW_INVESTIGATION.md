@@ -1,5 +1,10 @@
 # Speaker-output underflow investigation
 
+Follow-up: [forced-gap playback/AEC validation](FORCED_GAP_VALIDATION.md) exercises
+live silence padding. The resumed guided session passed uninterrupted playback,
+during-gap and after-gap interruption, recovery and goodbye checks with no
+underflows, alignment resets or capture drops.
+
 October 13, 2026. Follow-up to the four output-underflow flags during one
 interrupted answer in the [capture/alignment repeat](CAPTURE_ALIGNMENT_INVESTIGATION.md).
 The prior log identifies output underflows as the reset cause, but lacks the

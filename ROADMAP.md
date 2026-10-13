@@ -327,6 +327,20 @@ dependency inventories matched. Continue with forced-gap acoustic/AEC coverage,
 longer representative live/load testing and measured acoustic latency. See
 [protocol, evidence and remaining limits](evals/OUTPUT_UNDERFLOW_INVESTIGATION.md).
 
+**Forced-gap validation (October 13, 2026):** an isolated live-only harness now
+withholds continuation audio while the normal player, capture and AEC remain
+active. An uninterrupted four-second gap passed the operator check and exercised
+251 silence writes; all seven playbacks in that session had zero underflows,
+alignment resets or capture drops. Earlier incomplete attempts remain recorded.
+A resumed 480.9-second session passed all runtime/forced-gap gates and operator
+checks for uninterrupted playback, cancellation during the gap, interruption
+after audible counting resumed, recovery and goodbye/silence. Across 21 playbacks
+and 1,140 padding writes it recorded zero underflows, alignment resets or capture
+drops. The suite passes 590 tests, and private files/dependency inventories matched.
+Longer representative live/load testing and measured acoustic latency remain
+open; this short protocol does not establish the overall Phase 2 exit targets.
+See [protocol, results and limits](evals/FORCED_GAP_VALIDATION.md).
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms

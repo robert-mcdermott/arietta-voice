@@ -157,6 +157,17 @@ def test_output_timing_summary_sums_counts_and_takes_maxima(tmp_path):
     assert report['producer_wait_max_ms'] == 100
 
 
+def test_forced_gap_summary_is_bounded_and_does_not_copy_arbitrary_content(tmp_path):
+    rows = [dict(event='forced_gap_case_complete',case_id=i,phase='gap',
+                 gap_silence_writes=10,text='synthetic sensitive content') for i in range(35)]
+    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
+    report = validation.summarize_events(tmp_path)
+    assert len(report['forced_gap_cases']) == 32
+    assert report['forced_gap_cases_omitted'] == 3
+    assert report['content_fields_present']
+    assert 'synthetic sensitive content' not in json.dumps(report)
+
+
 def test_playback_reason_counters_are_aggregated(tmp_path):
     rows = [dict(event='assistant_audio_complete', alignment_resets=1,
                  alignment_reset_reasons={'timestamp_gap': 1},

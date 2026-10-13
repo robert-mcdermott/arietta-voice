@@ -143,6 +143,7 @@ def summarize_events(directory):
     interruptions, content_fields, invalid_records = 0, False, 0
     alignment_resets, output_underflows = 0, 0
     alignment_reset_reasons, capture_discard_reasons = Counter(), Counter()
+    gap_cases, gap_cases_omitted = [], 0
     timing = {key: 0 for key in ('playbacks', 'writes', 'gap_silence_writes', 'gap_silence_samples',
                                'producer_wait_max_ms', 'capture_poll_max_ms',
                                'write_max_ms', 'between_writes_max_ms')}
@@ -158,6 +159,14 @@ def summarize_events(directory):
                 invalid_records += 1
                 continue
             counts[event.get("event", "unknown")] += 1
+            if event.get('event') == 'forced_gap_case_complete':
+                if len(gap_cases) < 32:
+                    keys = ('case_id', 'phase', 'gap_started', 'gap_completed', 'continuation_started',
+                            'gap_elapsed_s', 'gap_polls', 'interrupted', 'cancelled', 'output_underflows',
+                            'alignment_resets', 'gap_silence_writes', 'gap_silence_samples')
+                    gap_cases.append({key: event[key] for key in keys if key in event})
+                else:
+                    gap_cases_omitted += 1
             if event.get("event") == "session_ended":
                 reasons[event.get("reason", "unknown")] += 1
             interruptions += event.get("event") == "assistant_audio_complete" and event.get("interrupted", False)
@@ -178,6 +187,7 @@ def summarize_events(directory):
             "alignment_reset_reasons": dict(alignment_reset_reasons),
             "capture_discard_reasons": dict(capture_discard_reasons),
             "output_timing": timing,
+            "forced_gap_cases": gap_cases, "forced_gap_cases_omitted": gap_cases_omitted,
             "invalid_records": invalid_records}
 
 
@@ -414,7 +424,7 @@ def _components(config, report, path, minutes, microphone_seconds, playback,
 
 
 def _run_child(config, directory, mode, minutes, microphone_seconds, playback,
-               resource_metrics=False, fixtures_path=None, soak_interval=5):
+               resource_metrics=False, fixtures_path=None, soak_interval=5, forced_gap_seconds=0):
     # Own a process group so even a native device/model hang can be stopped
     # without signalling another runtime or any of the user's processes.
     os.setsid()
@@ -428,6 +438,7 @@ def _run_child(config, directory, mode, minutes, microphone_seconds, playback,
               "tts_backend": config.audio.tts_backend,
               "started_at": datetime.now(timezone.utc).isoformat(), "ready": False,
               "private_context_loaded": False, "recordings_saved": False}
+    report['forced_gap_seconds'] = forced_gap_seconds
     write_report(path, report)
     try:
         if mode == "components":
@@ -435,7 +446,12 @@ def _run_child(config, directory, mode, minutes, microphone_seconds, playback,
                         resource_metrics, fixtures_path, soak_interval)
         else:
             from arietta_voice.runtime import AriettaVoiceRuntime
-            AriettaVoiceRuntime(config).run()
+            if forced_gap_seconds:
+                from scripts.forced_gap_validation import ForcedGapRuntime
+                runtime = ForcedGapRuntime(config, forced_gap_seconds)
+            else:
+                runtime = AriettaVoiceRuntime(config)
+            runtime.run()
             report["status"] = "stopped"
     except BaseException as exc:
         report["status"] = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
@@ -476,9 +492,16 @@ def main():
     parser.add_argument("--mlx-kokoro-model", type=Path)
     parser.add_argument("--resource-metrics", action="store_true", help="Verify continuous four-model residency and sample worker allocations (components only)")
     parser.add_argument("--host-metrics", action="store_true", help="Read-only macOS host telemetry")
+    parser.add_argument('--forced-gap-seconds', type=float, default=0,
+                        help='Live-only synthetic Start the gap test command; requires AEC/TTS, range 0..10')
     parser.add_argument("--fixtures", type=Path, help="Cycle existing synthetic NPZ fixtures (components only)")
     parser.add_argument("--soak-interval", type=float, default=5, help="Pause between component turns, 0..30 seconds")
     args = parser.parse_args()
+    from scripts.forced_gap_validation import validate_gap_options
+    try:
+        validate_gap_options(args.mode, args.forced_gap_seconds)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not math.isfinite(args.minutes) or not 0 <= args.minutes <= 60:
         parser.error("minutes must be between 0 and 60")
     if not math.isfinite(args.microphone_seconds) or not 0 <= args.microphone_seconds <= 30:
@@ -507,6 +530,9 @@ def run_profile(args, root):
     directory = root / "tmp" / "hardware-validation" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     directory.mkdir(parents=True, mode=0o700)
     config = isolated_config(source, directory)
+    from scripts.forced_gap_validation import validate_gap_options
+    validate_gap_options(args.mode, args.forced_gap_seconds,
+                         aec=config.audio.aec_enabled, tts=config.audio.tts_enabled)
     apply_trial_overrides(config, args.tts_backend, args.mlx_kokoro_model)
     if args.resource_metrics and not (config.audio.tts_enabled and config.audio.smart_turn_enabled):
         raise ValueError("Resource soak requires TTS and Smart Turn enabled")
@@ -522,7 +548,7 @@ def run_profile(args, root):
     print(f"Validation directory: {directory}", flush=True)
     process = multiprocessing.get_context("spawn").Process(
         target=_run_child, args=(config, directory, args.mode, args.minutes, args.microphone_seconds, args.playback,
-                                 args.resource_metrics, args.fixtures, args.soak_interval))
+                                 args.resource_metrics, args.fixtures, args.soak_interval, args.forced_gap_seconds))
     samples = []
     monitor, host = None, []
     if args.host_metrics:
@@ -587,6 +613,11 @@ def run_profile(args, root):
         report["human_checks"] = "pending"
         report["status"] = "completed" if duration_completed and report["status"] == "stopped" else "incomplete"
         report["automated_gates"] = live_gates(report, status, samples)
+        if args.forced_gap_seconds:
+            from scripts.forced_gap_validation import forced_gap_gates
+            report['forced_gap_gates'] = forced_gap_gates(report)
+            if not all(report['forced_gap_gates'].values()):
+                report['status'] = 'failed'
         if report["status"] == "completed" and not all(report["automated_gates"].values()):
             report["status"] = "failed"
     report["protected_files_unchanged"] = protected == protected_fingerprints(root)

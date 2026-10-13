@@ -7,6 +7,12 @@ version policy and the release procedure.
 
 ### Added
 
+- Isolated forced-gap live validation with a test-only spoken command, bounded
+  pause injection, AEC/capture handoff coverage, and separate gates for quiet
+  playback and interruption during/after the pause. Metadata verifies actual
+  padding and rejects missing scenarios or audio faults; production settings
+  and the normal conversation path remain unchanged.
+
 - Speaker-output timing diagnostics and an isolated MLX/Jabra underflow probe
   with matched continuous, producer-gap and deliberate scheduling-stall controls.
   Playback now supplies bounded silence during post-start producer waits, honoring

@@ -39,6 +39,14 @@ separate fixed-PCM/streamed-MLX probe and bounded playback timing summaries.
 Underflow contexts remain in individual playback events; the report aggregates
 write/padding counts and timing maxima, with zero timed playbacks for older logs.
 
+For live AEC coverage during unavailable next-clause audio, add
+`--forced-gap-seconds 4`. The isolated test command “Start the gap test” then
+plays a fixed lead-in, pauses while the player supplies silence, and resumes
+counting. Complete the quiet, during-gap interruption, and post-gap interruption
+scenarios in [forced-gap validation](FORCED_GAP_VALIDATION.md). Dedicated gates
+require actual padding and all scenarios; this command is unavailable in the
+production app and does not change private configuration.
+
 In components mode, `--resource-metrics` checks that STT, chat, endpointing and
 TTS remain resident in the same inference worker and records allocator/RSS
 samples after every turn. It requires TTS and Smart Turn enabled. `--fixtures`

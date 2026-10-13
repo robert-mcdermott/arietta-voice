@@ -399,6 +399,9 @@ underflows still reset alignment. Playback events include bounded write/wait/
 capture-poll timing metadata to help distinguish generation gaps from scheduling
 stalls. See the [output-underflow investigation](evals/OUTPUT_UNDERFLOW_INVESTIGATION.md)
 for matched device probes, live checks and limitations.
+The opt-in [forced-gap live protocol](evals/FORCED_GAP_VALIDATION.md) exercises
+the same player with microphone/AEC active and checks interruption during and
+after a deliberate pause, with dedicated scenario and audio-fault gates.
 
 Heavy STT, endpoint, chat, tool, and TTS work runs in a persistent spawned process
 with one operation at a time. On timeout, crash, or model/tool exception, that
