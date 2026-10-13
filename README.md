@@ -294,7 +294,7 @@ and API to apply them.
 | `audio.recording_queue_max_chunks` | `256` | Bounded queue for the background WAV writer. |
 | `audio.max_recording_s` | `3600.0` | Maximum saved audio per `--record` run. Listening continues after the limit. |
 | `audio.playback_reference_s` | `4.0` | Rolling echo-cancellation reference, rather than the entire response. |
-| `runtime.turn_timeout_s` | `60.0` | Shared budget for STT, chat/tools, speech generation/playback, and optional memory. Also limits web chat. |
+| `runtime.turn_timeout_s` | `60.0` | Shared budget for STT, chat/tools and speech generation/playback. Also limits web chat. Background memory gets its own budget, capped at 30 seconds. |
 | `runtime.endpoint_timeout_s` | `5.0` | Separate Smart Turn deadline for each endpoint check. |
 | `runtime.startup_timeout_s` | `300.0` | Model-worker warmup deadline; increase for slow first-run downloads. |
 
@@ -345,6 +345,45 @@ pauses its producer within the shared turn deadline. Backend TTS chunks are
 validated and limited to 30 seconds before slicing; temporary allocations inside
 native models are outside these queue limits. These internal bounds need no new
 TOML settings.
+
+### Background memory
+
+When `[memory].enabled` is true, a fully delivered voice turn queues a memory
+update and immediately returns to listening. Extraction and optional
+consolidation begin after one second of quiet listening, using the same model
+worker. No second model is loaded. The web Chat Test still does not write memory.
+No config migration or new private setting is required.
+
+The queue holds at most two pending turns plus one active job. Each user/assistant
+text is limited to 12,000 characters; oversized jobs are skipped, and queue
+pressure drops the oldest pending turn. Jobs exist only in RAM. Failed,
+interrupted, dropped and shutdown-discarded jobs are not automatically retried,
+so optional memory is best-effort. Each job has an independent deadline of
+`min(runtime.turn_timeout_s, 30)` seconds; memory time is excluded from the
+interactive turn duration.
+
+Detected speech pauses memory scheduling immediately. The generator is closed
+at the next token boundary before endpoint detection or response generation can
+use its model. A native call that does not yield within a 100 ms grace period
+is cancelled by terminating its worker; the next request reloads models. The
+listening loop continues capturing during that cancellation, and foreground
+inference allows up to 2.5 seconds for ownership to be released. This fallback
+can add next-turn startup latency; it is not a guarantee of zero interruption
+latency. Pending jobs wait for the next quiet interval.
+
+Extraction and consolidation produce one proposal before touching the memory
+file. Commit compares the file with the original snapshot; a detected intervening
+edit discards the proposal. Successful changes use an owner-only atomic
+replacement. A write already committed before preemption is retained. Existing
+memory over 128,000 characters and generated memory output over 12,000 characters
+are rejected without truncation. Consolidation still follows the configured
+session-turn cadence; skipped jobs may skip a consolidation opportunity.
+
+Runtime details expose `reliability.memory` queue/active state and completed,
+cancelled, failed, dropped and conflict counters. Background failures do not mark
+a delivered turn as failed. Diagnostics include counts and exception types,
+never queued conversation text or memory contents. Shutdown clears pending text,
+stops active work, then closes the inference worker.
 
 ### Token streaming and early speech
 

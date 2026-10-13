@@ -177,6 +177,21 @@ clauses and reported zero output underflows. Both used synthetic context; local
 reports stay in ignored `tmp/`. This single response establishes ordering only,
 not a latency percentile, perceived speech quality or the acoustic interrupt target.
 
+**Background memory status (October 12, 2026):** item 4 is implemented. Delivered
+voice turns enqueue bounded, RAM-only work and return to listening. Quiet-time
+jobs reuse the inference worker, yield between tokens, and give new speech
+priority; stuck calls are terminated before foreground reuse. Extraction and
+consolidation commit together after checking for intervening file changes.
+Separate memory status counters cover dropped, cancelled, failed and conflicting
+jobs. No private settings or persona changes are required. Regression tests cover
+queue pressure, preemption, native-call termination, file preservation and
+shutdown. Memory remains best-effort; preemption may discard an update and native
+worker termination may add reload latency to the next turn.
+An isolated cached local-model check completed extraction and consolidation in
+the background, then answered the next synthetic chat on the same worker with
+zero restarts. Enqueueing took 0.04 ms in that check. Only a temporary synthetic
+memory file was written; this is a functional check, not a latency percentile.
+
 1. Record stage-level latency and resource baselines on the intended Mac and
    microphone/speaker. Separate cold start from warm conversational turns.
 2. Extend the Phase 1 serialized inference workers with cancellation tokens and bounded text/audio

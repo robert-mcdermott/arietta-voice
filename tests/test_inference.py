@@ -66,3 +66,37 @@ def test_voice_tool_instances_survive_successful_turns(tmp_path, monkeypatch):
         assert engine.service()._llm is None
     finally:
         engine._loop.close()
+
+
+def test_memory_protocol_keeps_proposal_in_child_and_close_discards_it(tmp_path):
+    from arietta_voice.llm import ModelEvent
+    config = default_config(tmp_path)
+    config.memory.enabled = True
+    config.memory.consolidate_every_turns = 3
+    engine = InferenceEngine(config)
+    engine.service()._llm = Mock()
+    def stream(*a,**kw):
+        yield ModelEvent('text','- Synthetic fact')
+        yield ModelEvent('done')
+    engine.service()._llm.stream = stream
+    payload = dict(user='Synthetic',assistant='Answer',turn_count=1)
+    try:
+        for cancel in (True,False):
+            engine.handle('memory_start',payload)
+            while True:
+                value = engine.handle('memory_next',None)
+                assert 'Synthetic' not in str(value)
+                if value['kind'] == 'prepared':
+                    break
+            assert not config.prompts.memory_path.exists()
+            if cancel:
+                engine.handle('memory_close',None)
+                with pytest.raises(ValueError):
+                    engine.handle('memory_commit',None)
+            else:
+                assert engine.handle('memory_commit',None)['facts_added'] == 1
+        assert '- Synthetic fact' in config.prompts.memory_path.read_text()
+        assert engine._memory is engine._memory_proposal is None
+    finally:
+        engine.handle('memory_close',None)
+        engine._loop.close()

@@ -153,42 +153,30 @@ def test_failed_turn_is_not_stored_and_next_turn_recovers(runtime, monkeypatch, 
     assert runtime.turn_stage == "idle"
 
 
-def test_memory_failure_does_not_erase_delivered_turn(runtime):
-    from arietta_voice.worker import WorkerTimeout
-    runtime.config.wake_word.enabled = False
-    runtime.config.memory.enabled = True
-    runtime.worker.transcript = "Remember a fact"
-    original = runtime.worker.call
-    def fail(operation, payload=None, **kwargs):
-        if operation == "memory":
-            raise WorkerTimeout()
-        return original(operation, payload, **kwargs)
-    runtime.worker.call = fail
-    runtime.process_utterance(np.zeros(512), Mock(), Mock())
-    assert runtime.session.turn_count == 1
-    assert runtime.last_error == "MemoryUpdateFailed"
-    assert runtime.turn_failures == 0
-
-
-def test_cancelled_memory_preserves_delivered_turn_without_failure(runtime):
+def test_delivered_turn_queues_memory_without_calling_model(runtime):
     runtime.config.wake_word.enabled = False
     runtime.config.memory.enabled = True
     runtime.worker.transcript = "Remember a synthetic fact"
     original = runtime.worker.call
-
-    def cancel_memory(operation, payload=None, **kwargs):
-        if operation == "memory":
-            runtime.cancel_turn()
-            kwargs["cancellation"].check()
+    calls = []
+    def record(operation, payload=None, **kwargs):
+        calls.append(operation)
+        assert not operation.startswith('memory')
         return original(operation, payload, **kwargs)
-
-    runtime.worker.call = cancel_memory
+    runtime.worker.call = record
     runtime.process_utterance(np.zeros(512), Mock(), Mock())
     assert runtime.session.turn_count == 1
-    assert len(runtime.session.history) == 2
+    assert runtime.memory_jobs.snapshot()['queued'] == 1
     assert runtime.last_error is None
-    assert runtime.turn_cancellations == 1
     assert runtime.turn_failures == 0
+    assert runtime.turn_stage == 'idle'
+    runtime.memory_jobs.close()
+
+
+def test_disabled_memory_never_queues_private_text(runtime):
+    runtime.config.memory.enabled = False
+    runtime._remember_turn('Synthetic fact', 'Answer')
+    assert runtime.memory_jobs.snapshot()['queued'] == 0
 
 
 class ScriptedMicrophone:

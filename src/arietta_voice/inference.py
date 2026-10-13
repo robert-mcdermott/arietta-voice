@@ -17,6 +17,7 @@ class InferenceEngine:
         self._tts = None
         self._tts_pending = None
         self._chat = None
+        self._memory = self._memory_store = self._memory_proposal = None
         self._loop = asyncio.new_event_loop()
 
     def service(self):
@@ -89,18 +90,44 @@ class InferenceEngine:
             finally:
                 self.handle("chat_close", None)
             return None
-        if operation == "memory":
+        if operation == "memory_start":
             from arietta_voice.llm import build_chat_model
             from arietta_voice.memory import MemoryStore
-            service = self.service()
-            if service._llm is None:
-                service._llm = build_chat_model(self.config.models)
-            memory = MemoryStore(self.config.prompts.memory_path, self.config.memory.enabled,
-                                 self.config.memory.consolidate_every_turns)
-            memory.ensure_exists()
-            added = memory.update_from_turn(service._llm, payload["user"], payload["assistant"])
-            consolidated = memory.maybe_consolidate(service._llm, payload["turn_count"])
-            return {"facts_added": added, "consolidated": consolidated}
+            self.handle("memory_close", None)
+            self._memory_store = MemoryStore(self.config.prompts.memory_path, self.config.memory.enabled,
+                                             self.config.memory.consolidate_every_turns)
+            model = None
+            if self.config.memory.enabled:
+                service = self.service()
+                if service._llm is None:
+                    service._llm = build_chat_model(self.config.models)
+                model = service._llm
+            self._memory = self._memory_store.prepare_update(model, payload["user"], payload["assistant"], payload["turn_count"])
+            return None
+        if operation == "memory_next":
+            if self._memory is None:
+                raise ValueError("No active memory job")
+            try:
+                next(self._memory)
+                return {"kind": "progress"}
+            except StopIteration as done:
+                self._memory_proposal = done.value
+                self._memory = None
+                return {"kind": "prepared"}
+        if operation == "memory_commit":
+            if self._memory_store is None or self._memory is not None:
+                raise ValueError("Memory job is not prepared")
+            try:
+                return self._memory_store.commit_update(self._memory_proposal)
+            finally:
+                self.handle("memory_close", None)
+        if operation == "memory_close":
+            try:
+                if self._memory is not None:
+                    self._memory.close()
+            finally:
+                self._memory = self._memory_store = self._memory_proposal = None
+            return None
         if operation == "tts_start":
             if not isinstance(payload, str) or len(payload) > 12_000:
                 raise ValueError("Speech text exceeds its limit")

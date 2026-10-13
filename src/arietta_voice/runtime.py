@@ -29,6 +29,7 @@ from arietta_voice.turn_detection import SileroVoiceActivityDetector
 from arietta_voice.worker import InferenceWorker, WorkerTimeout, WorkerCancelled
 from arietta_voice.turns import CancellationToken
 from arietta_voice.streaming import speech_stream
+from arietta_voice.memory_jobs import MemoryJobs
 from arietta_voice.wake import WakeWordMatch, build_wake_word_detector
 
 
@@ -54,6 +55,7 @@ class AriettaVoiceRuntime:
         self.logger = logging.getLogger("arietta_voice.runtime")
         self.event_logger = EventLogger.from_config(config.logging)
         self.worker = worker if worker is not None else InferenceWorker(config)
+        self.memory_jobs = MemoryJobs(self.worker, timeout_s=config.runtime.turn_timeout_s, log=self.event_logger.log)
         self.vad = SileroVoiceActivityDetector(config.audio.sample_rate)
         self.microphone = None
         self._last_audio_statistics = {}
@@ -344,19 +346,8 @@ class AriettaVoiceRuntime:
         self.session.turn_count += 1
 
     def _remember_turn(self, transcript: str, response: str) -> None:
-        if not self.config.memory.enabled:
-            return
-        try:
-            result = self._infer("memory", {"user": transcript, "assistant": response,
-                                            "turn_count": self.session.turn_count})
-            self.event_logger.log("memory_updated", **result)
-        except WorkerCancelled:
-            self.event_logger.log("memory_update_cancelled")
-        except Exception as exc:
-            # The answer was already delivered. Memory failure must not erase
-            # that success or cause the tool/action to be repeated.
-            self.last_error = "MemoryUpdateFailed"
-            self.event_logger.log("memory_update_failed", error_type=type(exc).__name__)
+        if self.config.memory.enabled:
+            self.memory_jobs.submit(transcript, response, self.session.turn_count)
 
     def _handle_active_turn(
         self,
@@ -473,6 +464,7 @@ class AriettaVoiceRuntime:
         self._turn_deadline = self.turn_started_at + self.config.runtime.turn_timeout_s
         self.last_error = None
         try:
+            self.memory_jobs.suspend()
             if len(audio) > self.config.audio.max_utterance_s * self.config.audio.sample_rate:
                 self.utterances_discarded += 1
                 raise ValueError("Utterance exceeds the audio limit")
@@ -541,6 +533,7 @@ class AriettaVoiceRuntime:
                 "utterances_discarded": self.utterances_discarded,
                 "last_turn_duration_ms": self.last_turn_duration_ms,
                 "worker_pid": self.worker.pid, "worker_restarts": self.worker.restarts,
+                "memory": self.memory_jobs.snapshot(),
                 "audio": microphone.statistics() if microphone is not None else self._last_audio_statistics}
 
     def run(self) -> None:
@@ -570,6 +563,7 @@ class AriettaVoiceRuntime:
             with ExitStack() as cleanup:
                 cleanup.callback(self.status_publisher.stop, self)
                 cleanup.callback(self.worker.close)
+                cleanup.callback(self.memory_jobs.close)
                 cleanup.callback(self.chime_player.stop)
 
     def _listen(self, microphone, keypress_monitor) -> None:
@@ -581,6 +575,7 @@ class AriettaVoiceRuntime:
         observed_drops = microphone.dropped_chunks + microphone.input_overflows
         while True:
             if self.config.wake_word.enabled and self.session.active and self._session_timed_out(time.monotonic()):
+                self.memory_jobs.suspend()
                 self._end_session(reason="idle_timeout", microphone=microphone, speak_goodbye=False)
                 buffer.clear()
                 silent_chunks = 0
@@ -596,6 +591,10 @@ class AriettaVoiceRuntime:
                 self.event_logger.log("audio_gap", dropped_chunks=drops)
             try:
                 is_speech = self.vad.probability(chunk) > 0.5
+                if is_speech:
+                    self.memory_jobs.suspend(wait=False)
+                elif not buffer.samples and not discard_until_quiet:
+                    self.memory_jobs.allow_idle()
                 silent_chunks = 0 if is_speech else silent_chunks + 1
                 if discard_until_quiet:
                     if silent_chunks >= silence_limit:
@@ -615,6 +614,7 @@ class AriettaVoiceRuntime:
                     continue
                 utterance = buffer.audio()
                 if self.config.audio.smart_turn_enabled:
+                    self.memory_jobs.suspend()
                     self.turn_stage = "endpoint"
                     self._stage_started_at = time.monotonic()
                     endpoint = self.worker.call("endpoint", utterance,

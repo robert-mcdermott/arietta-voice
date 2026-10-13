@@ -54,6 +54,11 @@ backpressure, cancellation during generation gaps, tool-payload withholding, and
 history/memory exclusion after partial playback. These do not establish live
 Bedrock compatibility, cloud permissions, natural prosody, or latency targets.
 
+Background-memory tests verify bounded RAM queues, foreground priority,
+cooperative stream closure, forced termination of stuck native work, independent
+failure counters, atomic proposals, intervening-edit conflicts and shutdown.
+They use synthetic text/files and do not change personal memory or settings.
+
 The root [`conftest.py`](../conftest.py) requires explicit temporary config roots,
 clears ambient admin/AWS credentials, redirects AWS/Hugging Face settings to
 temporary paths, and blocks pytest-process network connections, live model

@@ -7,6 +7,10 @@ version policy and the release procedure.
 
 ### Added
 
+- Bounded background memory jobs after delivered voice responses, scheduled during
+  quiet listening on the existing model worker. New speech takes priority; memory
+  queue, completion, cancellation, failure, drop and conflict counters are exposed.
+
 - MLX and Bedrock token streaming with early clause-based voice playback,
   bounded sentence segmentation, and interruption polling between clauses.
 - Provider stream, early-audio, tool-planning and partial-turn regression tests.
@@ -51,6 +55,10 @@ version policy and the release procedure.
 
 ### Changed
 
+- Memory extraction/consolidation use an independent background deadline and no
+  longer delay return to listening or extend the interactive turn duration. Jobs
+  stay in RAM, and interrupted/overflowed jobs are discarded without retries.
+
 - Console and voice share conversation, prompt, history and tool policy through
   one service implementation, with separate worker processes. Voice streams
   speakable clauses; web chat continues to return one complete response.
@@ -83,6 +91,10 @@ version policy and the release procedure.
   unsupported audio/retrieval/generation settings before model startup.
 
 ### Fixed
+
+- Background memory generation commits one atomic proposal after checking for
+  intervening file edits. Failed extraction/consolidation and cancelled proposals
+  leave existing memory intact; shutdown clears queued private conversation text.
 
 - Tool-planning payloads are withheld from speech; malformed or unavailable model
   tool requests fail without exposing their JSON. Failed/incomplete provider
