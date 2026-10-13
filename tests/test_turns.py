@@ -66,3 +66,18 @@ def test_empty_queue_wait_obeys_deadline_and_cancellation():
     with pytest.raises(TurnCancelled):
         cancelled.put('new')
     cancelled.close()
+
+
+def test_short_consumer_timeout_does_not_sleep_for_full_poll_interval(monkeypatch):
+    from arietta_voice import turns
+    now, waits = [10.], []
+    monkeypatch.setattr(turns.time, 'monotonic', lambda:now[0])
+    channel = BoundedChannel(CancellationToken(), max_items=1, max_item_size=3)
+    def wait(duration):
+        waits.append(duration)
+        now[0] += duration
+    monkeypatch.setattr(channel._condition, 'wait', wait)
+    with pytest.raises(turns.ChannelEmpty):
+        channel.get(timeout=.01)
+    assert sum(waits) == pytest.approx(.01)
+    channel.close()

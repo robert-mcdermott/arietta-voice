@@ -141,6 +141,20 @@ def test_playback_alignment_and_underflow_counts_are_preserved(tmp_path):
     assert report['output_underflows'] == report['voice_interruptions'] == 1
     assert report['alignment_reset_reasons'] == {}
     assert report['capture_discard_reasons'] == {}
+    assert report['output_timing']['playbacks'] == 0
+
+
+def test_output_timing_summary_sums_counts_and_takes_maxima(tmp_path):
+    rows = [dict(event='assistant_audio_complete', output_timing={
+        'writes':count, 'gap_silence_writes':1, 'gap_silence_samples':480,
+        'producer_wait_max_ms':delay}) for count,delay in [(4,100),(2,80)]]
+    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
+    report = validation.summarize_events(tmp_path)['output_timing']
+    assert report['playbacks'] == 2
+    assert report['writes'] == 6
+    assert report['gap_silence_writes'] == 2
+    assert report['gap_silence_samples'] == 960
+    assert report['producer_wait_max_ms'] == 100
 
 
 def test_playback_reason_counters_are_aggregated(tmp_path):

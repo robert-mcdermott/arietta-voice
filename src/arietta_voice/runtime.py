@@ -287,7 +287,7 @@ class AriettaVoiceRuntime:
         if not self.config.audio.tts_enabled:
             return
 
-        play_tts_stream_passive(
+        playback = play_tts_stream_passive(
             tts_stream=self._tts_stream(text),
             cancellation=self._turn_token,
             deadline=self._turn_deadline,
@@ -297,7 +297,7 @@ class AriettaVoiceRuntime:
             health_check=self._check_audio_health,
             playback_level_callback=self._update_display_speech,
         )
-        self.event_logger.log("assistant_audio_complete", interrupted=False)
+        self._log_playback(playback)
         self._update_display_speech(0.0, False)
 
     def _deliver_response(
@@ -338,14 +338,18 @@ class AriettaVoiceRuntime:
             barge_in_threshold_chunks=self.config.audio.barge_in_threshold_chunks,
             playback_level_callback=self._update_display_speech,
         )
+        self._log_playback(playback)
+        self._update_display_speech(0.0, False)
+        self.set_state(next_state)
+        return list(playback.buffered_chunks)
+
+    def _log_playback(self, playback):
         self.event_logger.log("assistant_audio_complete", interrupted=playback.interrupted,
                               alignment_resets=playback.alignment_resets,
                               alignment_reset_reasons=playback.alignment_reset_reasons,
                               capture_discard_reasons=playback.capture_discard_reasons,
+                              output_timing=playback.output_timing,
                               output_underflows=playback.output_underflows)
-        self._update_display_speech(0.0, False)
-        self.set_state(next_state)
-        return list(playback.buffered_chunks)
 
     def _record_response(self, response):
         if self.config.logging.content_enabled:

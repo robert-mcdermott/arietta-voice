@@ -6,6 +6,11 @@ playbacks, despite passing operator checks and reporting zero device overflows
 or output underflows. ONNX remains the default; the MLX environment and private
 settings are preserved.
 
+The subsequent [speaker-output investigation](OUTPUT_UNDERFLOW_INVESTIGATION.md)
+reproduces producer-gap starvation with matched device controls, adds bounded
+gap silence and write/wait timing telemetry, and records a separate live repeat.
+Historical results below remain unchanged.
+
 ## Findings and changes
 
 Two behaviors can be reproduced independently of models or hardware:

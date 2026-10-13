@@ -110,7 +110,8 @@ class BoundedChannel:
                     raise ChannelClosed('Channel drained')
                 if until is not None and time.monotonic() >= until:
                     raise ChannelEmpty()
-                self._condition.wait(.05)
+                wait = .05 if until is None else min(.05, max(0, until - time.monotonic()))
+                self._condition.wait(wait)
                 if on_wait is not None:
                     on_wait()
 

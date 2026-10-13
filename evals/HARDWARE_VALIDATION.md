@@ -34,6 +34,10 @@ discards; runtime audio status separates real queue overruns by phase from
 intentional queue discards. Inspect these alongside the automatic gates, which
 do not require zero overruns/resets. See the
 [capture/alignment investigation](CAPTURE_ALIGNMENT_INVESTIGATION.md).
+The [speaker-output investigation](OUTPUT_UNDERFLOW_INVESTIGATION.md) adds a
+separate fixed-PCM/streamed-MLX probe and bounded playback timing summaries.
+Underflow contexts remain in individual playback events; the report aggregates
+write/padding counts and timing maxima, with zero timed playbacks for older logs.
 
 In components mode, `--resource-metrics` checks that STT, chat, endpointing and
 TTS remain resident in the same inference worker and records allocator/RSS

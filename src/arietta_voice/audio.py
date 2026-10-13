@@ -503,6 +503,43 @@ class PlaybackResult:
     output_underflows: int = 0
     alignment_reset_reasons: dict[str, int] = field(default_factory=dict)
     capture_discard_reasons: dict[str, int] = field(default_factory=dict)
+    output_timing: dict = field(default_factory=dict)
+
+
+class _PlaybackTiming:
+    """Bounded, content-free timing; intervals describe correlation, not cause."""
+    def __init__(self):
+        self.last_write_end = None
+        self.wait_ms = self.poll_ms = 0.0
+        self.report = dict(writes=0, gap_silence_writes=0, gap_silence_samples=0,
+                           producer_wait_max_ms=0.0, capture_poll_max_ms=0.0,
+                           write_max_ms=0.0, between_writes_max_ms=0.0,
+                           underflow_contexts=[], underflow_contexts_omitted=0)
+
+    def waited(self, seconds):
+        self.wait_ms += seconds * 1000
+        self.report['producer_wait_max_ms'] = max(self.report['producer_wait_max_ms'], seconds * 1000)
+
+    def polled(self, seconds):
+        self.poll_ms += seconds * 1000
+        self.report['capture_poll_max_ms'] = max(self.report['capture_poll_max_ms'], seconds * 1000)
+
+    def wrote(self, start, end, underflow, kind='speech'):
+        gap = (start - self.last_write_end) * 1000 if self.last_write_end is not None else 0.0
+        duration = (end - start) * 1000
+        self.report['writes'] += 1
+        self.report['write_max_ms'] = max(self.report['write_max_ms'], duration)
+        self.report['between_writes_max_ms'] = max(self.report['between_writes_max_ms'], gap)
+        if underflow:
+            context = dict(write_index=self.report['writes'], kind=kind,
+                           since_previous_write_ms=gap, producer_wait_ms=self.wait_ms,
+                           capture_poll_ms=self.poll_ms, write_ms=duration)
+            if len(self.report['underflow_contexts']) < 8:
+                self.report['underflow_contexts'].append(context)
+            else:
+                self.report['underflow_contexts_omitted'] += 1
+        self.last_write_end = end
+        self.wait_ms = self.poll_ms = 0.0
 
 
 def _playback_level_from_chunk(playback_chunk: np.ndarray) -> float:
@@ -513,8 +550,8 @@ def _playback_level_from_chunk(playback_chunk: np.ndarray) -> float:
 
 def play_tts_stream_passive(*, tts_stream, chime_player: ChimePlayer,
                             playback_level_callback=None, deadline: float | None = None, cancellation=None,
-                            keypress_monitor=None, output_device=None, health_check=None) -> None:
-    play_tts_stream(tts_stream=tts_stream, microphone=None, vad=None, keypress_monitor=keypress_monitor,
+                            keypress_monitor=None, output_device=None, health_check=None) -> PlaybackResult:
+    return play_tts_stream(tts_stream=tts_stream, microphone=None, vad=None, keypress_monitor=keypress_monitor,
                     chime_player=chime_player, sample_rate=16000, use_aec=False,
                     barge_in_threshold_chunks=5, playback_level_callback=playback_level_callback,
                     deadline=deadline, cancellation=cancellation, output_device=output_device,
@@ -543,6 +580,7 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
     alignment_resets = 0
     output_underflows = 0
     reset_reasons, discard_reasons = Counter(), Counter()
+    timing = _PlaybackTiming()
 
     def reset_capture(reason):
         nonlocal aec_process, consecutive_speech, capture_end, alignment_resets
@@ -556,7 +594,7 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
         if use_aec:
             aec_process = make_aec_processor(sample_rate)
 
-    def check_barge_in() -> tuple[bool, list[np.ndarray]]:
+    def poll_capture() -> tuple[bool, list[np.ndarray]]:
         nonlocal observed_drops, capture_end, consecutive_speech
         if keypress_monitor is not None and keypress_monitor.pressed():
             return True, []
@@ -618,14 +656,61 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                 consecutive_speech = 0
         return False, []
 
+    def check_barge_in():
+        start = time.monotonic()
+        try:
+            return poll_capture()
+        finally:
+            timing.polled(time.monotonic() - start)
+
+    async def measured_frames():
+        iterator = tts_stream.__aiter__()
+        while True:
+            start = time.monotonic()
+            try:
+                item = await anext(iterator)
+            except StopAsyncIteration:
+                return
+            finally:
+                if playback_started is not None:
+                    timing.waited(time.monotonic() - start)
+            yield item
+
     async def _play() -> PlaybackResult:
         nonlocal playback_started, observed_drops, output_end, output_underflows
         output_stream = None
         buffered_chunks: list[np.ndarray] = []
         interrupted = False
         completed = False
+
+        def submit(playback_chunk, kind='speech'):
+            nonlocal output_end, output_underflows
+            if playback_level_callback is not None:
+                playback_level_callback(_playback_level_from_chunk(playback_chunk), True)
+            # Blocking writes expose no DAC timestamps. Match submitted speech
+            # and explicit gap silence to the same bounded reference timeline.
+            latency = output_stream.latency
+            latency = float(latency) if isinstance(latency, (int, float)) else 0.0
+            if not math.isfinite(latency) or latency < 0:
+                raise ValueError("Invalid output latency")
+            presented_at = max(time.monotonic() + latency, output_end or 0)
+            write_started = time.monotonic()
+            underflow = output_stream.write(playback_chunk)
+            timing.wrote(write_started, time.monotonic(), underflow is True, kind)
+            output_end = presented_at + len(playback_chunk) / output_rate
+            if kind == 'gap_silence':
+                timing.report['gap_silence_writes'] += 1
+                timing.report['gap_silence_samples'] += len(playback_chunk)
+            if underflow is True:
+                output_underflows += 1
+                reference.clear()
+                reset_capture("output_underflow")
+                output_end = None
+            elif aec_process is not None:
+                reference.append(playback_chunk[:, 0], output_rate, presented_at)
+
         try:
-            async for chunk_samples, sr in tts_stream:
+            async for chunk_samples, sr in measured_frames():
                 if health_check is not None:
                     health_check()
                 if cancellation is not None:
@@ -641,6 +726,14 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                         if cancellation is not None:
                             cancellation.cancel()
                         break
+                    if output_stream is not None:
+                        # The running device needs samples even when the next
+                        # clause is not ready. At most 20ms per poll, only into
+                        # available capacity; never pad before the first speech.
+                        width = min(1024, max(1, round(output_rate * .02)))
+                        available = getattr(output_stream, 'write_available', 0)
+                        if isinstance(available, int) and available >= width:
+                            submit(np.zeros((width, 1), dtype=np.float32), 'gap_silence')
                     continue
                 if output_stream is None:
                     chime_player.stop_at_gap()
@@ -670,27 +763,7 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                         if cancellation is not None:
                             cancellation.cancel()
                         break
-                    playback_chunk = frame[offset:offset + 1024]
-                    if playback_level_callback is not None:
-                        playback_level_callback(_playback_level_from_chunk(playback_chunk), True)
-                    # Blocking PortAudio does not expose DAC timestamps. Estimate
-                    # presentation from reported latency and queued sample duration,
-                    # and preserve real gaps between clauses. Never stage an entire
-                    # future TTS chunk in the rolling echo reference.
-                    latency = output_stream.latency
-                    latency = float(latency) if isinstance(latency, (int, float)) else 0.0
-                    if not math.isfinite(latency) or latency < 0:
-                        raise ValueError("Invalid output latency")
-                    presented_at = max(time.monotonic() + latency, output_end or 0)
-                    underflow = output_stream.write(playback_chunk)
-                    output_end = presented_at + len(playback_chunk) / sr
-                    if underflow is True:
-                        output_underflows += 1
-                        reference.clear()
-                        reset_capture("output_underflow")
-                        output_end = None
-                    elif aec_process is not None:
-                        reference.append(playback_chunk[:, 0], sr, presented_at)
+                    submit(frame[offset:offset + 1024])
                 if interrupted:
                     break
             # Remain interruptible while the final submitted samples are still
@@ -712,7 +785,8 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
             return PlaybackResult(interrupted=interrupted, buffered_chunks=buffered_chunks,
                                   alignment_resets=alignment_resets, output_underflows=output_underflows,
                                   alignment_reset_reasons=dict(reset_reasons),
-                                  capture_discard_reasons=dict(discard_reasons))
+                                  capture_discard_reasons=dict(discard_reasons),
+                                  output_timing=timing.report)
         finally:
             capture_phase(microphone, "playback_cleanup")
             # Release/abort the device before waiting for inference cancellation.

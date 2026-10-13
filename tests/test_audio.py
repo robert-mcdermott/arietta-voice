@@ -554,3 +554,109 @@ def test_intentional_discard_is_bounded_and_does_not_drop_recording(monkeypatch)
     assert mic.statistics()['discarded_chunks'] == 1
     assert mic.dropped_chunks == 0
     assert recorder.append.call_count == 2
+
+
+def test_gap_silence_keeps_device_fed_without_altering_speech(monkeypatch):
+    now = [10.]
+    monkeypatch.setattr(audio.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(audio.time, 'sleep', lambda dt: now.__setitem__(0, now[0]+dt))
+    class Device:
+        latency = .08
+        def __init__(self):
+            self.end = now[0]
+            self.data = []
+        def start(self):
+            pass
+        @property
+        def write_available(self):
+            return max(0, int((.08 - (self.end-now[0]))*24000))
+        def write(self, samples):
+            underflow = bool(self.data) and now[0] > self.end + .001
+            self.data.append(samples.copy())
+            self.end = max(self.end,now[0])+len(samples)/24000
+            return underflow
+        def stop(self):
+            pass
+        close = stop
+    device = Device()
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: device)
+    async def chunks():
+        # Initial wait must not open a device or prepend silence.
+        yield None, None
+        assert not device.data
+        yield np.full(1024, .1, dtype=np.float32), 24000
+        for _ in range(60):
+            now[0] += .01
+            yield None, None
+        yield np.full(512, .2, dtype=np.float32), 24000
+    result = audio.play_tts_stream_passive(tts_stream=chunks(), chime_player=Mock())
+    assert result.output_underflows == 0
+    assert result.output_timing['gap_silence_writes'] > 0
+    assert all(len(block) == 480 and not block.any() for block in device.data[1:-1])
+    np.testing.assert_array_equal(device.data[0][:,0], np.full(1024,.1,dtype=np.float32))
+    np.testing.assert_array_equal(device.data[-1][:,0], np.full(512,.2,dtype=np.float32))
+
+
+def test_gap_silence_honors_capacity_and_preserves_underflow_reporting(monkeypatch):
+    now = [10.]
+    monkeypatch.setattr(audio.time, 'monotonic', lambda: now[0])
+    device = Mock(latency=0., write_available=0)
+    device.write.side_effect = [False, True]
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: device)
+    factory = Mock(side_effect=lambda rate: lambda mic, ref: mic)
+    monkeypatch.setattr(audio, 'make_aec_processor', factory)
+    async def chunks():
+        yield np.zeros(512,dtype=np.float32),24000
+        yield None,None  # Full device: no silence write.
+        assert device.write.call_count == 1
+        device.write_available = 480
+        now[0] += .5
+        yield None,None  # An actual underflow on padding must remain visible.
+    result = audio.play_tts_stream(tts_stream=chunks(), microphone=None,vad=None,
+        keypress_monitor=None, chime_player=Mock(), sample_rate=16000,use_aec=True,
+        barge_in_threshold_chunks=3)
+    assert result.output_underflows == result.alignment_resets == 1
+    assert result.alignment_reset_reasons == {'output_underflow':1}
+    assert result.output_timing['gap_silence_samples'] == 480
+    assert result.output_timing['underflow_contexts'][0]['kind'] == 'gap_silence'
+    assert factory.call_count == 2
+
+
+def test_gap_padding_stops_before_keyboard_cancel_and_deadline(monkeypatch):
+    from arietta_voice.turns import CancellationToken
+    now = [10.]
+    monkeypatch.setattr(audio.time, 'monotonic', lambda: now[0])
+    device = Mock(latency=0., write_available=480)
+    monkeypatch.setattr(audio.sd, 'OutputStream', lambda **kw: device)
+    for reason in ('key', 'deadline'):
+        device.reset_mock()
+        token, key = CancellationToken(), [False]
+        async def chunks():
+            yield np.ones(512,dtype=np.float32),24000
+            key[0] = reason == 'key'
+            now[0] += 1
+            yield None,None
+            raise AssertionError('Cancelled producer resumed')
+        options = dict(tts_stream=chunks(), chime_player=Mock(), cancellation=token,
+                       keypress_monitor=Mock(pressed=lambda:key[0]), deadline=now[0]+.5)
+        if reason == 'deadline':
+            with pytest.raises(WorkerTimeout):
+                audio.play_tts_stream_passive(**options)
+        else:
+            options['deadline'] = None
+            assert audio.play_tts_stream_passive(**options).interrupted
+        assert device.write.call_count == 1
+        device.abort.assert_called_once()
+
+
+def test_underflow_timing_contexts_remain_bounded():
+    timing = audio._PlaybackTiming()
+    for index in range(100):
+        timing.waited(.1)
+        timing.polled(.002)
+        timing.wrote(index, index+.01, True)
+    assert len(timing.report['underflow_contexts']) == 8
+    assert timing.report['underflow_contexts_omitted'] == 92
+    assert timing.report['writes'] == 100
+    assert timing.report['underflow_contexts'][1]['producer_wait_ms'] == 100
+    assert timing.report['underflow_contexts'][1]['capture_poll_ms'] == 2

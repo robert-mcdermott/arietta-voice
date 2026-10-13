@@ -282,6 +282,10 @@ def run_child(config, directory, turns, audible, idle_seconds, fixtures_path=Non
             def latency(self):
                 return self.stream.latency
 
+            @property
+            def write_available(self):
+                return self.stream.write_available
+
             def start(self):
                 self.stream.start()
                 microphone.row['output_open_ms'] = (time.monotonic() - self.started) * 1000

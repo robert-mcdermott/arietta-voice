@@ -7,6 +7,12 @@ version policy and the release procedure.
 
 ### Added
 
+- Speaker-output timing diagnostics and an isolated MLX/Jabra underflow probe
+  with matched continuous, producer-gap and deliberate scheduling-stall controls.
+  Playback now supplies bounded silence during post-start producer waits, honoring
+  device capacity, cancellation and AEC reference alignment. Real underflow flags
+  remain visible; short speech-channel timeouts now respect their requested limit.
+
 - Capture-overrun counts by runtime phase, separate intentional-discard counters
   in audio status/admin, and reason-specific AEC reset/playback discard events.
   Expected packets crossing playback startup no longer reset a fresh AEC;

@@ -314,6 +314,19 @@ Next, investigate output starvation/write scheduling with matched playback
 timings; longer live/load and acoustic acceptance gates remain open. See
 [findings, regression coverage and limits](evals/CAPTURE_ALIGNMENT_INVESTIGATION.md).
 
+**Speaker-output follow-up (October 13, 2026):** matched Jabra controls reproduced
+underflows from a 600 ms producer gap and a deliberate 350 ms foreground stall.
+Bounded post-start silence feeding and 10 ms producer polls removed both
+forced-gap underflows while preserving both scheduling-stall flags. Ordinary
+MLX answers were clean before/after. A 184.7-second live repeat passed operator
+playback/interruption/farewell checks with zero underflows, alignment resets or
+capture drops; it had no natural producer gap. The suite passes 573 tests and
+bounded write/wait/capture timing is now available for future failures. The exact
+trigger of the four historical underflows remains unproven. Private files and
+dependency inventories matched. Continue with forced-gap acoustic/AEC coverage,
+longer representative live/load testing and measured acoustic latency. See
+[protocol, evidence and remaining limits](evals/OUTPUT_UNDERFLOW_INVESTIGATION.md).
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms

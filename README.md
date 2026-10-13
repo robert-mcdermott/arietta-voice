@@ -392,6 +392,14 @@ unfinished utterance may continue. See
 The [capture/alignment investigation](evals/CAPTURE_ALIGNMENT_INVESTIGATION.md)
 documents the startup/wait fixes and isolated MLX repeat.
 
+During gaps after speech begins, the player feeds bounded 20 ms silence blocks
+into available device capacity and includes them in the AEC reference. It polls
+the producer every 10 ms without adding a startup prebuffer. Genuine output
+underflows still reset alignment. Playback events include bounded write/wait/
+capture-poll timing metadata to help distinguish generation gaps from scheduling
+stalls. See the [output-underflow investigation](evals/OUTPUT_UNDERFLOW_INVESTIGATION.md)
+for matched device probes, live checks and limitations.
+
 Heavy STT, endpoint, chat, tool, and TTS work runs in a persistent spawned process
 with one operation at a time. On timeout, crash, or model/tool exception, that
 worker is terminated before another is created. The voice runtime clears failed

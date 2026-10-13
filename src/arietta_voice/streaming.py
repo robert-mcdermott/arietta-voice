@@ -71,7 +71,8 @@ async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None
         producer.start()
         while True:
             try:
-                frame = audio.get(on_wait=on_wait, timeout=.05)
+                # Keep an active blocking output stream fed through clause gaps.
+                frame = audio.get(on_wait=on_wait, timeout=.01 if playback_events else .05)
             except ChannelClosed:
                 if playback_events:
                     # Native generator closure can still be pending. Keep the
