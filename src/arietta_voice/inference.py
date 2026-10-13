@@ -40,11 +40,26 @@ class InferenceEngine:
 
     def speaker(self):
         if self._speaker is None:
-            from arietta_voice.tts import KokoroTextToSpeech
-            self._speaker = KokoroTextToSpeech(self.config.audio.voice, self.config.audio.tts_speed)
+            from arietta_voice.tts import build_speaker
+            self._speaker = build_speaker(self.config.audio)
         return self._speaker
 
     def handle(self, operation, payload):
+        if operation == 'resource_snapshot':
+            import resource
+            import sys
+            mx = sys.modules.get('mlx.core')
+            llm = self._service._llm if self._service is not None else None
+            return dict(peak_rss_mib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss /
+                        (2**20 if sys.platform == 'darwin' else 1024),
+                        mlx_active_mib=mx.get_active_memory()/2**20 if mx else None,
+                        mlx_peak_mib=mx.get_peak_memory()/2**20 if mx else None,
+                        mlx_cache_mib=mx.get_cache_memory()/2**20 if mx else None,
+                        stt_loaded=self._stt is not None and self._stt.is_loaded(),
+                        chat_loaded=llm is not None and llm.is_loaded(),
+                        tts_loaded=self._speaker is not None and self._speaker.is_loaded(),
+                        endpoint_loaded=self._endpoint is not None and self._endpoint.is_loaded(),
+                        tts_backend=self.config.audio.tts_backend)
         if operation == "warmup":
             from arietta_voice.llm import build_chat_model
             self.stt().ensure_loaded()

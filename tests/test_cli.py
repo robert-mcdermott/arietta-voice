@@ -6,6 +6,18 @@ import pytest
 from arietta_voice import cli
 
 
+def test_cli_mlx_selection_is_ephemeral(tmp_path):
+    from arietta_voice.config import default_config, validate_config
+    config = default_config(tmp_path)
+    args = cli.build_parser().parse_args(['run', '--tts-backend', 'mlx',
+                                         '--mlx-kokoro-model', str(tmp_path/'Kokoro')])
+    cli._apply_runtime_overrides(config, args)
+    validate_config(config)
+    assert config.audio.tts_backend == 'mlx'
+    assert config.audio.mlx_kokoro_model == str(tmp_path/'Kokoro')
+    assert not list(tmp_path.iterdir())
+
+
 def test_cli_device_overrides_are_ephemeral_and_allow_default(tmp_path):
     from arietta_voice.config import default_config
     config = default_config(tmp_path)

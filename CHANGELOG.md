@@ -7,6 +7,12 @@ version policy and the release procedure.
 
 ### Added
 
+- Opt-in MLX Kokoro adapter in the shared inference worker, explicit local model
+  selection, dependency/asset diagnostics, and bounded materialized audio frames.
+  A separate pinned trial environment supports grouped conversation benchmarks,
+  identical input fixtures, shared-model memory telemetry and cancellation/recovery
+  checks. ONNX remains the default; production dependencies are unchanged.
+
 - Isolated ONNX/MLX Kokoro comparison with pinned candidate dependencies,
   bounded synthetic benchmarks, latency/CPU/memory reports and blinded listening
   pairs. Production speech synthesis and private settings remain unchanged.

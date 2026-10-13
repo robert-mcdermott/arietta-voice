@@ -3,6 +3,7 @@ include CHANGELOG.md RELEASING.md ROADMAP.md
 recursive-include tests *.py
 recursive-include evals *.py *.json *.md
 include evals/kokoro_candidate_requirements.txt
+include evals/kokoro_integration_requirements.txt
 recursive-include scripts *.py
 prune config
 prune knowledge

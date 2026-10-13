@@ -18,6 +18,39 @@ def test_balanced_reproducible_order_excludes_first_turn():
     assert all(order[1:].count(i) == 10 for i in range(10))
 
 
+def test_conversation_history_is_retained_within_groups_only():
+    now = [0.]
+    session = SimpleNamespace(turn_count=0)
+    reset = lambda: setattr(session, 'turn_count', 0)
+    runtime = SimpleNamespace(session=session,
+        config=SimpleNamespace(audio=SimpleNamespace(sample_rate=10, chunk_samples=4)),
+        reset_session=reset, _open_session=lambda _: None, vad=SimpleNamespace(reset=lambda: None))
+    mic = ReplayMicrophone(runtime, [np.ones(4)], [0]*5, conversation_turns=2,
+        clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0,now[0]+delay))
+    histories = []
+    for i in range(5):
+        mic.get()
+        histories.append(mic.row['history_turns'])
+        session.turn_count += 1
+        if i < 4: mic.advance()
+    assert histories == [0, 0, 1, 0, 1]
+
+
+def test_shared_fixtures_require_matching_corpus_and_hash(tmp_path):
+    import hashlib
+    import json
+    from scripts.latency_baseline import QUESTIONS, load_shared_fixtures
+    path = tmp_path/'fixtures.npz'
+    np.savez(path, **{f'q{i}':np.ones(512,dtype=np.float32) for i in range(len(QUESTIONS))})
+    meta = {'questions':list(QUESTIONS), 'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+    path.with_suffix('.json').write_text(json.dumps(meta))
+    assert len(load_shared_fixtures(path)) == 10
+    meta['questions'][0] = 'Mismatched text'
+    path.with_suffix('.json').write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match='mismatch'):
+        load_shared_fixtures(path)
+
+
 def test_stage_timings_use_waveform_end_and_exclude_initial_turn():
     row = {'case_id': 0, 'first_turn': False, 'speech_end': 10.,
            'processing': 11., 'tts_ready': 12.5, 'first_write': 13.,

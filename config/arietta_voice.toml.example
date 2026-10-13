@@ -36,6 +36,10 @@ sample_rate = 16000
 chunk_samples = 512
 silence_ms = 700
 tts_enabled = true
+# Experimental alternative: "mlx", only in the isolated trial environment.
+tts_backend = "onnx"
+# For MLX: explicit local Kokoro directory; relative paths resolve beside this config.
+mlx_kokoro_model = ""
 smart_turn_enabled = true
 aec_enabled = true
 chime_enabled = true

@@ -28,6 +28,13 @@ def list_audio_devices() -> list[dict[str, Any]]:
 
 def run_startup_diagnostics(config: AppConfig, *, include_hardware: bool = True) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
+    if config.audio.tts_backend == 'mlx':
+        try:
+            from arietta_voice.tts_mlx import validate_trial
+            validate_trial(config.audio.mlx_kokoro_model, config.audio.voice)
+            checks.append(_check('tts_backend', True, 'Experimental MLX dependencies and local assets found'))
+        except ValueError as exc:
+            checks.append(_check('tts_backend', False, str(exc)))
 
     soul_exists = config.prompts.soul_path.exists()
     checks.append(

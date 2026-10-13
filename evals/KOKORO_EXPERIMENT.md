@@ -161,6 +161,10 @@ pressure: MLX recorded a 1.90 GiB allocator peak, which RSS does not fully captu
 Do not add the two measurements or treat their difference as a memory saving.
 Co-residency with the app's MLX language model still needs measurement.
 
+Follow-up: the [opt-in integration trial](KOKORO_INTEGRATION.md) now measures
+full conversations with Gemma, Moonshine and Smart Turn loaded alongside TTS.
+Its shared-model memory results supersede this component-only migration gate.
+
 Local final reports, raw WAVs and environment metadata are in
 `tmp/kokoro-experiment/final/`. Rebuild the blinded listening pairs with:
 

@@ -34,6 +34,7 @@ def isolated_environment(tmp_path, monkeypatch):
         "arietta_voice.llm.GemmaChatModel.ensure_loaded",
         "arietta_voice.stt.MoonshineSpeechToText.ensure_loaded",
         "arietta_voice.tts.KokoroTextToSpeech.ensure_loaded",
+        "arietta_voice.tts_mlx.MLXKokoroTextToSpeech.ensure_loaded",
         "arietta_voice.turn_detection.SileroVoiceActivityDetector.ensure_loaded",
         "arietta_voice.turn_detection.SmartTurnEndpointDetector.ensure_loaded",
         "arietta_voice.knowledge.BgeTextEmbedder.__init__",

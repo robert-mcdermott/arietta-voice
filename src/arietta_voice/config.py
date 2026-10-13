@@ -98,6 +98,8 @@ class AudioConfig:
     chunk_samples: int = 512
     silence_ms: int = 700
     tts_enabled: bool = True
+    tts_backend: str = "onnx"
+    mlx_kokoro_model: str = ""
     smart_turn_enabled: bool = True
     aec_enabled: bool = True
     chime_enabled: bool = True
@@ -310,6 +312,9 @@ def load_config(path: Path | None = None) -> AppConfig:
             chunk_samples=int(audio.get("chunk_samples", base.audio.chunk_samples)),
             silence_ms=int(audio.get("silence_ms", base.audio.silence_ms)),
             tts_enabled=bool(audio.get("tts_enabled", base.audio.tts_enabled)),
+            tts_backend=str(audio.get("tts_backend", base.audio.tts_backend)),
+            mlx_kokoro_model=(str(_resolve_path(base_dir, audio['mlx_kokoro_model']))
+                              if audio.get('mlx_kokoro_model') else ''),
             smart_turn_enabled=bool(audio.get("smart_turn_enabled", base.audio.smart_turn_enabled)),
             aec_enabled=bool(audio.get("aec_enabled", base.audio.aec_enabled)),
             chime_enabled=bool(audio.get("chime_enabled", base.audio.chime_enabled)),
@@ -475,6 +480,13 @@ def validate_config(config: AppConfig) -> AppConfig:
     number("runtime.startup_timeout_s", config.runtime.startup_timeout_s, 1, 1800)
     number("audio.tts_speed", config.audio.tts_speed, 0.001)
     require(bool(config.audio.voice.strip()), "audio.voice must not be blank")
+    require(config.audio.tts_backend in {'onnx', 'mlx'}, "audio.tts_backend must be onnx or mlx")
+    if config.audio.tts_backend == 'mlx':
+        import re
+        require(bool(config.audio.mlx_kokoro_model.strip()), "MLX trial requires audio.mlx_kokoro_model (local directory)")
+        require(bool(re.fullmatch(r'[ab][fm]_[a-z0-9_]+', config.audio.voice)),
+                "MLX trial supports named American/British English voices only")
+        number("audio.tts_speed", config.audio.tts_speed, 0.5, 2.0)
     require(config.models.chat_provider in {"local", "bedrock"},
             "models.chat_provider must be 'local' or 'bedrock'")
     require(bool(config.models.chat_model.strip()), "models.chat_model must not be blank")

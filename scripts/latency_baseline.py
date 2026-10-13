@@ -22,7 +22,7 @@ from types import SimpleNamespace
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from arietta_voice.config import load_config
+from arietta_voice.config import load_config, validate_config
 from arietta_voice.runtime_status import read_runtime_status
 from scripts.hardware_validation import (
     isolated_config, collect_environment, protected_fingerprints, validation_lock,
@@ -88,13 +88,14 @@ class ReplayMicrophone:
     """
     dropped_chunks = input_overflows = 0
 
-    def __init__(self, runtime, fixtures, order, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, runtime, fixtures, order, clock=time.monotonic, sleep=time.sleep, conversation_turns=1):
         self.runtime, self.fixtures, self.order = runtime, fixtures, order
         self.clock, self.sleep = clock, sleep
         self.index = 0
         self.offset = 0
         self.started = None
         self.row = None
+        self.conversation_turns = conversation_turns
 
     def get(self, timeout=None):
         import numpy as np
@@ -102,11 +103,13 @@ class ReplayMicrophone:
         width = self.runtime.config.audio.chunk_samples
         source = self.fixtures[self.order[self.index]]
         if self.started is None:
-            self.runtime.reset_session()
-            self.runtime._open_session(None)
+            if self.index == 0 or (self.index-1) % self.conversation_turns == 0:
+                self.runtime.reset_session()
+                self.runtime._open_session(None)
             self.runtime.vad.reset()
             self.started = self.clock()
             self.row = {'case_id': self.order[self.index], 'first_turn': self.index == 0,
+                        'history_turns': getattr(getattr(self.runtime, 'session', None), 'turn_count', 0),
                         'speech_end': self.started + len(source) / rate, 'calls': []}
         deadline = self.started + (self.offset + width) / rate
         self.sleep(max(0, deadline - self.clock()))
@@ -146,6 +149,8 @@ def finish_row(row, finished, failed):
              and row.get('first_write', 0) >= row['speech_end']
              and stages['transcribe'] > 0 and stages['chat'] > 0)
     result = {'case_id': row['case_id'], 'first_turn': row['first_turn'], 'valid': valid,
+              'history_turns': row.get('history_turns', 0),
+              'response_sha256': row.get('response_sha256'),
               'stages_ms': dict(stages), 'output_underflows': row.get('output_underflows', 0),
               'endpoint_calls': sum(c[0] == 'endpoint' for c in row['calls']),
               'endpoint_rejections': row.get('endpoint_rejections', 0),
@@ -165,7 +170,23 @@ def finish_row(row, finished, failed):
     return result
 
 
-def run_child(config, directory, turns, audible, idle_seconds):
+def load_shared_fixtures(path):
+    import numpy as np
+    metadata = json.loads(path.with_suffix('.json').read_text())
+    if metadata['questions'] != list(QUESTIONS) or hashlib.sha256(path.read_bytes()).hexdigest() != metadata['sha256']:
+        raise ValueError('Shared fixture corpus/hash mismatch')
+    with np.load(path, allow_pickle=False) as data:
+        if set(data.files) != {f'q{i}' for i in range(len(QUESTIONS))}:
+            raise ValueError('Shared fixture keys mismatch')
+        fixtures = [data[f'q{i}'] for i in range(len(QUESTIONS))]
+    if any(a.dtype != np.float32 or a.ndim != 1 or not 0 < len(a) <= 16000*30
+           or not np.isfinite(a).all() for a in fixtures):
+        raise ValueError('Invalid shared fixture audio')
+    return fixtures
+
+
+def run_child(config, directory, turns, audible, idle_seconds, fixtures_path=None, conversation_turns=1,
+              resource_metrics=False):
     os.setsid()
     os.umask(0o077)
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false')
@@ -176,28 +197,32 @@ def run_child(config, directory, turns, audible, idle_seconds):
     path = directory / 'report.json'
     report = {'status': 'running', 'phase': 'fixtures', 'requested_warm_turns': turns,
               'audible': audible, 'rows': [], 'recordings_saved': False,
-              'private_context_loaded': False}
+              'private_context_loaded': False, 'tts_backend': config.audio.tts_backend,
+              'conversation_turns': conversation_turns}
     runtime = None
     original_audio_sd = audio_module.sd
     try:
         write_report(path, report)
-        runtime = AriettaVoiceRuntime(config)
-        runtime.warmup()
         fixtures = []
         fixture_hashes = []
-        for text in QUESTIONS:
-            pcm, sr = _synthesize(runtime, text)
-            pcm = np.interp(np.arange(int(len(pcm) * config.audio.sample_rate / sr)) * sr / config.audio.sample_rate,
-                            np.arange(len(pcm)), pcm).astype(np.float32)
-            # Reproducible waveform-end definition: last sample > -60 dB of peak.
-            nonquiet = np.flatnonzero(np.abs(pcm) > max(float(np.max(np.abs(pcm))) * .001, 1e-6))
-            if not len(nonquiet):
-                raise ValueError('Empty synthetic fixture')
-            pcm = pcm[:nonquiet[-1] + 1]
-            fixtures.append(pcm)
-            fixture_hashes.append(hashlib.sha256(pcm.tobytes()).hexdigest())
-        runtime.worker.close()
-        runtime.chime_player.stop()
+        if fixtures_path is not None:
+            fixtures = load_shared_fixtures(fixtures_path)
+        else:
+            runtime = AriettaVoiceRuntime(config)
+            runtime.warmup()
+            for text in QUESTIONS:
+                pcm, sr = _synthesize(runtime, text)
+                pcm = np.interp(np.arange(int(len(pcm) * config.audio.sample_rate / sr)) * sr / config.audio.sample_rate,
+                                np.arange(len(pcm)), pcm).astype(np.float32)
+                # Reproducible waveform-end definition: last sample > -60 dB of peak.
+                nonquiet = np.flatnonzero(np.abs(pcm) > max(float(np.max(np.abs(pcm))) * .001, 1e-6))
+                if not len(nonquiet):
+                    raise ValueError('Empty synthetic fixture')
+                fixtures.append(pcm[:nonquiet[-1] + 1])
+            runtime.worker.close()
+            runtime.memory_jobs.close()
+            runtime.chime_player.stop()
+        fixture_hashes = [hashlib.sha256(pcm.tobytes()).hexdigest() for pcm in fixtures]
         report.update(phase='startup', fixture_sha256=fixture_hashes,
                       fixture_durations_s=[len(a) / config.audio.sample_rate for a in fixtures])
         write_report(path, report)
@@ -210,10 +235,12 @@ def run_child(config, directory, turns, audible, idle_seconds):
         runtime.output_device = runtime.chime_player.device = output['index']
         runtime.warmup()
         report['cached_process_startup_s'] = time.monotonic() - started
+        if resource_metrics:
+            report['model_resources_after_warmup'] = runtime.worker.call('resource_snapshot', timeout_s=5)
         report.update(phase='idle', ready=True)
         write_report(path, report)
         time.sleep(idle_seconds)
-        microphone = ReplayMicrophone(runtime, fixtures, case_order(turns))
+        microphone = ReplayMicrophone(runtime, fixtures, case_order(turns), conversation_turns=conversation_turns)
         runtime.microphone = microphone
         original_call = runtime.worker.call
 
@@ -237,6 +264,7 @@ def run_child(config, directory, turns, audible, idle_seconds):
                     row['response_chars'] = len(value['response'])
                 if operation == 'chat_next' and value['kind'] == 'done':
                     row['response_chars'] = len(value['result']['response'])
+                    row['response_sha256'] = hashlib.sha256(value['result']['response'].encode()).hexdigest()
                 if operation == 'endpoint' and value < .5:
                     row['endpoint_rejections'] = row.get('endpoint_rejections', 0) + 1
             return value
@@ -295,6 +323,8 @@ def run_child(config, directory, turns, audible, idle_seconds):
             row['input_samples'] = len(pcm)
             result = original_process(pcm, mic, keys)
             record = finish_row(row, time.monotonic(), runtime.last_error is not None)
+            if resource_metrics:
+                record['model_resources'] = original_call('resource_snapshot', timeout_s=5)
             report['rows'].append(record)
             report['summary'] = summarize_turns(report['rows'])
             report['reliability'] = runtime.reliability_snapshot()
@@ -317,6 +347,7 @@ def run_child(config, directory, turns, audible, idle_seconds):
     finally:
         audio_module.sd = original_audio_sd
         if runtime is not None:
+            runtime.memory_jobs.close()
             runtime.worker.close()
             runtime.chime_player.stop()
             runtime.microphone = None
@@ -332,9 +363,16 @@ def main():
     parser.add_argument('--turns', type=int, default=100)
     parser.add_argument('--audible', action='store_true')
     parser.add_argument('--idle-seconds', type=int, default=20)
+    parser.add_argument('--fixtures', type=Path, help='Shared synthetic NPZ plus matching JSON manifest')
+    parser.add_argument('--conversation-turns', type=int, default=1)
+    parser.add_argument('--tts-backend', choices=['onnx', 'mlx'])
+    parser.add_argument('--mlx-kokoro-model', type=Path)
+    parser.add_argument('--resource-metrics', action='store_true', help='Sample worker MLX/RSS after each completed turn')
     args = parser.parse_args()
     if not 1 <= args.turns <= 200 or not 0 <= args.idle_seconds <= 60:
         parser.error('turns must be 1..200; idle-seconds must be 0..60')
+    if not 1 <= args.conversation_turns <= 8:
+        parser.error('conversation-turns must be 1..8')
     root = Path(__file__).resolve().parents[1]
     os.umask(0o077)
     with validation_lock(root / 'tmp/hardware-validation'):
@@ -345,6 +383,11 @@ def main():
         directory = root / 'tmp/latency-baseline' / datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
         directory.mkdir(parents=True, mode=0o700)
         config = isolated_config(source, directory)
+        if args.tts_backend is not None:
+            config.audio.tts_backend = args.tts_backend
+        if args.mlx_kokoro_model is not None:
+            config.audio.mlx_kokoro_model = str(args.mlx_kokoro_model.resolve())
+        validate_config(config)
         if not config.audio.tts_enabled:
             parser.error('This baseline requires TTS enabled')
         metadata = collect_environment(config, root)
@@ -352,11 +395,13 @@ def main():
                         corpus_sha256=hashlib.sha256(json.dumps(QUESTIONS).encode()).hexdigest(),
                         seed=SEED, silence_ms=config.audio.silence_ms,
                         chime_enabled=config.audio.chime_enabled, temperature=config.models.temperature,
-                        protocol='paced synthetic input; fresh active session per turn; first output write, not acoustic onset')
+                        tts_backend=config.audio.tts_backend, conversation_turns=args.conversation_turns,
+                        protocol='paced synthetic input; grouped conversation history; first output write, not acoustic onset')
         write_report(directory / 'environment.json', metadata)
         print(f'Baseline directory: {directory}', flush=True)
         process = multiprocessing.get_context('spawn').Process(target=run_child,
-            args=(config, directory, args.turns, args.audible, args.idle_seconds))
+            args=(config, directory, args.turns, args.audible, args.idle_seconds, args.fixtures,
+                  args.conversation_turns, args.resource_metrics))
         samples = []
         error = None
         started = time.monotonic()

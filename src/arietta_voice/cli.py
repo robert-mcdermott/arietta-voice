@@ -22,6 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--config", type=Path, help="Path to a TOML config file")
     run_parser.add_argument("--memory", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--tts", action=argparse.BooleanOptionalAction, default=None)
+    run_parser.add_argument('--tts-backend', choices=['onnx', 'mlx'], help='Experimental MLX requires the trial environment')
+    run_parser.add_argument('--mlx-kokoro-model', type=Path, help='Explicit local Kokoro model directory for MLX')
     run_parser.add_argument("--aec", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--smart-turn", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--chime", action=argparse.BooleanOptionalAction, default=None)
@@ -84,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _apply_runtime_overrides(config, args):
+    if getattr(args, 'tts_backend', None) is not None:
+        config.audio.tts_backend = args.tts_backend
+    if getattr(args, 'mlx_kokoro_model', None) is not None:
+        config.audio.mlx_kokoro_model = str(args.mlx_kokoro_model.expanduser().resolve())
     for name in ('input_device', 'output_device'):
         value = getattr(args, name, None)
         if value is not None:

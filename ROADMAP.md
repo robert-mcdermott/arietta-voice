@@ -250,10 +250,22 @@ backend, with identical `af_heart` voice tensors. MLX reduced median TTS
 first-audio time from 1,175 to 422 ms; initial startup was slower. Lower CPU/RSS
 must be considered alongside its 1.90 GiB MLX allocator peak. In the three-pair
 blinded review, the user found MLX's currency pronunciation more natural and
-otherwise found the engines similar. The next recommended step is an opt-in MLX
-integration experiment measuring full-turn latency and shared-model memory use;
-production remains on ONNX. [Protocol, results and migration gates](evals/KOKORO_EXPERIMENT.md) keep this
+otherwise found the engines similar. An opt-in adapter and separate full-app
+trial environment now support conversation latency and shared-model memory
+measurement; production remains on ONNX. [Protocol, results and migration gates](evals/KOKORO_EXPERIMENT.md) keep this
 component result separate from end-to-end Phase 2 acceptance criteria.
+
+**MLX integration trial:** the shared worker now supports explicitly selected
+local MLX Kokoro assets, bounded materialized PCM and the existing cancellation
+and recovery mechanism. Matched five-turn conversation blocks measured a
+21.8% median first-write improvement (2,952 → 2,308 ms), or 14.6% to the first
+signal-containing write (2,952 → 2,520 ms). Shared MLX allocator peak increased
+from 5.23 to 6.43 GiB. These are short synthetic runs with muted real-device
+output. Against the bracketed production ONNX reference, the median first-write
+gain was 11.5%, or only 3.3% to the first signal-containing write. Keep MLX opt-in
+pending longer workload and live playback/interruption
+validation. See [full integration results and reproduction](evals/KOKORO_INTEGRATION.md),
+including the production dependency control and remaining migration gates.
 
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative

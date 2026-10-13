@@ -70,6 +70,15 @@ def spoken_voice_name(voice: str) -> str:
     return f"{prefix_spoken} {name.replace('_', ' ')}".strip()
 
 
+def build_speaker(audio):
+    if audio.tts_backend == 'onnx':
+        return KokoroTextToSpeech(audio.voice, audio.tts_speed)
+    if audio.tts_backend == 'mlx':
+        from arietta_voice.tts_mlx import MLXKokoroTextToSpeech
+        return MLXKokoroTextToSpeech(audio.mlx_kokoro_model, audio.voice, audio.tts_speed)
+    raise ValueError('Unknown TTS backend')
+
+
 class KokoroTextToSpeech:
     def __init__(self, voice: str, speed: float = 1.0) -> None:
         self.voice = voice
