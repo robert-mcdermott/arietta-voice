@@ -162,3 +162,33 @@ def test_tts_uses_remaining_turn_budget_and_closes_stream():
         validation._synthesize(runtime, "synthetic")
     assert runtime._turn_deadline == 123.0
     worker.call.assert_called_once_with("tts_close", timeout_s=2)
+
+
+def test_trial_overrides_leave_source_and_private_profile_untouched(tmp_path):
+    source = default_config(tmp_path)
+    before = asdict(source)
+    target = validation.isolated_config(source, tmp_path / "trial")
+    validation.apply_trial_overrides(target, "mlx", tmp_path / "kokoro-model")
+    assert asdict(source) == before
+    assert target.audio.tts_backend == "mlx"
+    assert target.audio.mlx_kokoro_model == str(tmp_path / "kokoro-model")
+    assert not target.memory.enabled and not target.tools.enabled
+
+
+@pytest.mark.parametrize("failure", [None, "pid", "restart", "resident", "backend", "memory"])
+def test_soak_rejects_worker_replacement_or_incomplete_model_evidence(failure):
+    snapshot = dict(stt_loaded=True, chat_loaded=True, tts_loaded=True, endpoint_loaded=True,
+                    tts_backend="mlx", peak_rss_mib=100, mlx_active_mib=200,
+                    mlx_peak_mib=300, mlx_cache_mib=50)
+    worker = SimpleNamespace(pid=42, restarts=0, call=Mock(return_value=snapshot))
+    runtime = SimpleNamespace(worker=worker, config=SimpleNamespace(audio=SimpleNamespace(tts_backend="mlx")))
+    if failure == "pid": worker.pid = 43
+    if failure == "restart": worker.restarts = 1
+    if failure == "resident": snapshot["chat_loaded"] = False
+    if failure == "backend": snapshot["tts_backend"] = "onnx"
+    if failure == "memory": snapshot["mlx_active_mib"] = float("nan")
+    if failure:
+        with pytest.raises(ValueError): validation.resident_sample(runtime, 0, 42)
+    else:
+        result = validation.resident_sample(runtime, 0, 42)
+        assert result["worker_pid"] == 42 and result["mlx_active_mib"] == 200

@@ -289,6 +289,18 @@ continuous shared-model soak. Investigating MLX's leading silence is a separate
 candidate optimization, with initial-phoneme quality checks required. See
 [the full comparison, host context and remaining gates](evals/KOKORO_100_TURN_COMPARISON.md).
 
+**MLX live/soak follow-up (October 13, 2026):** a five-minute Jabra check passed
+operator playback, no-self-triggering, early/mid-answer interruption, recovery
+and farewell checks. Logs confirm two intended voice interruptions and no
+output underflows or turn failures; 73 capture-queue drops and 10 alignment
+resets remain documented limits. The subsequent 15-minute component soak
+completed 390 varied synthetic turns in one worker, with all four models loaded,
+no restarts and stable 5.17 GiB active MLX allocation; peak was 6.43 GiB.
+Private files and both dependency environments remained unchanged. Keep MLX
+opt-in: acoustic timing/echo measurement, capture-drop investigation and longer
+representative live/load soaks remain open. See
+[operator evidence, memory results and reproduction](evals/MLX_LIVE_SOAK.md).
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms

@@ -214,6 +214,11 @@ of memory use. A continuous shared-model soak is still required.
 
 ## Decision and remaining gates
 
+Follow-up: the [MLX live/soak validation](MLX_LIVE_SOAK.md) passed initial
+operator playback/AEC/interruption checks and a 15-minute, 390-turn continuous
+shared-model soak. Acoustic measurements and longer representative live/load
+validation remain open. The comparison results below retain their original scope.
+
 Keep production ONNX and its dependencies unchanged. Retain the isolated MLX
 option: it consistently reduces synthesis time and paired response onset in
 this workload, but its pooled median first-signal benefit against production

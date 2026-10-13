@@ -245,6 +245,9 @@ stage probes; the earlier slowdown did not reproduce.
 The [100-turn counterbalanced comparison](evals/KOKORO_100_TURN_COMPARISON.md)
 rotates production ONNX, trial ONNX and trial MLX through all six execution
 orders, with read-only CPU, thermal, power and memory-pressure monitoring.
+The [MLX live and shared-model soak protocol](evals/MLX_LIVE_SOAK.md) adds
+operator playback/AEC/interruption checks and continuous model-residency and
+memory monitoring in the isolated trial environment.
 
 The tracked [`config/arietta_voice.toml`](./config/arietta_voice.toml) provides
 shared defaults. Create private settings and a private persona before customizing:

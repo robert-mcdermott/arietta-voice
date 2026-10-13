@@ -7,6 +7,12 @@ version policy and the release procedure.
 
 ### Added
 
+- Isolated MLX hardware-test overrides, host telemetry and continuous shared-model
+  soak checks, including varied synthetic fixtures, configurable turn spacing,
+  per-turn allocator samples and failure on worker replacement or missing models.
+  Live playback/AEC/interruption observations are recorded separately from
+  automated gates; private settings and the ONNX default remain unchanged.
+
 - Counterbalanced production ONNX, trial ONNX and MLX conversation comparison
   with 100 warm turns per condition, separate initial turns, matched synthetic
   inputs/history, per-block results and read-only macOS host-state monitoring.

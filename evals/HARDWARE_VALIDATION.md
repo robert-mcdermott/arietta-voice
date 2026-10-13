@@ -24,6 +24,21 @@ uv run --locked scripts/hardware_validation.py --mode live --minutes 15
 uv run --locked scripts/hardware_validation.py --minutes 15
 ```
 
+For the prepared, separate MLX integration environment, the harness accepts
+temporary `--tts-backend mlx --mlx-kokoro-model PATH` overrides. They apply only
+to the disposable test profile. `--host-metrics` records read-only macOS host
+CPU, power, thermal and memory-pressure samples. See
+[the MLX live and continuous-soak protocol](MLX_LIVE_SOAK.md) for commands.
+
+In components mode, `--resource-metrics` checks that STT, chat, endpointing and
+TTS remain resident in the same inference worker and records allocator/RSS
+samples after every turn. It requires TTS and Smart Turn enabled. `--fixtures`
+cycles an existing synthetic NPZ and validates its corpus/hash manifest; it
+does not capture microphone audio. `--soak-interval` controls the pause between
+turns (0–30 seconds, default 5). Fixture-driven component turns have empty
+conversation history and do not run the live playback/AEC path. Worker residency
+and repeated inference are distinct from a full live conversation soak.
+
 Use `--config /path/to/base.toml` if the normal app uses an explicit base config.
 The same private override precedence applies on read. The harness requires a
 local chat provider and never calls Bedrock. macOS microphone access may need to

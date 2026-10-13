@@ -22,8 +22,12 @@ import platform
 import signal
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
+
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from arietta_voice.config import default_config, load_config, validate_config
 
@@ -60,6 +64,7 @@ def collect_environment(config, root):
     metadata = {
         "app_version": version("arietta-voice"), "platform": platform.platform(),
         "python": platform.python_version(), "architecture": platform.machine(),
+        "tts_backend": config.audio.tts_backend,
         "lock_sha256": hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest(),
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
@@ -108,6 +113,29 @@ def collect_environment(config, root):
             with asset.open("rb") as handle:
                 metadata["asset_sha256"][asset.name] = hashlib.file_digest(handle, "sha256").hexdigest()
     return metadata
+
+
+def apply_trial_overrides(config, backend=None, model=None):
+    """Apply only to the disposable profile, never the source configuration."""
+    if backend is not None:
+        config.audio.tts_backend = backend
+    if model is not None:
+        config.audio.mlx_kokoro_model = str(model.resolve())
+    validate_config(config)
+
+
+def resident_sample(runtime, started, expected_pid):
+    if runtime.worker.pid != expected_pid or runtime.worker.restarts:
+        raise ValueError("Soak inference worker changed or restarted")
+    sample = runtime.worker.call("resource_snapshot", timeout_s=5)
+    if not all(sample.get(k) for k in ("stt_loaded", "chat_loaded", "tts_loaded", "endpoint_loaded")):
+        raise ValueError("Soak requires all four models resident")
+    if sample.get("tts_backend") != runtime.config.audio.tts_backend:
+        raise ValueError("Unexpected soak TTS backend")
+    for key in ("peak_rss_mib", "mlx_active_mib", "mlx_peak_mib", "mlx_cache_mib"):
+        if sample.get(key) is None or not math.isfinite(sample[key]) or sample[key] < 0:
+            raise ValueError("Missing or invalid model memory sample")
+    return dict(sample, elapsed_seconds=time.monotonic() - started, worker_pid=expected_pid)
 
 
 def summarize_events(directory):
@@ -256,7 +284,8 @@ def _synthesize(runtime, text):
             runtime.worker.call("tts_close", timeout_s=2)
 
 
-def _components(config, report, path, minutes, microphone_seconds, playback):
+def _components(config, report, path, minutes, microphone_seconds, playback,
+                resource_metrics=False, fixtures_path=None, soak_interval=5):
     import numpy as np
     import sounddevice as sd
     from arietta_voice.audio import MicrophoneStream
@@ -276,6 +305,12 @@ def _components(config, report, path, minutes, microphone_seconds, playback):
             np.arange(int(len(source_audio) * config.audio.sample_rate / source_rate)) * source_rate / config.audio.sample_rate,
             np.arange(len(source_audio)), source_audio,
         ).astype(np.float32)
+        fixtures = None
+        if fixtures_path is not None:
+            from scripts.latency_baseline import load_shared_fixtures
+            fixtures = load_shared_fixtures(fixtures_path)
+            report["fixture_sha256"] = hashlib.sha256(fixtures_path.read_bytes()).hexdigest()
+            report["fixture_count"] = len(fixtures)
         probabilities = [runtime.vad.probability(audio[i:i + config.audio.chunk_samples])
                          for i in range(0, len(audio) - config.audio.chunk_samples + 1, config.audio.chunk_samples)]
         runtime.vad.reset()
@@ -312,20 +347,27 @@ def _components(config, report, path, minutes, microphone_seconds, playback):
         report["ready"] = True
         report["soak_started_at"] = datetime.now(timezone.utc).isoformat()
         started = time.monotonic()
+        expected_pid = runtime.worker.pid
+        if resource_metrics:
+            report["model_resources_after_warmup"] = resident_sample(runtime, started, expected_pid)
+            report["model_resources"] = []
+        report["soak_interval_seconds"] = soak_interval
         write_report(path, report)
         while True:
             turn = time.monotonic()
             runtime._turn_deadline = turn + config.runtime.turn_timeout_s
-            transcript = runtime._infer("transcribe", audio)
+            case_id = len(timings) % len(fixtures) if fixtures else None
+            turn_audio = fixtures[case_id] if fixtures else audio
+            transcript = runtime._infer("transcribe", turn_audio)
             if not transcript.strip():
                 raise ValueError("STT produced no transcript for synthetic speech")
             wake = runtime.wake_detector.match(transcript)
-            if wake is None or not wake.prompt_text:
+            if fixtures is None and (wake is None or not wake.prompt_text):
                 raise ValueError("Synthetic wake command was not recognized")
-            endpoint = runtime._infer("endpoint", audio) if config.audio.smart_turn_enabled else None
+            endpoint = runtime._infer("endpoint", turn_audio) if config.audio.smart_turn_enabled else None
             if endpoint is not None and (not math.isfinite(endpoint) or not 0 <= endpoint <= 1):
                 raise ValueError("Invalid endpoint probability")
-            response = runtime._respond(wake.prompt_text)
+            response = runtime._respond(transcript if fixtures else wake.prompt_text)
             if not response.strip():
                 raise ValueError("Chat produced an empty answer")
             answer_audio, answer_rate = _synthesize(runtime, response)
@@ -333,10 +375,14 @@ def _components(config, report, path, minutes, microphone_seconds, playback):
             if not np.isfinite(answer_audio).all():
                 raise ValueError("TTS produced non-finite samples")
             timings.append(time.monotonic() - turn)
+            if resource_metrics:
+                report["model_resources"].append(dict(resident_sample(runtime, started, expected_pid),
+                    turn=len(timings), case_id=case_id))
             report.update({"completed_turns": len(timings), "soak_elapsed_seconds": round(time.monotonic() - started, 1),
                            "endpoint_probability": endpoint, "worker_restarts": runtime.worker.restarts,
-                           "synthetic_wake_recognized": True,
-                           "arithmetic_answer_contains_four": "four" in response.lower() or "4" in response,
+                           "synthetic_wake_recognized": True if fixtures is None else None,
+                           "arithmetic_answer_contains_four": ("four" in response.lower() or "4" in response)
+                           if fixtures is None else None,
                            "turn_latency_seconds": {"p50": round(float(np.percentile(timings, 50)), 3),
                                                     "p95": round(float(np.percentile(timings, 95)), 3)},
                            "last_answer_audio_seconds": round(len(answer_audio) / answer_rate, 3)})
@@ -344,30 +390,35 @@ def _components(config, report, path, minutes, microphone_seconds, playback):
             write_report(path, report)
             if time.monotonic() - started >= minutes * 60:
                 break
-            time.sleep(min(5, max(0, minutes * 60 - (time.monotonic() - started))))
+            time.sleep(min(soak_interval, max(0, minutes * 60 - (time.monotonic() - started))))
         report["status"] = "passed"
     finally:
+        runtime.memory_jobs.close()
         runtime.worker.close()
         runtime.chime_player.stop()
         runtime.status_publisher.stop(runtime)
 
 
-def _run_child(config, directory, mode, minutes, microphone_seconds, playback):
+def _run_child(config, directory, mode, minutes, microphone_seconds, playback,
+               resource_metrics=False, fixtures_path=None, soak_interval=5):
     # Own a process group so even a native device/model hang can be stopped
     # without signalling another runtime or any of the user's processes.
     os.setsid()
     os.umask(0o077)
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     path = directory / "report.json"
     report = {"status": "running", "mode": mode, "requested_minutes": minutes,
+              "tts_backend": config.audio.tts_backend,
               "started_at": datetime.now(timezone.utc).isoformat(), "ready": False,
               "private_context_loaded": False, "recordings_saved": False}
     write_report(path, report)
     try:
         if mode == "components":
-            _components(config, report, path, minutes, microphone_seconds, playback)
+            _components(config, report, path, minutes, microphone_seconds, playback,
+                        resource_metrics, fixtures_path, soak_interval)
         else:
             from arietta_voice.runtime import AriettaVoiceRuntime
             AriettaVoiceRuntime(config).run()
@@ -407,6 +458,12 @@ def main():
     parser.add_argument("--minutes", type=float, default=0)
     parser.add_argument("--microphone-seconds", type=float, default=0)
     parser.add_argument("--playback", action="store_true")
+    parser.add_argument("--tts-backend", choices=("onnx", "mlx"))
+    parser.add_argument("--mlx-kokoro-model", type=Path)
+    parser.add_argument("--resource-metrics", action="store_true", help="Verify continuous four-model residency and sample worker allocations (components only)")
+    parser.add_argument("--host-metrics", action="store_true", help="Read-only macOS host telemetry")
+    parser.add_argument("--fixtures", type=Path, help="Cycle existing synthetic NPZ fixtures (components only)")
+    parser.add_argument("--soak-interval", type=float, default=5, help="Pause between component turns, 0..30 seconds")
     args = parser.parse_args()
     if not math.isfinite(args.minutes) or not 0 <= args.minutes <= 60:
         parser.error("minutes must be between 0 and 60")
@@ -414,6 +471,10 @@ def main():
         parser.error("microphone-seconds must be between 0 and 30")
     if args.mode == "live" and args.minutes <= 0:
         parser.error("live mode requires a positive minutes limit")
+    if not math.isfinite(args.soak_interval) or not 0 <= args.soak_interval <= 30:
+        parser.error("soak-interval must be between 0 and 30")
+    if args.mode == "live" and (args.resource_metrics or args.fixtures):
+        parser.error("resource-metrics and fixtures require components mode")
     root = Path(__file__).resolve().parents[1]
     os.umask(0o077)
     try:
@@ -432,12 +493,27 @@ def run_profile(args, root):
     directory = root / "tmp" / "hardware-validation" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     directory.mkdir(parents=True, mode=0o700)
     config = isolated_config(source, directory)
+    apply_trial_overrides(config, args.tts_backend, args.mlx_kokoro_model)
+    if args.resource_metrics and not (config.audio.tts_enabled and config.audio.smart_turn_enabled):
+        raise ValueError("Resource soak requires TTS and Smart Turn enabled")
     metadata = collect_environment(config, root)
+    if config.audio.tts_backend == "mlx":
+        model = Path(config.audio.mlx_kokoro_model)
+        metadata["mlx_asset_sha256"] = {}
+        for asset in (model/"kokoro-v1_0.safetensors", model/"voices"/f"{config.audio.voice}.safetensors"):
+            with asset.open("rb") as handle:
+                metadata["mlx_asset_sha256"][asset.name] = hashlib.file_digest(handle, "sha256").hexdigest()
+        metadata["packages"].update({name: version(name) for name in ("mlx-audio", "misaki")})
     write_report(directory / "environment.json", metadata)
     print(f"Validation directory: {directory}", flush=True)
     process = multiprocessing.get_context("spawn").Process(
-        target=_run_child, args=(config, directory, args.mode, args.minutes, args.microphone_seconds, args.playback))
+        target=_run_child, args=(config, directory, args.mode, args.minutes, args.microphone_seconds, args.playback,
+                                 args.resource_metrics, args.fixtures, args.soak_interval))
     samples = []
+    monitor, host = None, []
+    if args.host_metrics:
+        from scripts.host_state import HostState
+        monitor = HostState()
     started, ready_at, last_print = time.monotonic(), None, 0
     duration_completed = False
     parent_error = None
@@ -458,6 +534,9 @@ def run_profile(args, root):
                       "heartbeat_age_seconds": status.get("heartbeat_age_seconds"),
                       "audio": status.get("reliability", {}).get("audio", {}), **rss_sample(process.pid)}
             samples.append(sample)
+            if monitor is not None:
+                host.append(dict(monitor.sample(), ready=ready))
+                write_report(directory / "host.json", host)
             write_report(directory / "resources.json", {"summary": summarize_resources(samples), "samples": samples})
             if elapsed - last_print >= 30:
                 print(json.dumps({"elapsed_s": round(elapsed), "ready": ready,
@@ -497,6 +576,18 @@ def run_profile(args, root):
         if report["status"] == "completed" and not all(report["automated_gates"].values()):
             report["status"] = "failed"
     report["protected_files_unchanged"] = protected == protected_fingerprints(root)
+    if args.mode == "components":
+        report["automated_gates"] = {
+            "duration_completed": report.get("soak_elapsed_seconds", -1) >= args.minutes * 60,
+            "turns_completed": report.get("completed_turns", 0) > 0,
+            "no_worker_restarts": report.get("worker_restarts") == 0,
+            "no_content_in_events": not report["events"]["content_fields_present"],
+            "valid_event_log": report["events"]["invalid_records"] == 0,
+            "resource_samples_complete": not args.resource_metrics or
+                len(report.get("model_resources", [])) == report.get("completed_turns", -1),
+        }
+        if not all(report["automated_gates"].values()):
+            report["status"] = "failed"
     if not report["protected_files_unchanged"]:
         report["status"] = "failed"
     if parent_error or process.exitcode not in (None, 0):
