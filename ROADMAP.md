@@ -276,6 +276,19 @@ these results. Keep environments isolated and use longer, counterbalanced
 measurements with host-state context before migration. See
 [the investigation and reproducible probes](evals/ONNX_ENVIRONMENT_INVESTIGATION.md).
 
+**100-turn counterbalanced follow-up:** all 318 synthetic turns passed across
+six execution orders: 100 warm turns per condition plus 18 initial turns.
+MLX improved pooled median first-write latency by 12.5% against production ONNX,
+but first signal-containing write by only 3.4% (2,447 → 2,364 ms); first-signal
+p95 improved 12.4%. Shared MLX allocator peak increased from 5.23 to 6.43 GiB.
+Trial ONNX's pooled 5.8% slowdown varied across rounds and included a busy-host
+block. All thermal/power samples were nominal/AC, but CPU load and memory
+pressure varied; no fixed dependency regression is established. Keep ONNX as
+default and MLX opt-in pending integrated audible interruption/AEC checks and a
+continuous shared-model soak. Investigating MLX's leading silence is a separate
+candidate optimization, with initial-phoneme quality checks required. See
+[the full comparison, host context and remaining gates](evals/KOKORO_100_TURN_COMPARISON.md).
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms

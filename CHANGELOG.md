@@ -7,6 +7,12 @@ version policy and the release procedure.
 
 ### Added
 
+- Counterbalanced production ONNX, trial ONNX and MLX conversation comparison
+  with 100 warm turns per condition, separate initial turns, matched synthetic
+  inputs/history, per-block results and read-only macOS host-state monitoring.
+  The isolated runner checks private-file and dependency preservation and keeps
+  raw evidence under ignored `tmp/`.
+
 - Isolated ONNX environment diagnostics with dependency/native-code fingerprints,
   phonemization/inference/trimming timings and guarded conversation comparisons.
   Reversed-order measurements did not reproduce the earlier trial-environment

@@ -130,6 +130,11 @@ measured here, so none can be named as the proven root cause.
 
 ## Decision and next measurement
 
+The planned longer run is now complete; see the
+[100-turn counterbalanced comparison](KOKORO_100_TURN_COMPARISON.md) for six
+execution orders, production/trial/MLX results and measured host context. The
+original findings below remain observations from this shorter investigation.
+
 Keep the production environment and ONNX default as they are. Keep the four
 updated pins confined to the optional MLX trial; they are part of its dependency
 requirements. There is no demonstrated ONNX compatibility or deterministic-output

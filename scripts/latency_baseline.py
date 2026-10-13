@@ -53,8 +53,8 @@ class BenchmarkComplete(BaseException):
     pass
 
 
-def case_order(turns):
-    order = [i % len(QUESTIONS) for i in range(turns)]
+def case_order(turns, offset=0):
+    order = [(i + offset) % len(QUESTIONS) for i in range(turns)]
     random.Random(SEED).shuffle(order)
     return [0] + order  # First turn is reported separately, never in warm quantiles.
 
@@ -149,6 +149,7 @@ def finish_row(row, finished, failed):
              and row.get('first_write', 0) >= row['speech_end']
              and stages['transcribe'] > 0 and stages['chat'] > 0)
     result = {'case_id': row['case_id'], 'first_turn': row['first_turn'], 'valid': valid,
+              'speech_end_monotonic_s': row['speech_end'], 'turn_end_monotonic_s': finished,
               'history_turns': row.get('history_turns', 0),
               'response_sha256': row.get('response_sha256'),
               'stages_ms': dict(stages), 'output_underflows': row.get('output_underflows', 0),
@@ -186,7 +187,7 @@ def load_shared_fixtures(path):
 
 
 def run_child(config, directory, turns, audible, idle_seconds, fixtures_path=None, conversation_turns=1,
-              resource_metrics=False):
+              resource_metrics=False, case_offset=0):
     os.setsid()
     os.umask(0o077)
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', TOKENIZERS_PARALLELISM='false')
@@ -198,7 +199,7 @@ def run_child(config, directory, turns, audible, idle_seconds, fixtures_path=Non
     report = {'status': 'running', 'phase': 'fixtures', 'requested_warm_turns': turns,
               'audible': audible, 'rows': [], 'recordings_saved': False,
               'private_context_loaded': False, 'tts_backend': config.audio.tts_backend,
-              'conversation_turns': conversation_turns}
+              'conversation_turns': conversation_turns, 'case_offset': case_offset}
     runtime = None
     original_audio_sd = audio_module.sd
     try:
@@ -240,7 +241,7 @@ def run_child(config, directory, turns, audible, idle_seconds, fixtures_path=Non
         report.update(phase='idle', ready=True)
         write_report(path, report)
         time.sleep(idle_seconds)
-        microphone = ReplayMicrophone(runtime, fixtures, case_order(turns), conversation_turns=conversation_turns)
+        microphone = ReplayMicrophone(runtime, fixtures, case_order(turns, case_offset), conversation_turns=conversation_turns)
         runtime.microphone = microphone
         original_call = runtime.worker.call
 
@@ -368,11 +369,14 @@ def main():
     parser.add_argument('--tts-backend', choices=['onnx', 'mlx'])
     parser.add_argument('--mlx-kokoro-model', type=Path)
     parser.add_argument('--resource-metrics', action='store_true', help='Sample worker MLX/RSS after each completed turn')
+    parser.add_argument('--case-offset', type=int, default=0, help='Rotate the fixed corpus before seeded shuffling (0..9)')
     args = parser.parse_args()
     if not 1 <= args.turns <= 200 or not 0 <= args.idle_seconds <= 60:
         parser.error('turns must be 1..200; idle-seconds must be 0..60')
     if not 1 <= args.conversation_turns <= 8:
         parser.error('conversation-turns must be 1..8')
+    if not 0 <= args.case_offset < len(QUESTIONS):
+        parser.error('case-offset must be 0..9')
     root = Path(__file__).resolve().parents[1]
     os.umask(0o077)
     with validation_lock(root / 'tmp/hardware-validation'):
@@ -396,12 +400,13 @@ def main():
                         seed=SEED, silence_ms=config.audio.silence_ms,
                         chime_enabled=config.audio.chime_enabled, temperature=config.models.temperature,
                         tts_backend=config.audio.tts_backend, conversation_turns=args.conversation_turns,
+                        case_offset=args.case_offset,
                         protocol='paced synthetic input; grouped conversation history; first output write, not acoustic onset')
         write_report(directory / 'environment.json', metadata)
         print(f'Baseline directory: {directory}', flush=True)
         process = multiprocessing.get_context('spawn').Process(target=run_child,
             args=(config, directory, args.turns, args.audible, args.idle_seconds, args.fixtures,
-                  args.conversation_turns, args.resource_metrics))
+                  args.conversation_turns, args.resource_metrics, args.case_offset))
         samples = []
         error = None
         started = time.monotonic()
