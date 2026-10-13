@@ -7,6 +7,10 @@ version policy and the release procedure.
 
 ### Added
 
+- Isolated ONNX/MLX Kokoro comparison with pinned candidate dependencies,
+  bounded synthetic benchmarks, latency/CPU/memory reports and blinded listening
+  pairs. Production speech synthesis and private settings remain unchanged.
+
 - Input/output selection by exact or host-qualified name in private config and
   CLI, direction/default metadata in `devices`, and selected-format diagnostics.
 - Automatic audio reacquisition after returned device errors, callback stalls

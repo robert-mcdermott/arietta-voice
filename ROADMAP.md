@@ -244,6 +244,17 @@ user's request, so those hardware acceptance gates remain open.
    only one component per comparison. Acoustic wake detection is an optional
    experiment and does not block the streaming release.
 
+**Kokoro comparison status (October 12, 2026):** an isolated four-block comparison
+of locked ONNX 0.5.0 and MLX Audio 0.5.8 completed 48 warm synthetic utterances per
+backend, with identical `af_heart` voice tensors. MLX reduced median TTS
+first-audio time from 1,175 to 422 ms; initial startup was slower. Lower CPU/RSS
+must be considered alongside its 1.90 GiB MLX allocator peak. In the three-pair
+blinded review, the user found MLX's currency pronunciation more natural and
+otherwise found the engines similar. The next recommended step is an opt-in MLX
+integration experiment measuring full-turn latency and shared-model memory use;
+production remains on ONNX. [Protocol, results and migration gates](evals/KOKORO_EXPERIMENT.md) keep this
+component result separate from end-to-end Phase 2 acceptance criteria.
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms

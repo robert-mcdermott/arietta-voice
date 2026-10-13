@@ -232,6 +232,10 @@ This approach keeps the system simple and fully local while reusing the existing
 
 ## Configuration
 
+The isolated [ONNX/MLX Kokoro comparison](evals/KOKORO_EXPERIMENT.md) records TTS
+latency, resource use and a blinded listening protocol. Its candidate environment
+and synthetic audio stay under ignored `tmp/`; production continues using ONNX.
+
 The tracked [`config/arietta_voice.toml`](./config/arietta_voice.toml) provides
 shared defaults. Create private settings and a private persona before customizing:
 
