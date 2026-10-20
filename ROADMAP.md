@@ -341,6 +341,22 @@ Longer representative live/load testing and measured acoustic latency remain
 open; this short protocol does not establish the overall Phase 2 exit targets.
 See [protocol, results and limits](evals/FORCED_GAP_VALIDATION.md).
 
+**Longer live/load soak (October 19, 2026):** a fresh isolated Jabra/MLX run
+completed 30 minutes 1 second and 169 valid synthetic-input/live-output turns,
+covering all ten fixtures with the same four-model worker throughout load.
+The closing spoken interruption, direct recovery answer and goodbye checks passed.
+Audio acceptance failed: load recorded 39 underflows and 52 AEC resets across 19
+turns; closing checks brought totals to 40/54. There were no capture drops, native
+input overflows, failed/timed-out turns, reconnects or failure-driven worker
+restarts. Active model allocation stayed about 5,291 MiB, while the host showed
+intermittent memory pressure and substantial swap use. Private files, sources and
+package inventories matched. The earlier paused segment remains separate evidence.
+Next, isolate the long physical-capture polls/output-write delays under matched
+host conditions, compare ONNX and MLX, and repeat the zero-fault soak gate. Also
+investigate the earlier planning-like spoken recovery response without treating
+fixture exact matches as semantic evaluation. ONNX remains the default; MLX is
+opt-in. See [protocol, measurements and limits](evals/LIVE_LOAD_SOAK.md).
+
 **Exit criteria:** using the same warm, no-tool question set, reduce median
 speech-end-to-first-audio time by at least 30% without worsening p95 relative
 to the Phase 1 baseline. Target p95 interruption-to-silence at or below 300 ms

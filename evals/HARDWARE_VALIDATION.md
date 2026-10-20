@@ -55,6 +55,10 @@ does not capture microphone audio. `--soak-interval` controls the pause between
 turns (0–30 seconds, default 5). Fixture-driven component turns have empty
 conversation history and do not run the live playback/AEC path. Worker residency
 and repeated inference are distinct from a full live conversation soak.
+For a longer hybrid workload with paced synthetic input, actual capture/AEC and
+streamed speaker playback, use the separate [live/load runner](LIVE_LOAD_SOAK.md).
+It verifies one worker throughout load; live cancellation before/after can
+intentionally replace that worker and is recorded separately.
 
 Use `--config /path/to/base.toml` if the normal app uses an explicit base config.
 The same private override precedence applies on read. The harness requires a

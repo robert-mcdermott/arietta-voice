@@ -402,6 +402,9 @@ for matched device probes, live checks and limitations.
 The opt-in [forced-gap live protocol](evals/FORCED_GAP_VALIDATION.md) exercises
 the same player with microphone/AEC active and checks interruption during and
 after a deliberate pause, with dedicated scenario and audio-fault gates.
+The [continuous live/load soak](evals/LIVE_LOAD_SOAK.md) combines paced synthetic
+questions with physical capture/AEC and audible replies, bracketed by live checks
+around a continuous worker/device load session.
 
 Heavy STT, endpoint, chat, tool, and TTS work runs in a persistent spawned process
 with one operation at a time. On timeout, crash, or model/tool exception, that

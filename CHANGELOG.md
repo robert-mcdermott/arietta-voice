@@ -7,6 +7,10 @@ version policy and the release procedure.
 
 ### Added
 
+- Isolated continuous live/load soak with paced synthetic input, real microphone
+  capture/AEC and streamed speaker output, live checks before/after continuous load,
+  bounded control phases, and per-turn model/memory plus host telemetry.
+
 - Isolated forced-gap live validation with a test-only spoken command, bounded
   pause injection, AEC/capture handoff coverage, and separate gates for quiet
   playback and interruption during/after the pause. Metadata verifies actual
