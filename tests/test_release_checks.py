@@ -114,6 +114,8 @@ def test_distribution_metadata_and_private_paths(tmp_path):
         {"version": "0.2.0"},
         {"wheel_extra": "arietta_voice/SOUL.local.md"},
         {"wheel_extra": "arietta_voice/../../private.txt"},
+        {"wheel_extra": "arietta_voice/web/static/notes.md"},
+        {"wheel_extra": "arietta_voice/web/console.css"},
         {"sdist_extra": "config/arietta_voice.local.toml"},
         {"sdist_extra": "knowledge/custom.md"},
         {"sdist_extra": "logs/recording.wav"},
@@ -123,6 +125,12 @@ def test_distribution_metadata_and_private_paths(tmp_path):
 def test_distributions_reject_private_members_and_version_drift(tmp_path, options):
     distributions(tmp_path, **options)
     assert check_artifacts(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize("asset", ["index.html", "css/console.css", "js/main.js", "favicon.svg"])
+def test_wheel_may_carry_console_assets(tmp_path, asset):
+    distributions(tmp_path, wheel_extra=f"arietta_voice/web/static/{asset}")
+    assert check_artifacts(tmp_path, "0.1.0") == []
 
 
 def test_distribution_directory_must_be_complete(tmp_path):

@@ -20,6 +20,8 @@ PUBLIC_CONFIG = {
     "config/SOUL.md",
     "config/MEMORY.md.example",
 }
+CONSOLE_ASSETS = ("arietta_voice", "web", "static")
+CONSOLE_ASSET_SUFFIXES = (".html", ".css", ".js", ".svg")
 PRIVATE_DIRECTORIES = {"logs", ".knowledge_index", ".private-backups", ".venv", "tmp", ".aws"}
 
 
@@ -86,6 +88,8 @@ def check_wheel(path: Path, expected_version: str) -> list[str]:
                 len(parts) > 1
                 and parts[0] == "arietta_voice"
                 and name.endswith(".py")
+                or parts[:3] == CONSOLE_ASSETS
+                and name.endswith(CONSOLE_ASSET_SUFFIXES)
                 or len(parts) > 1
                 and parts[0] == f"arietta_voice-{expected_version}.dist-info"
             )
