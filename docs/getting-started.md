@@ -510,7 +510,9 @@ from arietta_voice.model_tools.base import ModelToolContext, ModelToolExecution
 
 class RoomSensorTool:
     name = "get_room_sensor"
-    description = "you need the latest room temperature or humidity reading from the local sensor file"
+    description = (
+        "you need the latest room temperature or humidity reading from the local sensor file"
+    )
     arguments_example = {"metric": "temperature"}
 
     def __init__(self, context: ModelToolContext) -> None:

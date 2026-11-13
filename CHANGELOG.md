@@ -5,6 +5,25 @@ version policy and the release procedure.
 
 ## Unreleased
 
+### Changed
+
+- Repository layout: guides now live in `docs/` (`getting-started.md`,
+  `architecture.md`, `releasing.md`), images in `assets/`, and the latency,
+  hardware and soak harnesses in `bench/` (previously `scripts/`). Concluded
+  Kokoro, Moonshine, ONNX-environment and underflow experiments are archived
+  under `bench/archive/` and `docs/archive/experiments/` and no longer run with
+  the default test suite; run them with `uv run pytest bench/archive/tests`.
+- `config/arietta_voice.toml` is now the single shared template and lists every
+  supported key at its built-in default. The duplicate `.dist` and `.example`
+  templates are removed. Private `*.local.toml` overrides are unaffected.
+- The roadmap is replaced by an outcome-based plan; the October plan and review
+  are preserved under `docs/archive/`.
+- Source is formatted and linted with `ruff`, enforced in CI.
+
+### Removed
+
+- The unused image-input method on the local chat model.
+
 ### Added
 
 - Isolated continuous live/load soak with paced synthetic input, real microphone

@@ -60,6 +60,8 @@ does not automatically require a major version; user-visible compatibility does.
    ```bash
    uv run --no-project --python 3.13 scripts/check_release.py
    uv sync --locked --group dev
+   uv run --locked ruff check .
+   uv run --locked ruff format --check .
    uv run --locked pytest
    uv run --locked arietta-voice --version
    uv build --out-dir tmp/ci/dist
