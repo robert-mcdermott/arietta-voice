@@ -1,24 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
-from collections import Counter, deque
-import threading
 import math
 import os
-from pathlib import Path
 import queue
 import select
 import sys
 import termios
+import threading
 import time
 import tty
-from typing import Callable
 import wave
+from collections import Counter, deque
+from contextlib import AbstractContextManager
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
+
 from arietta_voice.devices import CaptureHealth
 
 sd.default.latency = "high"
@@ -109,6 +109,7 @@ class ChimePlayer:
 
 class RecordingWriter:
     """A bounded nonblocking callback queue; the writer alone owns the WAV file."""
+
     def __init__(self, path: Path, sample_rate: int, max_chunks: int, max_seconds: float) -> None:
         if max_chunks < 1 or max_seconds <= 0:
             raise ValueError("Recording limits must be positive")
@@ -140,7 +141,9 @@ class RecordingWriter:
     def _write(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with os.fdopen(os.open(self.path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "wb") as file:
+            with os.fdopen(
+                os.open(self.path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "wb"
+            ) as file:
                 os.fchmod(file.fileno(), 0o600)
                 with wave.open(file, "wb") as handle:
                     handle.setnchannels(1)
@@ -151,7 +154,9 @@ class RecordingWriter:
                             chunk = self.queue.get(timeout=0.1)
                         except queue.Empty:
                             continue
-                        handle.writeframes((chunk * 32767).clip(-32768, 32767).astype(np.int16).tobytes())
+                        handle.writeframes(
+                            (chunk * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
+                        )
         except Exception as exc:
             self.error = type(exc).__name__
             while True:
@@ -175,10 +180,20 @@ class CaptureChunk:
 
 
 class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
-    def __init__(self, sample_rate: int, chunk_samples: int, *, channels: int = 1,
-                 record_path: Path | None = None, max_queue_chunks: int = 64,
-                 recording_queue_max_chunks: int = 256, max_recording_s: float = 3600.0,
-                 device=None, stall_s: float = 3.0, recorder: RecordingWriter | None = None) -> None:
+    def __init__(
+        self,
+        sample_rate: int,
+        chunk_samples: int,
+        *,
+        channels: int = 1,
+        record_path: Path | None = None,
+        max_queue_chunks: int = 64,
+        recording_queue_max_chunks: int = 256,
+        max_recording_s: float = 3600.0,
+        device=None,
+        stall_s: float = 3.0,
+        recorder: RecordingWriter | None = None,
+    ) -> None:
         if max_queue_chunks < 1:
             raise ValueError("Microphone queue limit must be positive")
         self.sample_rate, self.chunk_samples, self.channels = sample_rate, chunk_samples, channels
@@ -192,7 +207,11 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
         self.drops_by_phase = Counter()
         self.discarded_by_reason = Counter()
         self._owns_recorder = recorder is None
-        self._recorder = recorder or (RecordingWriter(record_path, sample_rate, recording_queue_max_chunks, max_recording_s) if record_path else None)
+        self._recorder = recorder or (
+            RecordingWriter(record_path, sample_rate, recording_queue_max_chunks, max_recording_s)
+            if record_path
+            else None
+        )
         self._stream = None
 
     def _callback(self, indata, frames, time_info, status) -> None:
@@ -231,7 +250,14 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
         self.drops_by_phase[self.capture_phase] += 1
 
     def set_capture_phase(self, phase):
-        if phase not in {"listening", "endpoint", "transcribe", "awaiting_output", "playback", "playback_cleanup"}:
+        if phase not in {
+            "listening",
+            "endpoint",
+            "transcribe",
+            "awaiting_output",
+            "playback",
+            "playback_cleanup",
+        }:
             raise ValueError("Unknown capture phase")
         self.capture_phase = phase
 
@@ -240,9 +266,14 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
             self._recorder.start()
         try:
             self._health = CaptureHealth(self.stall_s)
-            self._stream = sd.InputStream(samplerate=self.sample_rate, channels=self.channels,
-                                          dtype="float32", blocksize=self.chunk_samples, callback=self._callback,
-                                          device=self.device)
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype="float32",
+                blocksize=self.chunk_samples,
+                callback=self._callback,
+                device=self.device,
+            )
             self._stream.start()
         except BaseException:
             self.__exit__(None, None, None)
@@ -268,14 +299,19 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
 
     def statistics(self) -> dict:
         recorder = self._recorder
-        return {"queued_chunks": self._audio_q.qsize(), "queue_max_chunks": self._audio_q.maxsize,
-                "dropped_chunks": self.dropped_chunks, "input_overflows": self.input_overflows,
-                "capture_phase": self.capture_phase, "drops_by_phase": dict(self.drops_by_phase),
-                "discarded_chunks": sum(self.discarded_by_reason.values()),
-                "discarded_by_reason": dict(self.discarded_by_reason),
-                "recording_dropped_chunks": recorder.dropped_chunks if recorder else 0,
-                "recording_limit_reached": recorder.limit_reached if recorder else False,
-                "recording_error": recorder.error if recorder else None}
+        return {
+            "queued_chunks": self._audio_q.qsize(),
+            "queue_max_chunks": self._audio_q.maxsize,
+            "dropped_chunks": self.dropped_chunks,
+            "input_overflows": self.input_overflows,
+            "capture_phase": self.capture_phase,
+            "drops_by_phase": dict(self.drops_by_phase),
+            "discarded_chunks": sum(self.discarded_by_reason.values()),
+            "discarded_by_reason": dict(self.discarded_by_reason),
+            "recording_dropped_chunks": recorder.dropped_chunks if recorder else 0,
+            "recording_limit_reached": recorder.limit_reached if recorder else False,
+            "recording_error": recorder.error if recorder else None,
+        }
 
     def get(self, timeout: float | None = None) -> np.ndarray | None:
         self.check_health()
@@ -298,7 +334,13 @@ class MicrophoneStream(AbstractContextManager["MicrophoneStream"]):
         self.discard_pending("turn_boundary")
 
     def discard_pending(self, reason: str) -> None:
-        if reason not in {"turn_boundary", "transcribing", "before_output", "aec_disabled", "capture_gap"}:
+        if reason not in {
+            "turn_boundary",
+            "transcribing",
+            "before_output",
+            "aec_disabled",
+            "capture_gap",
+        }:
             raise ValueError("Unknown capture discard reason")
         # Snapshot the bounded queue: never chase newly arriving callbacks forever.
         for _ in range(self._audio_q.qsize()):
@@ -351,19 +393,20 @@ class AudioReferenceBuffer:
 
     def append(self, samples: np.ndarray) -> None:
         self.end += len(samples)
-        self.samples = np.concatenate((self.samples, samples))[-self.max_samples:].copy()
+        self.samples = np.concatenate((self.samples, samples))[-self.max_samples :].copy()
 
     def read(self, offset: int, length: int) -> np.ndarray:
         result = np.zeros(length, dtype=np.float32)
         start = self.end - len(self.samples)
         first, last = max(offset, start), min(offset + length, self.end)
         if last > first:
-            result[first - offset:last - offset] = self.samples[first - start:last - start]
+            result[first - offset : last - offset] = self.samples[first - start : last - start]
         return result
 
 
 class TimedAudioReferenceBuffer:
     """Only submitted output, on a monotonic timeline; gaps remain silence."""
+
     def __init__(self, max_seconds: float) -> None:
         self.max_seconds = max_seconds
         self.blocks = deque()
@@ -374,7 +417,7 @@ class TimedAudioReferenceBuffer:
     def append(self, samples: np.ndarray, rate: int, started_at: float) -> None:
         end = started_at + len(samples) / rate
         # Bound even a single oversized producer block.
-        samples = samples[-max(1, int(self.max_seconds * rate)):].copy()
+        samples = samples[-max(1, int(self.max_seconds * rate)) :].copy()
         started_at = end - len(samples) / rate
         self.blocks.append((started_at, rate, samples))
         while self.blocks and self.blocks[0][0] < end - self.max_seconds:
@@ -390,8 +433,9 @@ class TimedAudioReferenceBuffer:
         for start, rate, samples in self.blocks:
             selected = (times >= start) & (times < start + len(samples) / rate)
             if selected.any():
-                result[selected] = np.interp((times[selected] - start) * rate,
-                                             np.arange(len(samples)), samples)
+                result[selected] = np.interp(
+                    (times[selected] - start) * rate, np.arange(len(samples)), samples
+                )
         return result
 
 
@@ -465,18 +509,24 @@ def make_aec_processor(sample_rate: int):
         frames = len(pending_mic) // frame_width
         pieces = [output]
         for offset in range(0, frames * frame_width, frame_width):
-            pieces.append(process_frame(pending_mic[offset:offset+frame_width],
-                                        pending_ref[offset:offset+frame_width]))
-        pending_mic = pending_mic[frames*frame_width:].copy()
-        pending_ref = pending_ref[frames*frame_width:].copy()
+            pieces.append(
+                process_frame(
+                    pending_mic[offset : offset + frame_width],
+                    pending_ref[offset : offset + frame_width],
+                )
+            )
+        pending_mic = pending_mic[frames * frame_width :].copy()
+        pending_ref = pending_ref[frames * frame_width :].copy()
         output = np.concatenate(pieces)
-        cleaned, output = output[:len(mic)].copy(), output[len(mic):].copy()
+        cleaned, output = output[: len(mic)].copy(), output[len(mic) :].copy()
         return cleaned
 
     def flush():
         nonlocal pending_mic, pending_ref, output
         if len(pending_mic):
-            output = np.concatenate((output, process_frame(pending_mic, pending_ref)[:len(pending_mic)]))
+            output = np.concatenate(
+                (output, process_frame(pending_mic, pending_ref)[: len(pending_mic)])
+            )
         result = output.copy()
         pending_mic = pending_ref = output = np.zeros(0, dtype=np.float32)
         return result
@@ -508,36 +558,51 @@ class PlaybackResult:
 
 class _PlaybackTiming:
     """Bounded, content-free timing; intervals describe correlation, not cause."""
+
     def __init__(self):
         self.last_write_end = None
         self.wait_ms = self.poll_ms = 0.0
-        self.report = dict(writes=0, gap_silence_writes=0, gap_silence_samples=0,
-                           producer_wait_max_ms=0.0, capture_poll_max_ms=0.0,
-                           write_max_ms=0.0, between_writes_max_ms=0.0,
-                           underflow_contexts=[], underflow_contexts_omitted=0)
+        self.report = dict(
+            writes=0,
+            gap_silence_writes=0,
+            gap_silence_samples=0,
+            producer_wait_max_ms=0.0,
+            capture_poll_max_ms=0.0,
+            write_max_ms=0.0,
+            between_writes_max_ms=0.0,
+            underflow_contexts=[],
+            underflow_contexts_omitted=0,
+        )
 
     def waited(self, seconds):
         self.wait_ms += seconds * 1000
-        self.report['producer_wait_max_ms'] = max(self.report['producer_wait_max_ms'], seconds * 1000)
+        self.report["producer_wait_max_ms"] = max(
+            self.report["producer_wait_max_ms"], seconds * 1000
+        )
 
     def polled(self, seconds):
         self.poll_ms += seconds * 1000
-        self.report['capture_poll_max_ms'] = max(self.report['capture_poll_max_ms'], seconds * 1000)
+        self.report["capture_poll_max_ms"] = max(self.report["capture_poll_max_ms"], seconds * 1000)
 
-    def wrote(self, start, end, underflow, kind='speech'):
+    def wrote(self, start, end, underflow, kind="speech"):
         gap = (start - self.last_write_end) * 1000 if self.last_write_end is not None else 0.0
         duration = (end - start) * 1000
-        self.report['writes'] += 1
-        self.report['write_max_ms'] = max(self.report['write_max_ms'], duration)
-        self.report['between_writes_max_ms'] = max(self.report['between_writes_max_ms'], gap)
+        self.report["writes"] += 1
+        self.report["write_max_ms"] = max(self.report["write_max_ms"], duration)
+        self.report["between_writes_max_ms"] = max(self.report["between_writes_max_ms"], gap)
         if underflow:
-            context = dict(write_index=self.report['writes'], kind=kind,
-                           since_previous_write_ms=gap, producer_wait_ms=self.wait_ms,
-                           capture_poll_ms=self.poll_ms, write_ms=duration)
-            if len(self.report['underflow_contexts']) < 8:
-                self.report['underflow_contexts'].append(context)
+            context = dict(
+                write_index=self.report["writes"],
+                kind=kind,
+                since_previous_write_ms=gap,
+                producer_wait_ms=self.wait_ms,
+                capture_poll_ms=self.poll_ms,
+                write_ms=duration,
+            )
+            if len(self.report["underflow_contexts"]) < 8:
+                self.report["underflow_contexts"].append(context)
             else:
-                self.report['underflow_contexts_omitted'] += 1
+                self.report["underflow_contexts_omitted"] += 1
         self.last_write_end = end
         self.wait_ms = self.poll_ms = 0.0
 
@@ -548,30 +613,64 @@ def _playback_level_from_chunk(playback_chunk: np.ndarray) -> float:
     return min(1.0, rms * 7.0)
 
 
-def play_tts_stream_passive(*, tts_stream, chime_player: ChimePlayer,
-                            playback_level_callback=None, deadline: float | None = None, cancellation=None,
-                            keypress_monitor=None, output_device=None, health_check=None) -> PlaybackResult:
-    return play_tts_stream(tts_stream=tts_stream, microphone=None, vad=None, keypress_monitor=keypress_monitor,
-                    chime_player=chime_player, sample_rate=16000, use_aec=False,
-                    barge_in_threshold_chunks=5, playback_level_callback=playback_level_callback,
-                    deadline=deadline, cancellation=cancellation, output_device=output_device,
-                    health_check=health_check)
+def play_tts_stream_passive(
+    *,
+    tts_stream,
+    chime_player: ChimePlayer,
+    playback_level_callback=None,
+    deadline: float | None = None,
+    cancellation=None,
+    keypress_monitor=None,
+    output_device=None,
+    health_check=None,
+) -> PlaybackResult:
+    return play_tts_stream(
+        tts_stream=tts_stream,
+        microphone=None,
+        vad=None,
+        keypress_monitor=keypress_monitor,
+        chime_player=chime_player,
+        sample_rate=16000,
+        use_aec=False,
+        barge_in_threshold_chunks=5,
+        playback_level_callback=playback_level_callback,
+        deadline=deadline,
+        cancellation=cancellation,
+        output_device=output_device,
+        health_check=health_check,
+    )
 
 
-def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_player: ChimePlayer,
-                    sample_rate: int, use_aec: bool, barge_in_threshold_chunks: int,
-                    playback_level_callback=None, reference_seconds: float = 4.0,
-                    deadline: float | None = None, cancellation=None,
-                    pre_roll_ms: float = 0, aec_delay_ms: float = 0,
-                    output_device=None, health_check=None) -> PlaybackResult:
+def play_tts_stream(
+    *,
+    tts_stream,
+    microphone,
+    vad,
+    keypress_monitor,
+    chime_player: ChimePlayer,
+    sample_rate: int,
+    use_aec: bool,
+    barge_in_threshold_chunks: int,
+    playback_level_callback=None,
+    reference_seconds: float = 4.0,
+    deadline: float | None = None,
+    cancellation=None,
+    pre_roll_ms: float = 0,
+    aec_delay_ms: float = 0,
+    output_device=None,
+    health_check=None,
+) -> PlaybackResult:
     from contextlib import ExitStack
+
     from arietta_voice.worker import WorkerTimeout
 
     capture_phase(microphone, "awaiting_output")
     discard_capture(microphone, "before_output")
     aec_process = make_aec_processor(sample_rate) if use_aec else None
     reference = TimedAudioReferenceBuffer(reference_seconds)
-    speech_chunks = deque(maxlen=barge_in_threshold_chunks + math.ceil(pre_roll_ms * sample_rate / 512000))
+    speech_chunks = deque(
+        maxlen=barge_in_threshold_chunks + math.ceil(pre_roll_ms * sample_rate / 512000)
+    )
     consecutive_speech = 0
     playback_started = None
     observed_drops = None
@@ -616,7 +715,7 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
         # Bound work per poll even when capture continues while VAD runs.
         for _ in range(64):
             try:
-                if hasattr(type(microphone), 'get_capture_nowait'):
+                if hasattr(type(microphone), "get_capture_nowait"):
                     packet = microphone.get_capture_nowait()
                     chunk, captured_at = packet.samples, packet.captured_at
                 else:
@@ -635,21 +734,22 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                 if capture_end is not None:
                     reset_capture("timestamp_gap")
                 continue
-            if capture_end is not None and abs(captured_at - capture_end) > .02:
+            if capture_end is not None and abs(captured_at - capture_end) > 0.02:
                 reset_capture("timestamp_gap")
             capture_end = captured_at + len(chunk) / sample_rate
             if time.monotonic() - capture_end > reference_seconds:
                 discard_reasons["stale_capture"] += 1
                 reset_capture("stale_capture")
                 continue
-            cleaned = aec_process(chunk, reference.read(captured_at - aec_delay_ms / 1000,
-                                                       len(chunk), sample_rate))
+            cleaned = aec_process(
+                chunk, reference.read(captured_at - aec_delay_ms / 1000, len(chunk), sample_rate)
+            )
             speech_chunks.append(cleaned.copy())
             if vad.probability(cleaned.astype(np.float32)) > 0.8:
                 consecutive_speech += 1
                 if consecutive_speech >= barge_in_threshold_chunks:
                     buffered = list(speech_chunks)
-                    if hasattr(aec_process, 'flush'):
+                    if hasattr(aec_process, "flush"):
                         buffered.append(aec_process.flush())
                     return True, buffered
             else:
@@ -679,11 +779,12 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
     async def _play() -> PlaybackResult:
         nonlocal playback_started, observed_drops, output_end, output_underflows
         output_stream = None
+        output_rate = None  # set when the output stream opens
         buffered_chunks: list[np.ndarray] = []
         interrupted = False
         completed = False
 
-        def submit(playback_chunk, kind='speech'):
+        def submit(playback_chunk, kind="speech"):
             nonlocal output_end, output_underflows
             if playback_level_callback is not None:
                 playback_level_callback(_playback_level_from_chunk(playback_chunk), True)
@@ -698,9 +799,9 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
             underflow = output_stream.write(playback_chunk)
             timing.wrote(write_started, time.monotonic(), underflow is True, kind)
             output_end = presented_at + len(playback_chunk) / output_rate
-            if kind == 'gap_silence':
-                timing.report['gap_silence_writes'] += 1
-                timing.report['gap_silence_samples'] += len(playback_chunk)
+            if kind == "gap_silence":
+                timing.report["gap_silence_writes"] += 1
+                timing.report["gap_silence_samples"] += len(playback_chunk)
             if underflow is True:
                 output_underflows += 1
                 reference.clear()
@@ -730,14 +831,16 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                         # The running device needs samples even when the next
                         # clause is not ready. At most 20ms per poll, only into
                         # available capacity; never pad before the first speech.
-                        width = min(1024, max(1, round(output_rate * .02)))
-                        available = getattr(output_stream, 'write_available', 0)
+                        width = min(1024, max(1, round(output_rate * 0.02)))
+                        available = getattr(output_stream, "write_available", 0)
                         if isinstance(available, int) and available >= width:
-                            submit(np.zeros((width, 1), dtype=np.float32), 'gap_silence')
+                            submit(np.zeros((width, 1), dtype=np.float32), "gap_silence")
                     continue
                 if output_stream is None:
                     chime_player.stop_at_gap()
-                    output_stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32", device=output_device)
+                    output_stream = sd.OutputStream(
+                        samplerate=sr, channels=1, dtype="float32", device=output_device
+                    )
                     output_stream.start()
                     if microphone is not None:
                         discard_capture(microphone, "before_output")
@@ -763,7 +866,7 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                         if cancellation is not None:
                             cancellation.cancel()
                         break
-                    submit(frame[offset:offset + 1024])
+                    submit(frame[offset : offset + 1024])
                 if interrupted:
                     break
             # Remain interruptible while the final submitted samples are still
@@ -780,13 +883,17 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                     if cancellation is not None:
                         cancellation.cancel()
                     break
-                time.sleep(.01)
+                time.sleep(0.01)
             completed = True
-            return PlaybackResult(interrupted=interrupted, buffered_chunks=buffered_chunks,
-                                  alignment_resets=alignment_resets, output_underflows=output_underflows,
-                                  alignment_reset_reasons=dict(reset_reasons),
-                                  capture_discard_reasons=dict(discard_reasons),
-                                  output_timing=timing.report)
+            return PlaybackResult(
+                interrupted=interrupted,
+                buffered_chunks=buffered_chunks,
+                alignment_resets=alignment_resets,
+                output_underflows=output_underflows,
+                alignment_reset_reasons=dict(reset_reasons),
+                capture_discard_reasons=dict(discard_reasons),
+                output_timing=timing.report,
+            )
         finally:
             capture_phase(microphone, "playback_cleanup")
             # Release/abort the device before waiting for inference cancellation.
@@ -802,7 +909,11 @@ def play_tts_stream(*, tts_stream, microphone, vad, keypress_monitor, chime_play
                         cleanup.callback(vad.reset)
                     if output_stream is not None:
                         cleanup.callback(output_stream.close)
-                        abort = not completed or interrupted or (cancellation is not None and cancellation.cancelled)
+                        abort = (
+                            not completed
+                            or interrupted
+                            or (cancellation is not None and cancellation.cancelled)
+                        )
                         cleanup.callback(output_stream.abort if abort else output_stream.stop)
             finally:
                 try:

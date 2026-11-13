@@ -1,4 +1,5 @@
 """A broken derived index must not take down keyword retrieval or source files."""
+
 import json
 
 import numpy as np
@@ -75,16 +76,35 @@ def corrupt(directory, damage):
 
 
 @pytest.mark.parametrize("backend", ["vector", "hybrid"])
-@pytest.mark.parametrize("damage", [
-    "manifest-json", "manifest-list", "manifest-encoding",
-    "manifest-field:source_signature", "manifest-field:snippet_char_limit",
-    "manifest-field:section_count", "manifest-field:vector_dim",
-    "sections-json", "sections-list", "sections-missing-field",
-    "sections-external-path", "sections-wrong-type", "sections-duplicate",
-    "vectors-truncated", "vectors-truncated-zip", "vectors-disguised-archive",
-    "vectors-nan", "vectors-infinity", "vectors-rank",
-    "vectors-dimension", "vectors-rows", "vectors-strings", "vectors-pickle", "missing-vectors",
-])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "manifest-json",
+        "manifest-list",
+        "manifest-encoding",
+        "manifest-field:source_signature",
+        "manifest-field:snippet_char_limit",
+        "manifest-field:section_count",
+        "manifest-field:vector_dim",
+        "sections-json",
+        "sections-list",
+        "sections-missing-field",
+        "sections-external-path",
+        "sections-wrong-type",
+        "sections-duplicate",
+        "vectors-truncated",
+        "vectors-truncated-zip",
+        "vectors-disguised-archive",
+        "vectors-nan",
+        "vectors-infinity",
+        "vectors-rank",
+        "vectors-dimension",
+        "vectors-rows",
+        "vectors-strings",
+        "vectors-pickle",
+        "missing-vectors",
+    ],
+)
 def test_corrupt_cache_falls_back_and_rebuilds(tmp_path, monkeypatch, backend, damage):
     config = default_config(tmp_path).knowledge
     config.backend = backend
@@ -93,13 +113,17 @@ def test_corrupt_cache_falls_back_and_rebuilds(tmp_path, monkeypatch, backend, d
     source = config.directory / "telescope.md"
     source.write_text("# Synthetic telescope\nThe synthetic telescope opens at noon.")
     original = source.read_bytes()
-    monkeypatch.setattr("arietta_voice.knowledge._create_text_embedder", lambda config: SyntheticEmbedder())
+    monkeypatch.setattr(
+        "arietta_voice.knowledge._create_text_embedder", lambda config: SyntheticEmbedder()
+    )
     assert build_knowledge_index(config)["updated"]
     corrupt(config.index_directory, damage)
     # A corrupt cache must be rejected before attempting a model load.
     with monkeypatch.context() as guard:
+
         def unexpected_load(config):
             pytest.fail("Corrupt cache attempted to load an embedding model")
+
         guard.setattr("arietta_voice.knowledge._create_text_embedder", unexpected_load)
         retriever = KnowledgeRetriever(config)
         retriever.preload()

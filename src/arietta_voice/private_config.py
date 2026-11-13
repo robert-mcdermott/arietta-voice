@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import fcntl
 import json
 import os
-from pathlib import Path
 import tempfile
 import tomllib
-from typing import Any
 import uuid
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
 
 
 def local_config_path(base_path: Path) -> Path:
@@ -70,9 +70,15 @@ def initialize_private_config(base_path: Path) -> dict[str, str]:
     local_path = local_config_path(base_path)
     soul_path = base_path.parent / "SOUL.local.md"
     if local_path.exists() or soul_path.exists():
-        raise ValueError("Private config or SOUL.local.md already exists; existing files were preserved")
+        raise ValueError(
+            "Private config or SOUL.local.md already exists; existing files were preserved"
+        )
     config = load_config(base_path)
-    soul_text = config.prompts.soul_path.read_text(encoding="utf-8") if config.prompts.soul_path.exists() else ""
+    soul_text = (
+        config.prompts.soul_path.read_text(encoding="utf-8")
+        if config.prompts.soul_path.exists()
+        else ""
+    )
     backup_root = base_path.parent / ".private-backups"
     backup_root.mkdir(exist_ok=True, mode=0o700)
     backup_dir = backup_root / uuid.uuid4().hex

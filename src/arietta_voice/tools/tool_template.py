@@ -5,12 +5,9 @@ import re
 from arietta_voice.models import ToolResponse
 from arietta_voice.tools.base import ToolContext
 
-
 # Copy this file to a new module in this directory, then add the module name to
 # [tools].enabled in config/arietta_voice.local.toml.
-MATCH_PATTERNS = (
-    re.compile(r"\bexample custom tool\b"),
-)
+MATCH_PATTERNS = (re.compile(r"\bexample custom tool\b"),)
 
 
 class ExampleCustomTool:

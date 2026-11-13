@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from arietta_voice.config import ModelConfig
@@ -85,10 +84,16 @@ class GemmaChatModel:
         from mlx_vlm import stream_generate
 
         prompt = self._processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True)
-        chunks = stream_generate(self._model, self._processor, prompt,
-                                 max_tokens=max_tokens, temperature=temperature,
-                                 repetition_penalty=1.2)
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        chunks = stream_generate(
+            self._model,
+            self._processor,
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            repetition_penalty=1.2,
+        )
         try:
             for chunk in chunks:
                 # mlx-vlm emits incremental detokenizer segments, including its
@@ -182,12 +187,14 @@ class BedrockChatModel:
         text_parts = [block["text"] for block in content_blocks if "text" in block]
         return "\n".join(part.strip() for part in text_parts if part and part.strip()).strip()
 
-
     def stream(self, messages, *, max_tokens=200, temperature=0.7):
         self.ensure_loaded()
         system, conversation = _bedrock_messages(messages)
-        request = {"modelId": self.model_name, "messages": conversation,
-                   "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens}}
+        request = {
+            "modelId": self.model_name,
+            "messages": conversation,
+            "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens},
+        }
         if system:
             request["system"] = system
         events = self._client.converse_stream(**request)["stream"]
@@ -231,7 +238,9 @@ def build_chat_model(config: ModelConfig) -> ChatModel:
     raise ValueError(f"Unsupported chat provider: {config.chat_provider}")
 
 
-def _bedrock_messages(messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+def _bedrock_messages(
+    messages: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     system_blocks: list[dict[str, str]] = []
     bedrock_messages: list[dict[str, Any]] = []
 

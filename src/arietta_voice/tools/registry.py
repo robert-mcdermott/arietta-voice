@@ -7,7 +7,6 @@ from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.models import ToolResponse
 from arietta_voice.tools.base import AssistantTool, ToolContext
 
-
 TOOLS_PACKAGE = "arietta_voice.tools"
 
 

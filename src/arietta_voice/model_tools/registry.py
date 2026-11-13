@@ -5,8 +5,7 @@ import json
 
 from arietta_voice.config import AppConfig
 from arietta_voice.knowledge import KnowledgeRetriever
-from arietta_voice.model_tools.base import ModelInvokedTool, ModelToolContext
-
+from arietta_voice.model_tools.base import ModelInvokedTool, ModelToolContext, ModelToolExecution
 
 MODEL_TOOLS_PACKAGE = "arietta_voice.model_tools"
 
@@ -40,7 +39,7 @@ class ModelToolRegistry:
         lines.extend(
             [
                 "",
-                'If you need a tool, reply with JSON only in exactly this shape:',
+                "If you need a tool, reply with JSON only in exactly this shape:",
                 '{"tool_call":{"name":"<tool_name>","arguments":{...}}}',
                 "",
                 "Otherwise answer the user normally in plain text.",

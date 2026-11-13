@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -108,7 +108,9 @@ class FakeEmbedder:
     def _embed(self, text: str) -> np.ndarray:
         lowered = text.lower()
         vector = np.zeros(3, dtype=np.float32)
-        if any(token in lowered for token in ("credential", "password", "reset", "okta", "sign in")):
+        if any(
+            token in lowered for token in ("credential", "password", "reset", "okta", "sign in")
+        ):
             vector[0] = 1.0
         if any(token in lowered for token in ("cafeteria", "coffee", "lunch", "food")):
             vector[1] = 1.0
@@ -142,9 +144,15 @@ def test_old_embedding_pipeline_is_rejected_and_rebuilt(tmp_path, monkeypatch, o
     knowledge_dir = tmp_path / "knowledge"
     knowledge_dir.mkdir()
     (knowledge_dir / "access.md").write_text("# Credential recovery\nUse password reset.")
-    monkeypatch.setattr("arietta_voice.knowledge._create_text_embedder", lambda config: FakeEmbedder())
-    config = KnowledgeConfig(backend="vector", directory=knowledge_dir,
-                             index_directory=tmp_path / "index", embedding_model="fake-bge-small")
+    monkeypatch.setattr(
+        "arietta_voice.knowledge._create_text_embedder", lambda config: FakeEmbedder()
+    )
+    config = KnowledgeConfig(
+        backend="vector",
+        directory=knowledge_dir,
+        index_directory=tmp_path / "index",
+        embedding_model="fake-bge-small",
+    )
     build_knowledge_index(config)
     manifest_path = config.index_directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -156,7 +164,9 @@ def test_old_embedding_pipeline_is_rejected_and_rebuilt(tmp_path, monkeypatch, o
     assert not build_knowledge_index(config)["updated"]
 
 
-def test_retrieval_and_index_exclude_external_links_and_hidden_directories(tmp_path, monkeypatch) -> None:
+def test_retrieval_and_index_exclude_external_links_and_hidden_directories(
+    tmp_path, monkeypatch
+) -> None:
     knowledge_dir = tmp_path / "knowledge"
     knowledge_dir.mkdir()
     outside = tmp_path / "private.md"
@@ -167,9 +177,14 @@ def test_retrieval_and_index_exclude_external_links_and_hidden_directories(tmp_p
         folder.mkdir()
         (folder / "article.md").write_text("# Credential recovery\nPRIVATE HIDDEN password reset.")
     (knowledge_dir / "access.md").write_text("# Credential recovery\nPublic password reset.")
-    monkeypatch.setattr("arietta_voice.knowledge._create_text_embedder", lambda config: FakeEmbedder())
-    config = KnowledgeConfig(directory=knowledge_dir, index_directory=tmp_path / "index",
-                             embedding_model="fake-bge-small")
+    monkeypatch.setattr(
+        "arietta_voice.knowledge._create_text_embedder", lambda config: FakeEmbedder()
+    )
+    config = KnowledgeConfig(
+        directory=knowledge_dir,
+        index_directory=tmp_path / "index",
+        embedding_model="fake-bge-small",
+    )
     result = KnowledgeRetriever(config).search("password reset")
     assert result is not None
     assert len(result.matches) == 1

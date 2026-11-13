@@ -1,39 +1,43 @@
 from __future__ import annotations
 
+import json
+import os
+import platform
+import threading
+import time
+import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-import json
-import os
 from pathlib import Path
-import platform
-import time
-import threading
-import uuid
 from typing import Any, Literal
 
-from fastapi import Path as ApiPath
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Path as ApiPath
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from arietta_voice import __version__
 from arietta_voice.admin_auth import load_admin_credentials
 from arietta_voice.config import AppConfig, config_to_dict, load_config
+from arietta_voice.conversation import ChatResult, ConversationService
 from arietta_voice.diagnostics import run_startup_diagnostics
 from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
 from arietta_voice.llm import ChatModel, build_chat_model
 from arietta_voice.logging_utils import EventLogger
-from arietta_voice.conversation import ChatResult, ConversationService
-from arietta_voice.turns import CancellationToken
 from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
 from arietta_voice.tool_admin import ModelToolAdmin, ToolAdmin
-from arietta_voice.worker import InferenceWorker, WorkerBusy, WorkerCancelled, WorkerFailure, WorkerTimeout
-
+from arietta_voice.turns import CancellationToken
+from arietta_voice.worker import (
+    InferenceWorker,
+    WorkerBusy,
+    WorkerCancelled,
+    WorkerTimeout,
+)
 
 # Retain the existing API field names while reporting the application version.
 API_VERSION = __version__
@@ -131,8 +135,12 @@ class AriettaApiService:
         self._chat_lock = threading.Lock()
         self._active_chat = None
         self._retired_chat_ids = deque(maxlen=128)
-        self._conversation = ConversationService(self.config, prompt_manager=self.prompt_manager,
-            knowledge=self.knowledge, generate=lambda *a, **kw: self._llm_generate(*a, **kw))
+        self._conversation = ConversationService(
+            self.config,
+            prompt_manager=self.prompt_manager,
+            knowledge=self.knowledge,
+            generate=lambda *a, **kw: self._llm_generate(*a, **kw),
+        )
         self.chat_turns = 0
         self.last_chat_at: str | None = None
         self.last_error: str | None = None
@@ -175,9 +183,12 @@ class AriettaApiService:
                 "chat_turns": self.chat_turns,
                 "last_chat_at": self.last_chat_at,
                 "last_error": self.last_error,
-                "inference": {"operation": self.worker.operation, "worker_pid": self.worker.pid,
-                              "worker_restarts": self.worker.restarts,
-                              "turn_timeout_s": self.config.runtime.turn_timeout_s},
+                "inference": {
+                    "operation": self.worker.operation,
+                    "worker_pid": self.worker.pid,
+                    "worker_restarts": self.worker.restarts,
+                    "turn_timeout_s": self.config.runtime.turn_timeout_s,
+                },
             },
             "runtime": runtime_status,
             "assistant": {
@@ -188,7 +199,8 @@ class AriettaApiService:
             "models": {
                 "chat_provider": self.config.models.chat_provider,
                 "chat_model": self.config.models.chat_model,
-                "llm_loaded": self.worker.pid is not None and self.worker.pid == self._worker_model_pid,
+                "llm_loaded": self.worker.pid is not None
+                and self.worker.pid == self._worker_model_pid,
                 "stt_language": self.config.models.stt_language,
             },
             "knowledge": {
@@ -330,7 +342,9 @@ class AriettaApiService:
     def search_knowledge(self, query: str) -> dict[str, Any]:
         query = query.strip()
         result = self.knowledge.search(query)
-        matches = [] if result is None else [_knowledge_match_payload(match) for match in result.matches]
+        matches = (
+            [] if result is None else [_knowledge_match_payload(match) for match in result.matches]
+        )
         return {
             "query": query,
             "enabled": self.config.knowledge.enabled,
@@ -367,7 +381,9 @@ class AriettaApiService:
                     "updated_at": datetime.fromtimestamp(
                         stat.st_mtime,
                         tz=timezone.utc,
-                    ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                    )
+                    .isoformat(timespec="seconds")
+                    .replace("+00:00", "Z"),
                 }
             )
         return {"directory": str(directory), "files": files}
@@ -426,7 +442,13 @@ class AriettaApiService:
             probe = self.tool_admin.probe_tool(tool_name, text)
             if probe["matched"]:
                 return probe
-        return {"matched": False, "tool": None, "content": None, "bypass_model": None, "context": None}
+        return {
+            "matched": False,
+            "tool": None,
+            "content": None,
+            "bypass_model": None,
+            "context": None,
+        }
 
     def set_enabled_tools(self, enabled: list[str]) -> dict[str, Any]:
         payload = self.tool_admin.set_enabled(enabled)
@@ -538,17 +560,27 @@ class AriettaApiService:
             self._active_chat = (request_id, token)
         try:
             payload = request.model_dump(exclude={"request_id"})
-            payload.update(enabled_tools=self.config.tools.enabled,
-                           enabled_model_tools=self.config.model_tools.enabled)
-            response = self.worker.call("chat", payload, timeout_s=self.config.runtime.turn_timeout_s,
-                                        cancellation=token)
+            payload.update(
+                enabled_tools=self.config.tools.enabled,
+                enabled_model_tools=self.config.model_tools.enabled,
+            )
+            response = self.worker.call(
+                "chat", payload, timeout_s=self.config.runtime.turn_timeout_s, cancellation=token
+            )
             with self._chat_lock:
                 token.check()
-                self._worker_model_pid = self.worker.pid if response.pop("model_loaded", False) else None
+                self._worker_model_pid = (
+                    self.worker.pid if response.pop("model_loaded", False) else None
+                )
                 result = ChatResult(**response)
                 self.last_error = None
-                self._record_chat(request.message, result.response, source=result.source,
-                                  used_tool=result.used_tool, model_tool=result.model_tool)
+                self._record_chat(
+                    request.message,
+                    result.response,
+                    source=result.source,
+                    used_tool=result.used_tool,
+                    model_tool=result.model_tool,
+                )
                 self._retired_chat_ids.append(request_id)
                 self._active_chat = None
                 return result
@@ -573,8 +605,13 @@ class AriettaApiService:
         # In-process test/embedding entry point; production calls run in the worker.
         result = self._conversation.chat(**request.model_dump(exclude={"request_id"}))
         if record:
-            self._record_chat(request.message, result.response, source=result.source,
-                              used_tool=result.used_tool, model_tool=result.model_tool)
+            self._record_chat(
+                request.message,
+                result.response,
+                source=result.source,
+                used_tool=result.used_tool,
+                model_tool=result.model_tool,
+            )
         return result
 
     def uptime_seconds(self) -> int:
@@ -631,6 +668,7 @@ def create_app(
     service = service or AriettaApiService(config_path)
     base_path = service.config_path or service.config.project_root / "config" / "arietta_voice.toml"
     admin_credentials = load_admin_credentials(base_path)
+
     @asynccontextmanager
     async def lifespan(app):
         try:
@@ -659,14 +697,19 @@ def create_app(
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
             expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
-            if (origin is not None and origin != expected_origin) or request.headers.get("sec-fetch-site") == "cross-site":
-                return JSONResponse({"detail": "Cross-origin admin actions are not allowed"}, status_code=403)
+            if (origin is not None and origin != expected_origin) or request.headers.get(
+                "sec-fetch-site"
+            ) == "cross-site":
+                return JSONResponse(
+                    {"detail": "Cross-origin admin actions are not allowed"}, status_code=403
+                )
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
+
     security_scheme = HTTPBasic(auto_error=False)
 
     def require_admin(credentials: HTTPBasicCredentials | None = Depends(security_scheme)) -> str:
@@ -689,7 +732,10 @@ def create_app(
 
     def require_source_editing(_user: str = Depends(require_admin)) -> str:
         if not svc().config.admin.allow_source_editing:
-            raise HTTPException(status_code=403, detail="Source editing is disabled. Set admin.allow_source_editing=true in private config and restart the API to enable it.")
+            raise HTTPException(
+                status_code=403,
+                detail="Source editing is disabled. Set admin.allow_source_editing=true in private config and restart the API to enable it.",
+            )
         return _user
 
     @app.get("/health")
@@ -717,7 +763,9 @@ def create_app(
         except Exception as exc:
             service_obj = svc()
             service_obj.last_error = f"{type(exc).__name__}: {exc}"
-            service_obj.event_logger.log("api_error", route="/api/runtime/start", error=service_obj.last_error)
+            service_obj.event_logger.log(
+                "api_error", route="/api/runtime/start", error=service_obj.last_error
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=service_obj.last_error,
@@ -734,7 +782,9 @@ def create_app(
         except Exception as exc:
             service_obj = svc()
             service_obj.last_error = f"{type(exc).__name__}: {exc}"
-            service_obj.event_logger.log("api_error", route="/api/runtime/restart", error=service_obj.last_error)
+            service_obj.event_logger.log(
+                "api_error", route="/api/runtime/restart", error=service_obj.last_error
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=service_obj.last_error,
@@ -950,7 +1000,9 @@ def create_app(
         try:
             return svc().read_knowledge_file(file_path)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found") from exc
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found"
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -973,12 +1025,17 @@ def create_app(
         try:
             return svc().delete_knowledge_file(file_path)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found") from exc
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found"
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.post("/api/chat/{request_id}/cancel")
-    def cancel_api_chat(request_id: str = ApiPath(pattern=r"^[A-Za-z0-9_-]{1,64}$"), _user: str = Depends(require_admin)) -> dict:
+    def cancel_api_chat(
+        request_id: str = ApiPath(pattern=r"^[A-Za-z0-9_-]{1,64}$"),
+        _user: str = Depends(require_admin),
+    ) -> dict:
         return {"cancelled": svc().cancel_chat(request_id)}
 
     @app.post("/api/chat")
@@ -988,14 +1045,25 @@ def create_app(
         except Exception as exc:
             service_obj = svc()
             service_obj.last_error = type(exc).__name__
-            service_obj.event_logger.log("api_error", route="/api/chat", error_type=service_obj.last_error)
-            code, detail = 502, "The model or tool failed. The next request will use a fresh worker."
+            service_obj.event_logger.log(
+                "api_error", route="/api/chat", error_type=service_obj.last_error
+            )
+            code, detail = (
+                502,
+                "The model or tool failed. The next request will use a fresh worker.",
+            )
             if isinstance(exc, WorkerBusy):
                 code, detail = 503, "Inference is busy. Wait for the current request to finish."
             elif isinstance(exc, WorkerCancelled):
-                code, detail = 409, "Turn cancelled. Any external action already completed is not undone."
+                code, detail = (
+                    409,
+                    "Turn cancelled. Any external action already completed is not undone.",
+                )
             elif isinstance(exc, WorkerTimeout):
-                code, detail = 504, "The turn timed out and was stopped. No automatic retry was made; check any external action before repeating it."
+                code, detail = (
+                    504,
+                    "The turn timed out and was stopped. No automatic retry was made; check any external action before repeating it.",
+                )
             raise HTTPException(
                 status_code=code,
                 detail=detail,

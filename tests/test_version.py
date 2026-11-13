@@ -1,7 +1,7 @@
-from importlib.metadata import version
-from pathlib import Path
 import sys
 import tomllib
+from importlib.metadata import version
+from pathlib import Path
 
 import pytest
 

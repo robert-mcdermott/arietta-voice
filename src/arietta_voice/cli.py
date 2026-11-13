@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
-from pathlib import Path
 import sys
 import warnings
+from pathlib import Path
 
 from arietta_voice import __version__
 from arietta_voice.config import config_to_dict, load_config, validate_config
@@ -22,15 +22,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--config", type=Path, help="Path to a TOML config file")
     run_parser.add_argument("--memory", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--tts", action=argparse.BooleanOptionalAction, default=None)
-    run_parser.add_argument('--tts-backend', choices=['onnx', 'mlx'], help='Experimental MLX requires the trial environment')
-    run_parser.add_argument('--mlx-kokoro-model', type=Path, help='Explicit local Kokoro model directory for MLX')
+    run_parser.add_argument(
+        "--tts-backend",
+        choices=["onnx", "mlx"],
+        help="Experimental MLX requires the trial environment",
+    )
+    run_parser.add_argument(
+        "--mlx-kokoro-model", type=Path, help="Explicit local Kokoro model directory for MLX"
+    )
     run_parser.add_argument("--aec", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--smart-turn", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--chime", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--wake", action=argparse.BooleanOptionalAction, default=None)
     run_parser.add_argument("--voice", help="Kokoro voice id")
-    run_parser.add_argument("--input-device", help="Exact device name or HOST::NAME from devices; empty uses system default")
-    run_parser.add_argument("--output-device", help="Exact device name or HOST::NAME from devices; empty uses system default")
+    run_parser.add_argument(
+        "--input-device",
+        help="Exact device name or HOST::NAME from devices; empty uses system default",
+    )
+    run_parser.add_argument(
+        "--output-device",
+        help="Exact device name or HOST::NAME from devices; empty uses system default",
+    )
     run_parser.add_argument(
         "--model",
         help="Chat model id. Use an MLX model for local chat or a Bedrock model id when chat_provider=bedrock.",
@@ -42,7 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
         dest="wake_words",
         help="Override the configured wake word phrase. Repeat to allow multiple phrases.",
     )
-    run_parser.add_argument("--session-timeout", type=float, help="Seconds to keep a session open after activity")
+    run_parser.add_argument(
+        "--session-timeout", type=float, help="Seconds to keep a session open after activity"
+    )
     run_parser.add_argument("--record", nargs="?", const="", metavar="FILE")
 
     config_parser = subparsers.add_parser("config", help="Print the resolved config")
@@ -52,7 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--config", type=Path, help="Path to a TOML config file")
     doctor_parser.add_argument("--json", action="store_true", help="Print JSON output")
 
-    knowledge_parser = subparsers.add_parser("knowledge-search", help="Search the local knowledge base")
+    knowledge_parser = subparsers.add_parser(
+        "knowledge-search", help="Search the local knowledge base"
+    )
     knowledge_parser.add_argument("query", nargs="+", help="Query text to search for")
     knowledge_parser.add_argument("--config", type=Path, help="Path to a TOML config file")
     knowledge_parser.add_argument("--json", action="store_true", help="Print JSON output")
@@ -76,7 +92,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("devices", help="List audio devices")
-    private_parser = subparsers.add_parser("config-init", help="Create private config/persona copies without changing originals")
+    private_parser = subparsers.add_parser(
+        "config-init", help="Create private config/persona copies without changing originals"
+    )
     private_parser.add_argument("--config", type=Path, help="Base TOML configuration to preserve")
     admin_parser = subparsers.add_parser("admin-setup", help="Set private admin credentials")
     admin_parser.add_argument("--config", type=Path, help="Base TOML configuration used by serve")
@@ -86,11 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _apply_runtime_overrides(config, args):
-    if getattr(args, 'tts_backend', None) is not None:
+    if getattr(args, "tts_backend", None) is not None:
         config.audio.tts_backend = args.tts_backend
-    if getattr(args, 'mlx_kokoro_model', None) is not None:
+    if getattr(args, "mlx_kokoro_model", None) is not None:
         config.audio.mlx_kokoro_model = str(args.mlx_kokoro_model.expanduser().resolve())
-    for name in ('input_device', 'output_device'):
+    for name in ("input_device", "output_device"):
         value = getattr(args, name, None)
         if value is not None:
             setattr(config.audio, name, value.strip() or None)
@@ -183,7 +201,9 @@ def main() -> int:
                     repeated = getpass.getpass("Repeat password: ")
                 if password != repeated:
                     parser.error("Passwords do not match; credentials were not changed")
-                saved = save_admin_credentials(base_path, args.username, password, replace=args.replace)
+                saved = save_admin_credentials(
+                    base_path, args.username, password, replace=args.replace
+                )
                 print(f"Admin credentials saved to {saved}. Restart the API to apply them.")
         except (EOFError, getpass.GetPassWarning):
             parser.error("Run admin-setup in an interactive terminal with hidden password input")

@@ -11,9 +11,14 @@ from arietta_voice.prompts import PromptManager
 def test_history_limit_counts_complete_conversation_pairs(tmp_path: Path, limit: int) -> None:
     config = default_config(tmp_path)
     config.assistant.max_history_turns = limit
-    history = [ConversationTurn(role=role, content=f"{role} {turn}")
-               for turn in range(10) for role in ("user", "assistant")]
+    history = [
+        ConversationTurn(role=role, content=f"{role} {turn}")
+        for turn in range(10)
+        for role in ("user", "assistant")
+    ]
     result = PromptManager(config).build_messages(history, "Current question")
-    expected = history[-limit * 2:] if limit else []
-    assert result == [*({"role": turn.role, "content": turn.content} for turn in expected),
-                      {"role": "user", "content": "Current question"}]
+    expected = history[-limit * 2 :] if limit else []
+    assert result == [
+        *({"role": turn.role, "content": turn.content} for turn in expected),
+        {"role": "user", "content": "Current question"},
+    ]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import signal
+from pathlib import Path
 
 from arietta_voice.config import default_config
 from arietta_voice.runtime_supervisor import RuntimeSupervisor

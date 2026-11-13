@@ -1,4 +1,5 @@
 """One killable, serialized inference owner. No queues of abandoned jobs."""
+
 from __future__ import annotations
 
 import atexit
@@ -8,8 +9,15 @@ import threading
 import time
 from typing import Any, Callable
 
-
-from arietta_voice.turns import CancellationToken, TurnCancelled as WorkerCancelled, TurnTimeout as WorkerTimeout
+from arietta_voice.turns import (
+    CancellationToken,
+)
+from arietta_voice.turns import (
+    TurnCancelled as WorkerCancelled,
+)
+from arietta_voice.turns import (
+    TurnTimeout as WorkerTimeout,
+)
 
 
 class WorkerBusy(RuntimeError):
@@ -43,6 +51,7 @@ def _worker_main(connection, config, handler_factory) -> None:
 
 def _default_handler(config):
     from arietta_voice.inference import InferenceEngine
+
     return InferenceEngine(config)
 
 
@@ -64,7 +73,11 @@ class InferenceWorker:
     @property
     def pid(self) -> int | None:
         with self._lifecycle_lock:
-            return self._process.pid if self._process is not None and self._process.is_alive() else None
+            return (
+                self._process.pid
+                if self._process is not None and self._process.is_alive()
+                else None
+            )
 
     def invalidate(self) -> None:
         """Reload configuration/plugins before the next job, without replaying this one."""
@@ -90,8 +103,15 @@ class InferenceWorker:
             if self.pid is None:
                 raise WorkerFailure("Inference worker exited")
 
-    def call(self, operation: str, payload: Any = None, *, timeout_s: float,
-             on_wait: Callable | None = None, cancellation: CancellationToken | None = None):
+    def call(
+        self,
+        operation: str,
+        payload: Any = None,
+        *,
+        timeout_s: float,
+        on_wait: Callable | None = None,
+        cancellation: CancellationToken | None = None,
+    ):
         cancellation = cancellation or CancellationToken()
         cancellation.check()
         if not self._lock.acquire(blocking=False):
@@ -107,7 +127,11 @@ class InferenceWorker:
                     self._stop()
                     context = multiprocessing.get_context("spawn")
                     self._connection, child = context.Pipe()
-                    self._process = context.Process(target=_worker_main, args=(child, self.config, self.handler_factory), daemon=True)
+                    self._process = context.Process(
+                        target=_worker_main,
+                        args=(child, self.config, self.handler_factory),
+                        daemon=True,
+                    )
                     try:
                         self._process.start()
                     finally:

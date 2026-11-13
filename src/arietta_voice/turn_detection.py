@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import logging
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -49,7 +49,9 @@ class SmartTurnEndpointDetector:
         import onnxruntime as ort
         from transformers import WhisperFeatureExtractor
 
-        destination = Path(tempfile.gettempdir()) / "arietta-smart-turn" / "smart-turn-v3.2-cpu.onnx"
+        destination = (
+            Path(tempfile.gettempdir()) / "arietta-smart-turn" / "smart-turn-v3.2-cpu.onnx"
+        )
         ensure_download(
             "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx",
             destination,

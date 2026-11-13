@@ -1,16 +1,33 @@
 """Bounded speech handoff with serialized token-generation and TTS ownership."""
-import threading
+
 import asyncio
+import threading
 
 from arietta_voice.turns import (
-    CancellationToken, BoundedChannel, ChannelClosed, ChannelEmpty,
-    TEXT_QUEUE_ITEMS, TEXT_ITEM_CHARS, AUDIO_QUEUE_ITEMS, AUDIO_ITEM_SAMPLES,
+    AUDIO_ITEM_SAMPLES,
+    AUDIO_QUEUE_ITEMS,
+    TEXT_ITEM_CHARS,
+    TEXT_QUEUE_ITEMS,
+    BoundedChannel,
+    CancellationToken,
+    ChannelClosed,
+    ChannelEmpty,
 )
 from arietta_voice.worker import WorkerFailure
 
 
-async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None, on_wait=None,
-                        request=None, on_result=None, playback_events=False):
+async def speech_stream(
+    text=None,
+    *,
+    infer,
+    worker,
+    cancellation,
+    deadline=None,
+    on_wait=None,
+    request=None,
+    on_result=None,
+    playback_events=False,
+):
     """Prefetch at most eight PCM frames with one serialized inference producer.
 
     Pull a clause, synthesize it, then resume tokens while queued audio plays.
@@ -21,9 +38,16 @@ async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None
     """
     stop = CancellationToken()
     cancellation.subscribe(stop.cancel)
-    texts = BoundedChannel(stop, max_items=TEXT_QUEUE_ITEMS, max_item_size=TEXT_ITEM_CHARS, deadline=deadline)
-    audio = BoundedChannel(stop, max_items=AUDIO_QUEUE_ITEMS, max_item_size=AUDIO_ITEM_SAMPLES * 4,
-                           size=lambda frame: frame[0].nbytes, deadline=deadline)
+    texts = BoundedChannel(
+        stop, max_items=TEXT_QUEUE_ITEMS, max_item_size=TEXT_ITEM_CHARS, deadline=deadline
+    )
+    audio = BoundedChannel(
+        stop,
+        max_items=AUDIO_QUEUE_ITEMS,
+        max_item_size=AUDIO_ITEM_SAMPLES * 4,
+        size=lambda frame: frame[0].nbytes,
+        deadline=deadline,
+    )
     producer = None
     try:
         if request is None:
@@ -33,29 +57,33 @@ async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None
         def produce():
             try:
                 if request is not None:
-                    infer('chat_start', request, cancellation=stop)
+                    infer("chat_start", request, cancellation=stop)
                 while True:
                     if request is not None:
-                        event = infer('chat_next', cancellation=stop)
-                        if event['kind'] == 'done':
+                        event = infer("chat_next", cancellation=stop)
+                        if event["kind"] == "done":
                             if on_result is not None:
-                                on_result(event['result'])
+                                on_result(event["result"])
                             break
-                        if event['kind'] != 'clause':
-                            raise ValueError('Invalid conversation event')
-                        texts.put(event['text'])
+                        if event["kind"] != "clause":
+                            raise ValueError("Invalid conversation event")
+                        texts.put(event["text"])
                     try:
                         sentence = texts.get()
                     except ChannelClosed:
                         break
-                    infer('tts_start', sentence, cancellation=stop)
+                    infer("tts_start", sentence, cancellation=stop)
                     while True:
-                        frame = infer('tts_next', cancellation=stop)
+                        frame = infer("tts_next", cancellation=stop)
                         if frame is None:
                             break
                         samples, rate = frame
-                        if samples.ndim != 1 or samples.dtype.name != 'float32' or not 8000 <= rate <= 96000:
-                            raise ValueError('Invalid audio frame')
+                        if (
+                            samples.ndim != 1
+                            or samples.dtype.name != "float32"
+                            or not 8000 <= rate <= 96000
+                        ):
+                            raise ValueError("Invalid audio frame")
                         audio.put((samples.copy(), rate))
                 audio.finish()
             except Exception as exc:
@@ -63,23 +91,25 @@ async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None
             finally:
                 if worker.pid is not None:
                     try:
-                        worker.call('speech_close' if request is not None else 'tts_close', timeout_s=1)
+                        worker.call(
+                            "speech_close" if request is not None else "tts_close", timeout_s=1
+                        )
                     except Exception:
                         pass  # Worker failure already discards the generator.
 
-        producer = threading.Thread(target=produce, name='arietta-speech-producer', daemon=True)
+        producer = threading.Thread(target=produce, name="arietta-speech-producer", daemon=True)
         producer.start()
         while True:
             try:
                 # Keep an active blocking output stream fed through clause gaps.
-                frame = audio.get(on_wait=on_wait, timeout=.01 if playback_events else .05)
+                frame = audio.get(on_wait=on_wait, timeout=0.01 if playback_events else 0.05)
             except ChannelClosed:
                 if playback_events:
                     # Native generator closure can still be pending. Keep the
                     # player in control of the device during that wait.
                     while producer.is_alive():
                         yield None, None
-                        await asyncio.sleep(.01)
+                        await asyncio.sleep(0.01)
                 return
             except ChannelEmpty:
                 # Let playback poll speech interruption even between clauses.
@@ -101,4 +131,4 @@ async def speech_stream(text=None, *, infer, worker, cancellation, deadline=None
         audio.close()
         cancellation.unsubscribe(stop.cancel)
         if producer is not None and producer.is_alive():
-            raise WorkerFailure('Speech producer did not stop')
+            raise WorkerFailure("Speech producer did not stop")

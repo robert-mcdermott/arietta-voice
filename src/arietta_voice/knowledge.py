@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
 import hashlib
 import json
-import zipfile
-from pathlib import Path
 import re
+import zipfile
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
 
 from arietta_voice.config import KnowledgeConfig
-
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -324,7 +323,15 @@ class VectorKnowledgeBackend:
             vectors = vectors.astype(np.float32, copy=False)
             if not np.isfinite(vectors).all():
                 return False
-        except (OSError, ValueError, TypeError, KeyError, OverflowError, EOFError, zipfile.BadZipFile):
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            OverflowError,
+            EOFError,
+            zipfile.BadZipFile,
+        ):
             return False
 
         self._sections = sections
@@ -421,9 +428,8 @@ def build_knowledge_index(config: KnowledgeConfig) -> dict[str, Any]:
     vectors_path = index_dir / INDEX_VECTORS_FILENAME
 
     cached = VectorKnowledgeBackend(config)
-    if (
-        cached._ensure_index_loaded(preload_embedder=False)
-        and len(cached._sections) == len(sections)
+    if cached._ensure_index_loaded(preload_embedder=False) and len(cached._sections) == len(
+        sections
     ):
         return {
             "updated": False,
@@ -469,7 +475,9 @@ def _directory_signature(directory: Path) -> tuple[tuple[str, int, int], ...] | 
     signature: list[tuple[str, int, int]] = []
     for path in _iter_knowledge_files(directory):
         stat = path.stat()
-        signature.append((str(path.relative_to(directory)), int(stat.st_mtime_ns), int(stat.st_size)))
+        signature.append(
+            (str(path.relative_to(directory)), int(stat.st_mtime_ns), int(stat.st_size))
+        )
     return tuple(signature)
 
 
@@ -711,7 +719,9 @@ def _merge_hybrid_matches(
     return merged
 
 
-def _serialize_signature(signature: tuple[tuple[str, int, int], ...] | None) -> list[list[Any]] | None:
+def _serialize_signature(
+    signature: tuple[tuple[str, int, int], ...] | None,
+) -> list[list[Any]] | None:
     if signature is None:
         return None
     return [[path, modified_ns, size] for path, modified_ns, size in signature]
@@ -761,10 +771,17 @@ def _load_vector_section_records(path: Path) -> list[_VectorSectionRecord]:
         if not line.strip():
             continue
         payload = json.loads(line)
-        if not isinstance(payload, dict) or any(
-            not isinstance(payload.get(key), str)
-            for key in ("section_id", "source_path", "title", "snippet")
-        ) or not (payload.get("section_title") is None or isinstance(payload.get("section_title"), str)):
+        if (
+            not isinstance(payload, dict)
+            or any(
+                not isinstance(payload.get(key), str)
+                for key in ("section_id", "source_path", "title", "snippet")
+            )
+            or not (
+                payload.get("section_title") is None
+                or isinstance(payload.get("section_title"), str)
+            )
+        ):
             raise ValueError("Invalid cached section record")
         records.append(
             _VectorSectionRecord(
@@ -848,6 +865,7 @@ class BgeTextEmbedder:
                 normalized = self._F.normalize(pooled, p=2, dim=1)
             batches.append(normalized.detach().cpu().numpy().astype(np.float32, copy=False))
         return np.vstack(batches)
+
 
 def _split_front_matter(raw: str) -> tuple[dict[str, str], str]:
     if not raw.startswith("---\n"):

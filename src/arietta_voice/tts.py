@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import sounddevice as sd
 
@@ -71,12 +71,13 @@ def spoken_voice_name(voice: str) -> str:
 
 
 def build_speaker(audio):
-    if audio.tts_backend == 'onnx':
+    if audio.tts_backend == "onnx":
         return KokoroTextToSpeech(audio.voice, audio.tts_speed)
-    if audio.tts_backend == 'mlx':
+    if audio.tts_backend == "mlx":
         from arietta_voice.tts_mlx import MLXKokoroTextToSpeech
+
         return MLXKokoroTextToSpeech(audio.mlx_kokoro_model, audio.voice, audio.tts_speed)
-    raise ValueError('Unknown TTS backend')
+    raise ValueError("Unknown TTS backend")
 
 
 class KokoroTextToSpeech:

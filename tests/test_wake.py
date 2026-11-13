@@ -44,15 +44,18 @@ def test_build_wake_word_detector_uses_configured_backend() -> None:
     assert detector.match("Arietta are you there") is not None
 
 
-@pytest.mark.parametrize("transcript, command", [
-    ("Hey, Bridget: Set API_KEY to AbC_123!", "Set API_KEY to AbC_123!"),
-    ("Bridget, is -5.2 less than +3?", "is -5.2 less than +3?"),
-    ("Bridget: résumé for José, please.", "résumé for José, please."),
-    ("Bridget, -5", "-5"),
-    ("Bridget, .env is the filename", ".env is the filename"),
-    ("Bridget .5 * 3", ".5 * 3"),
-    ("  BRIDGET?!  ", None),
-])
+@pytest.mark.parametrize(
+    "transcript, command",
+    [
+        ("Hey, Bridget: Set API_KEY to AbC_123!", "Set API_KEY to AbC_123!"),
+        ("Bridget, is -5.2 less than +3?", "is -5.2 less than +3?"),
+        ("Bridget: résumé for José, please.", "résumé for José, please."),
+        ("Bridget, -5", "-5"),
+        ("Bridget, .env is the filename", ".env is the filename"),
+        ("Bridget .5 * 3", ".5 * 3"),
+        ("  BRIDGET?!  ", None),
+    ],
+)
 def test_inline_command_preserves_original_text(transcript, command) -> None:
     match = TranscriptWakeWordDetector(("bridget",)).match(transcript)
     assert match is not None

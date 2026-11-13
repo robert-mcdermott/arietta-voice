@@ -5,7 +5,6 @@ import re
 from arietta_voice.config import AppConfig
 from arietta_voice.models import ConversationTurn, ToolResponse
 
-
 MARKDOWN_NOISE_RE = re.compile(r"[#*_`>-]+")
 WHITESPACE_RE = re.compile(r"\s+")
 

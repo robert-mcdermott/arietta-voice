@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields
 import math
+import tomllib
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
-import tomllib
 
 from arietta_voice.private_config import local_config_path
-
 
 DEFAULT_GREETINGS = (
     "Yes?",
@@ -287,7 +286,9 @@ def load_config(path: Path | None = None) -> AppConfig:
                 assistant.get("goodbye_variants"),
                 base.assistant.goodbye_variants,
             ),
-            max_history_turns=int(assistant.get("max_history_turns", base.assistant.max_history_turns)),
+            max_history_turns=int(
+                assistant.get("max_history_turns", base.assistant.max_history_turns)
+            ),
         ),
         wake_word=WakeWordConfig(
             enabled=bool(wake_word.get("enabled", base.wake_word.enabled)),
@@ -297,9 +298,7 @@ def load_config(path: Path | None = None) -> AppConfig:
                 base.wake_word.phrases,
                 allow_empty=True,
             ),
-            acknowledgement=str(
-                wake_word.get("acknowledgement", base.wake_word.acknowledgement)
-            ),
+            acknowledgement=str(wake_word.get("acknowledgement", base.wake_word.acknowledgement)),
             session_timeout_s=float(
                 wake_word.get("session_timeout_s", base.wake_word.session_timeout_s)
             ),
@@ -313,8 +312,11 @@ def load_config(path: Path | None = None) -> AppConfig:
             silence_ms=int(audio.get("silence_ms", base.audio.silence_ms)),
             tts_enabled=bool(audio.get("tts_enabled", base.audio.tts_enabled)),
             tts_backend=str(audio.get("tts_backend", base.audio.tts_backend)),
-            mlx_kokoro_model=(str(_resolve_path(base_dir, audio['mlx_kokoro_model']))
-                              if audio.get('mlx_kokoro_model') else ''),
+            mlx_kokoro_model=(
+                str(_resolve_path(base_dir, audio["mlx_kokoro_model"]))
+                if audio.get("mlx_kokoro_model")
+                else ""
+            ),
             smart_turn_enabled=bool(audio.get("smart_turn_enabled", base.audio.smart_turn_enabled)),
             aec_enabled=bool(audio.get("aec_enabled", base.audio.aec_enabled)),
             chime_enabled=bool(audio.get("chime_enabled", base.audio.chime_enabled)),
@@ -325,9 +327,13 @@ def load_config(path: Path | None = None) -> AppConfig:
             ),
             queue_max_chunks=audio.get("queue_max_chunks", base.audio.queue_max_chunks),
             max_utterance_s=float(audio.get("max_utterance_s", base.audio.max_utterance_s)),
-            recording_queue_max_chunks=audio.get("recording_queue_max_chunks", base.audio.recording_queue_max_chunks),
+            recording_queue_max_chunks=audio.get(
+                "recording_queue_max_chunks", base.audio.recording_queue_max_chunks
+            ),
             max_recording_s=float(audio.get("max_recording_s", base.audio.max_recording_s)),
-            playback_reference_s=float(audio.get("playback_reference_s", base.audio.playback_reference_s)),
+            playback_reference_s=float(
+                audio.get("playback_reference_s", base.audio.playback_reference_s)
+            ),
             pre_roll_ms=float(audio.get("pre_roll_ms", base.audio.pre_roll_ms)),
             aec_delay_ms=float(audio.get("aec_delay_ms", base.audio.aec_delay_ms)),
             input_device=(audio.get("input_device") or "").strip() or None,
@@ -338,7 +344,8 @@ def load_config(path: Path | None = None) -> AppConfig:
         models=ModelConfig(
             chat_provider=str(models.get("chat_provider", base.models.chat_provider)).strip(),
             chat_model=str(models.get("chat_model", base.models.chat_model)),
-            bedrock_region=str(models.get("bedrock_region", "")).strip() or base.models.bedrock_region,
+            bedrock_region=str(models.get("bedrock_region", "")).strip()
+            or base.models.bedrock_region,
             bedrock_profile=str(models.get("bedrock_profile", "")).strip()
             or base.models.bedrock_profile,
             aws_access_key_id=str(models.get("aws_access_key_id", "")).strip()
@@ -353,7 +360,9 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         prompts=PromptConfig(
             soul_path=_resolve_path(base_dir, prompts.get("soul_path", base.prompts.soul_path)),
-            memory_path=_resolve_path(base_dir, prompts.get("memory_path", base.prompts.memory_path)),
+            memory_path=_resolve_path(
+                base_dir, prompts.get("memory_path", base.prompts.memory_path)
+            ),
         ),
         memory=MemoryConfig(
             enabled=bool(memory.get("enabled", base.memory.enabled)),
@@ -363,7 +372,9 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         logging=LoggingConfig(
             directory=_resolve_path(base_dir, logging_cfg.get("directory", base.logging.directory)),
-            events_file=_resolve_path(base_dir, logging_cfg.get("events_file", base.logging.events_file)),
+            events_file=_resolve_path(
+                base_dir, logging_cfg.get("events_file", base.logging.events_file)
+            ),
             content_enabled=logging_cfg.get("content_enabled", base.logging.content_enabled),
             max_bytes=logging_cfg.get("max_bytes", base.logging.max_bytes),
             backup_count=logging_cfg.get("backup_count", base.logging.backup_count),
@@ -439,31 +450,48 @@ def _validate_toml_types(raw: dict[str, Any], defaults: AppConfig) -> None:
 
 def validate_config(config: AppConfig) -> AppConfig:
     """Validate runtime assumptions, including values supplied by CLI overrides."""
+
     def require(condition: bool, message: str) -> None:
         if not condition:
             raise ValueError(message)
 
     def number(name: str, value: float, minimum: float, maximum: float = math.inf) -> None:
-        require(math.isfinite(value) and minimum <= value <= maximum,
-                f"{name} must be finite and between {minimum:g} and {maximum:g}")
+        require(
+            math.isfinite(value) and minimum <= value <= maximum,
+            f"{name} must be finite and between {minimum:g} and {maximum:g}",
+        )
 
     require(config.assistant.max_history_turns >= 0, "assistant.max_history_turns must be >= 0")
     require(bool(config.assistant.name.strip()), "assistant.name must not be blank")
     require(config.wake_word.backend == "transcript", "wake_word.backend must be 'transcript'")
-    require(not config.wake_word.enabled or bool(config.wake_word.phrases),
-            "wake_word.phrases must not be empty when wake word detection is enabled")
-    require(all(any(char.isalnum() for char in phrase) for phrase in config.wake_word.phrases),
-            "wake_word.phrases must contain words or numbers")
+    require(
+        not config.wake_word.enabled or bool(config.wake_word.phrases),
+        "wake_word.phrases must not be empty when wake word detection is enabled",
+    )
+    require(
+        all(any(char.isalnum() for char in phrase) for phrase in config.wake_word.phrases),
+        "wake_word.phrases must contain words or numbers",
+    )
     number("wake_word.session_timeout_s", config.wake_word.session_timeout_s, 0.001)
     # The current VAD, Smart Turn, and AEC paths share this input format.
     require(config.audio.sample_rate == 16000, "audio.sample_rate must be 16000")
     require(config.audio.chunk_samples == 512, "audio.chunk_samples must be 512")
     require(config.audio.silence_ms > 0, "audio.silence_ms must be > 0")
-    require(config.audio.barge_in_threshold_chunks > 0, "audio.barge_in_threshold_chunks must be > 0")
-    require(1 <= config.audio.queue_max_chunks <= 4096, "audio.queue_max_chunks must be between 1 and 4096")
-    require(1 <= config.audio.recording_queue_max_chunks <= 4096, "audio.recording_queue_max_chunks must be between 1 and 4096")
-    require(config.audio.barge_in_threshold_chunks <= config.audio.queue_max_chunks,
-            "audio.barge_in_threshold_chunks must not exceed audio.queue_max_chunks")
+    require(
+        config.audio.barge_in_threshold_chunks > 0, "audio.barge_in_threshold_chunks must be > 0"
+    )
+    require(
+        1 <= config.audio.queue_max_chunks <= 4096,
+        "audio.queue_max_chunks must be between 1 and 4096",
+    )
+    require(
+        1 <= config.audio.recording_queue_max_chunks <= 4096,
+        "audio.recording_queue_max_chunks must be between 1 and 4096",
+    )
+    require(
+        config.audio.barge_in_threshold_chunks <= config.audio.queue_max_chunks,
+        "audio.barge_in_threshold_chunks must not exceed audio.queue_max_chunks",
+    )
     number("audio.max_utterance_s", config.audio.max_utterance_s, 1, 120)
     number("audio.max_recording_s", config.audio.max_recording_s, 1, 86400)
     number("audio.playback_reference_s", config.audio.playback_reference_s, 1, 30)
@@ -473,22 +501,32 @@ def validate_config(config: AppConfig) -> AppConfig:
     number("audio.reconnect_delay_s", config.audio.reconnect_delay_s, 0.1, 30)
     for name in ("input_device", "output_device"):
         value = getattr(config.audio, name)
-        require(value is None or isinstance(value, str) and bool(value.strip()) and len(value) <= 512,
-                f"audio.{name} must be a nonempty device name or omitted")
+        require(
+            value is None or isinstance(value, str) and bool(value.strip()) and len(value) <= 512,
+            f"audio.{name} must be a nonempty device name or omitted",
+        )
     number("runtime.turn_timeout_s", config.runtime.turn_timeout_s, 1, 600)
     number("runtime.endpoint_timeout_s", config.runtime.endpoint_timeout_s, 0.1, 30)
     number("runtime.startup_timeout_s", config.runtime.startup_timeout_s, 1, 1800)
     number("audio.tts_speed", config.audio.tts_speed, 0.001)
     require(bool(config.audio.voice.strip()), "audio.voice must not be blank")
-    require(config.audio.tts_backend in {'onnx', 'mlx'}, "audio.tts_backend must be onnx or mlx")
-    if config.audio.tts_backend == 'mlx':
+    require(config.audio.tts_backend in {"onnx", "mlx"}, "audio.tts_backend must be onnx or mlx")
+    if config.audio.tts_backend == "mlx":
         import re
-        require(bool(config.audio.mlx_kokoro_model.strip()), "MLX trial requires audio.mlx_kokoro_model (local directory)")
-        require(bool(re.fullmatch(r'[ab][fm]_[a-z0-9_]+', config.audio.voice)),
-                "MLX trial supports named American/British English voices only")
+
+        require(
+            bool(config.audio.mlx_kokoro_model.strip()),
+            "MLX trial requires audio.mlx_kokoro_model (local directory)",
+        )
+        require(
+            bool(re.fullmatch(r"[ab][fm]_[a-z0-9_]+", config.audio.voice)),
+            "MLX trial supports named American/British English voices only",
+        )
         number("audio.tts_speed", config.audio.tts_speed, 0.5, 2.0)
-    require(config.models.chat_provider in {"local", "bedrock"},
-            "models.chat_provider must be 'local' or 'bedrock'")
+    require(
+        config.models.chat_provider in {"local", "bedrock"},
+        "models.chat_provider must be 'local' or 'bedrock'",
+    )
     require(bool(config.models.chat_model.strip()), "models.chat_model must not be blank")
     require(bool(config.models.stt_language.strip()), "models.stt_language must not be blank")
     number("models.temperature", config.models.temperature, 0, 2)
@@ -496,9 +534,14 @@ def validate_config(config: AppConfig) -> AppConfig:
     require(config.memory.consolidate_every_turns > 0, "memory.consolidate_every_turns must be > 0")
     require(config.logging.max_bytes >= 1024, "logging.max_bytes must be >= 1024")
     require(config.logging.backup_count >= 0, "logging.backup_count must be >= 0")
-    require(config.knowledge.backend in {"keyword", "vector", "hybrid"},
-            "knowledge.backend must be 'keyword', 'vector', or 'hybrid'")
-    require(bool(config.knowledge.embedding_model.strip()), "knowledge.embedding_model must not be blank")
+    require(
+        config.knowledge.backend in {"keyword", "vector", "hybrid"},
+        "knowledge.backend must be 'keyword', 'vector', or 'hybrid'",
+    )
+    require(
+        bool(config.knowledge.embedding_model.strip()),
+        "knowledge.embedding_model must not be blank",
+    )
     require(config.knowledge.max_matches > 0, "knowledge.max_matches must be > 0")
     require(config.knowledge.snippet_char_limit > 0, "knowledge.snippet_char_limit must be > 0")
     number("knowledge.min_score", config.knowledge.min_score, 0)

@@ -11,14 +11,13 @@ from types import ModuleType
 from typing import Any
 
 from arietta_voice.config import AppConfig
-from arietta_voice.private_config import update_private_section
 from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.model_tools.base import ModelInvokedTool, ModelToolContext
 from arietta_voice.model_tools.registry import ModelToolRegistry
 from arietta_voice.model_tools.registry import _tool_module_name as _model_tool_module_name
+from arietta_voice.private_config import update_private_section
 from arietta_voice.tools.base import AssistantTool, ToolContext
 from arietta_voice.tools.registry import _tool_module_name
-
 
 EXCLUDED_TOOL_MODULES = {"__init__", "base", "registry", "tool_template"}
 EXCLUDED_MODEL_TOOL_MODULES = {"__init__", "base", "registry", "tool_template"}
@@ -92,7 +91,9 @@ class ToolAdmin:
         return sorted(names)
 
     def inspect_tool(self, tool_name: str) -> dict[str, Any]:
-        return _inspect_tool_source(self.tools_directory, tool_name, self.config.tools.enabled, _tool_module_name)
+        return _inspect_tool_source(
+            self.tools_directory, tool_name, self.config.tools.enabled, _tool_module_name
+        )
 
     def validate_tool(self, tool_name: str) -> dict[str, Any]:
         record = {
@@ -252,7 +253,9 @@ class ToolAdmin:
             module = importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
             if exc.name == module_name:
-                raise ValueError(f"Tool '{tool_name}' could not be imported from '{module_name}'.") from exc
+                raise ValueError(
+                    f"Tool '{tool_name}' could not be imported from '{module_name}'."
+                ) from exc
             raise
         module_file = getattr(module, "__file__", None)
         return module, module_name, Path(module_file) if module_file else None
@@ -299,7 +302,12 @@ class ModelToolAdmin:
         self.tools_directory = tools_directory or Path(__file__).resolve().parent / "model_tools"
 
     def inspect_tool(self, tool_name: str) -> dict[str, Any]:
-        return _inspect_tool_source(self.tools_directory, tool_name, self.config.model_tools.enabled, _model_tool_module_name)
+        return _inspect_tool_source(
+            self.tools_directory,
+            tool_name,
+            self.config.model_tools.enabled,
+            _model_tool_module_name,
+        )
 
     def inventory(self) -> dict[str, Any]:
         enabled = _unique_tool_names(self.config.model_tools.enabled)
@@ -564,7 +572,9 @@ class ModelToolAdmin:
     def _create_tool(self, module: ModuleType, tool_name: str) -> ModelInvokedTool | None:
         factory = getattr(module, "create_tool", None)
         if not callable(factory):
-            raise ValueError(f"Model tool '{tool_name}' must expose a callable create_tool(context).")
+            raise ValueError(
+                f"Model tool '{tool_name}' must expose a callable create_tool(context)."
+            )
 
         tool = factory(
             ModelToolContext(
@@ -594,16 +604,27 @@ class ModelToolAdmin:
         update_private_section(path, "model_tools", {"enabled": enabled})
 
 
-def _inspect_tool_source(directory: Path, tool_name: str, enabled, module_name_for) -> dict[str, Any]:
+def _inspect_tool_source(
+    directory: Path, tool_name: str, enabled, module_name_for
+) -> dict[str, Any]:
     """Read syntax/literal metadata only. Never import plugins (including parents)."""
     normalized = _normalize_configured_tool_name(tool_name)
     record = {
-        "configured_name": normalized, "enabled": normalized in enabled,
-        "available": False, "valid": None, "active": None,
-        "validation": "not_run", "syntax_valid": None,
-        "module": module_name_for(normalized), "file": None, "class": None,
-        "tool_name": None, "description": None, "arguments_example": None,
-        "source": "external" if "." in normalized else "local", "error": None,
+        "configured_name": normalized,
+        "enabled": normalized in enabled,
+        "available": False,
+        "valid": None,
+        "active": None,
+        "validation": "not_run",
+        "syntax_valid": None,
+        "module": module_name_for(normalized),
+        "file": None,
+        "class": None,
+        "tool_name": None,
+        "description": None,
+        "arguments_example": None,
+        "source": "external" if "." in normalized else "local",
+        "error": None,
     }
     if "." in normalized:
         # find_spec can import an external package's __init__; defer even
@@ -614,21 +635,37 @@ def _inspect_tool_source(directory: Path, tool_name: str, enabled, module_name_f
         record.update(available=True, file=str(path))
         tree = ast.parse(path.read_text(encoding="utf-8"))
         record["syntax_valid"] = True
-        if not any(isinstance(node, ast.FunctionDef) and node.name == "create_tool" for node in tree.body):
-            raise ValueError("No top-level create_tool factory found; explicit validation is required")
+        if not any(
+            isinstance(node, ast.FunctionDef) and node.name == "create_tool" for node in tree.body
+        ):
+            raise ValueError(
+                "No top-level create_tool factory found; explicit validation is required"
+            )
         for node in tree.body:
             if not isinstance(node, ast.ClassDef):
                 continue
             for item in node.body:
-                targets = item.targets if isinstance(item, ast.Assign) else [item.target] if isinstance(item, ast.AnnAssign) else []
+                targets = (
+                    item.targets
+                    if isinstance(item, ast.Assign)
+                    else [item.target]
+                    if isinstance(item, ast.AnnAssign)
+                    else []
+                )
                 for target in targets:
-                    if not isinstance(target, ast.Name) or target.id not in {"name", "description", "arguments_example"}:
+                    if not isinstance(target, ast.Name) or target.id not in {
+                        "name",
+                        "description",
+                        "arguments_example",
+                    }:
                         continue
                     try:
                         value = ast.literal_eval(item.value)
                     except (ValueError, TypeError):
                         continue
-                    if (target.id == "arguments_example" and isinstance(value, dict)) or (target.id != "arguments_example" and isinstance(value, str)):
+                    if (target.id == "arguments_example" and isinstance(value, dict)) or (
+                        target.id != "arguments_example" and isinstance(value, str)
+                    ):
                         record["tool_name" if target.id == "name" else target.id] = value
                         record["class"] = node.name
     except (OSError, ValueError, SyntaxError) as exc:
@@ -703,7 +740,7 @@ def _render_tool_template(*, module_name: str, trigger_phrase: str, response: st
     trigger_literal = json.dumps(trigger_phrase, ensure_ascii=True)
     response_literal = json.dumps(response, ensure_ascii=True)
     name_literal = json.dumps(module_name, ensure_ascii=True)
-    return f'''from __future__ import annotations
+    return f"""from __future__ import annotations
 
 from arietta_voice.models import ToolResponse
 from arietta_voice.tools.base import ToolContext
@@ -725,7 +762,7 @@ class {class_name}:
 def create_tool(context: ToolContext) -> {class_name}:
     del context
     return {class_name}()
-'''
+"""
 
 
 def _render_model_tool_template(
@@ -740,7 +777,7 @@ def _render_model_tool_template(
     description_literal = json.dumps(description, ensure_ascii=True)
     arguments_literal = json.dumps(arguments_example, ensure_ascii=True, indent=4)
     context_literal = json.dumps(followup_context, ensure_ascii=True)
-    return f'''from __future__ import annotations
+    return f"""from __future__ import annotations
 
 import json
 
@@ -768,4 +805,4 @@ class {class_name}:
 def create_tool(context: ModelToolContext) -> {class_name}:
     del context
     return {class_name}()
-'''
+"""
