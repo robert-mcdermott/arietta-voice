@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from arietta_voice.config import default_config
-from scripts import hardware_validation as validation
+from bench import hardware_validation as validation
 
 
 def test_test_profile_preserves_source_settings_and_excludes_private_context(tmp_path):

@@ -28,12 +28,12 @@ from arietta_voice.config import load_config
 from arietta_voice.models import AssistantState
 from arietta_voice.runtime import AriettaVoiceRuntime
 from arietta_voice.runtime_status import read_runtime_status
-from scripts.hardware_validation import (
+from bench.hardware_validation import (
     apply_trial_overrides, collect_environment, isolated_config, live_gates,
     protected_fingerprints, resident_sample, rss_sample, stop_process,
     summarize_events, summarize_resources, validation_lock, write_report,
 )
-from scripts.latency_baseline import QUESTIONS, SEED, load_shared_fixtures, quantiles
+from bench.latency_baseline import QUESTIONS, SEED, load_shared_fixtures, quantiles
 
 MAX_TURNS = 5000
 IDLE_SECONDS = (1, 1, 2, 5, 1, 1, 2, 10, 1, 1)
@@ -370,7 +370,7 @@ def main():
         process = multiprocessing.get_context('spawn').Process(target=run_child,
             args=(config, directory, args.fixtures, args.minutes, args.check_minutes, args.automated_only, args.skip_before))
         samples, host, error = [], [], None
-        from scripts.host_state import HostState
+        from bench.host_state import HostState
         monitor = HostState()
         started, last_phase, last_print = time.monotonic(), None, 0
         process.start()

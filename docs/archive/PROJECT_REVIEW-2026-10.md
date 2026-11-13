@@ -6,8 +6,8 @@ highest-value work is to protect personal data, correct runtime behavior,
 and reduce the delay before the first spoken answer. Keep the local default
 and the existing component boundaries while introducing measured upgrades.
 
-The implementation sequence and release gates are in [ROADMAP.md](ROADMAP.md).
-App versioning is described in [RELEASING.md](RELEASING.md).
+The implementation sequence and release gates are in [ROADMAP.md](ROADMAP-2026-10.md).
+App versioning is described in [docs/releasing.md](../releasing.md).
 
 This review records the baseline findings, including bugs subsequently fixed.
 See the Phase 1 implementation status in the roadmap and the Unreleased
@@ -74,11 +74,11 @@ two-file allowlist; this gives protection beyond a local ignore convention.
 
 There are separate privacy issues to fix in the application:
 
-- [`runtime.py`](src/arietta_voice/runtime.py), `process_utterance`, logs every
+- [`runtime.py`](../../src/arietta_voice/runtime.py), `process_utterance`, logs every
   transcription before checking the wake word and also logs wake misses.
   Passive speech can therefore persist in JSONL and process logs. Make text
   logging opt-in, omit passive transcripts from status, and add retention limits.
-- [`api.py`](src/arietta_voice/api.py), `public_health`, returns the same detailed
+- [`api.py`](../../src/arietta_voice/api.py), `public_health`, returns the same detailed
   payload as authenticated health. That payload includes runtime transcripts,
   assistant responses, paths, and diagnostics. A synthetic check confirmed that
   `/health` returns transcript text without credentials. Return only minimal
@@ -93,8 +93,8 @@ There are separate privacy issues to fix in the application:
 
 ### 2 Make console privileges explicit
 
-**Priority: immediate.** [`api.py`](src/arietta_voice/api.py) falls back to
-`admin` / `password`, while [`tool_admin.py`](src/arietta_voice/tool_admin.py)
+**Priority: immediate.** [`api.py`](../../src/arietta_voice/api.py) falls back to
+`admin` / `password`, while [`tool_admin.py`](../../src/arietta_voice/tool_admin.py)
 allows source editing and executes modules during validation and inventory.
 Console access therefore grants code execution as the assistant's OS user.
 
@@ -120,9 +120,9 @@ correctness issues with clear regression tests:
 
 ### 4 Add bounded work and dependable recovery
 
-**Priority: foundation release.** [`audio.py`](src/arietta_voice/audio.py) has
+**Priority: foundation release.** [`audio.py`](../../src/arietta_voice/audio.py) has
 an unbounded microphone queue; recordings accumulate in RAM until exit.
-[`runtime.py`](src/arietta_voice/runtime.py) has no maximum utterance duration,
+[`runtime.py`](../../src/arietta_voice/runtime.py) has no maximum utterance duration,
 and inference blocks the listening loop. Repeated negative endpoint scores can
 keep growing the speech buffer. Warmup also occurs before the runtime's
 main error/final-status handling.
@@ -174,7 +174,7 @@ macOS installation, false activations, and model licensing.
 ### 7 Fix retrieval correctness before buying more model capacity
 
 **Priority: foundation fix, then retrieval release.**
-[`BgeTextEmbedder`](src/arietta_voice/knowledge.py) uses mean pooling, whereas
+[`BgeTextEmbedder`](../../src/arietta_voice/knowledge.py) uses mean pooling, whereas
 the BGE model's reference Transformers integration uses the first token, CLS,
 then normalization. Correct the implementation against a small reference
 fixture; bump `INDEX_VERSION`, record pooling and model revision, and rebuild

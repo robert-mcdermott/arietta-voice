@@ -5,7 +5,7 @@ import queue
 import numpy as np
 import pytest
 
-from scripts.latency_baseline import (
+from bench.latency_baseline import (
     ReplayMicrophone, BenchmarkComplete, BenchmarkStop, case_order,
     finish_row, summarize_turns,
 )
@@ -39,7 +39,7 @@ def test_conversation_history_is_retained_within_groups_only():
 def test_shared_fixtures_require_matching_corpus_and_hash(tmp_path):
     import hashlib
     import json
-    from scripts.latency_baseline import QUESTIONS, load_shared_fixtures
+    from bench.latency_baseline import QUESTIONS, load_shared_fixtures
     path = tmp_path/'fixtures.npz'
     np.savez(path, **{f'q{i}':np.ones(512,dtype=np.float32) for i in range(len(QUESTIONS))})
     meta = {'questions':list(QUESTIONS), 'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}

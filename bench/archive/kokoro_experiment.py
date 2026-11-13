@@ -1,7 +1,7 @@
 """Opt-in Kokoro comparison: synthetic text, local assets, no app config or audio devices.
 
 Use the locked project environment for ONNX and a separate pinned MLX environment.
-See evals/KOKORO_EXPERIMENT.md for setup, metric boundaries and listening protocol.
+See docs/archive/experiments/KOKORO_EXPERIMENT.md for setup, metric boundaries and listening protocol.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import sys
 import time
 import wave
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 CASES = (
     ('acknowledgement', "Yes? I'm here. How can I help?"),
     ('answer', 'The answer is six. Three plus three equals six.'),

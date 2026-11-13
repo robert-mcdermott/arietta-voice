@@ -1,6 +1,6 @@
 # Speaker-output underflow investigation
 
-Follow-up: [forced-gap playback/AEC validation](FORCED_GAP_VALIDATION.md) exercises
+Follow-up: [forced-gap playback/AEC validation](../../../evals/FORCED_GAP_VALIDATION.md) exercises
 live silence padding. The resumed guided session passed uninterrupted playback,
 during-gap and after-gap interruption, recovery and goodbye checks with no
 underflows, alignment resets or capture drops.
@@ -49,7 +49,7 @@ or host activity caused it.
 
 ## Matched native probes
 
-`scripts/output_underflow_probe.py` runs in the existing MLX trial environment
+`bench/archive/output_underflow_probe.py` runs in the existing MLX trial environment
 with all four models initialized and the Jabra output selected from copied
 settings. It opens no microphone. The disposable profile excludes knowledge,
 memory, tools, private persona and credentials. Content logging and recordings
@@ -134,12 +134,12 @@ Stop the normal runtime and use a fresh ignored output directory:
 
 ```sh
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/output_underflow_probe.py \
+  bench/archive/output_underflow_probe.py \
   --output tmp/output-underflow-probe-new \
   --model tmp/kokoro-experiment/Kokoro-82M-bf16 --audible
 
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/hardware_validation.py --mode live --minutes 3 \
+  bench/hardware_validation.py --mode live --minutes 3 \
   --tts-backend mlx \
   --mlx-kokoro-model tmp/kokoro-experiment/Kokoro-82M-bf16 --host-metrics
 ```

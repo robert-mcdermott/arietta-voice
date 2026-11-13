@@ -16,8 +16,7 @@ import zipfile
 
 PUBLIC_KNOWLEDGE = {"knowledge/README.md", "knowledge/getting-started.md"}
 PUBLIC_CONFIG = {
-    "config/arietta_voice.toml", "config/arietta_voice.toml.dist",
-    "config/arietta_voice.toml.example", "config/SOUL.md", "config/MEMORY.md.example",
+    "config/arietta_voice.toml", "config/SOUL.md", "config/MEMORY.md.example",
 }
 PRIVATE_DIRECTORIES = {"logs", ".knowledge_index", ".private-backups", ".venv", "tmp", ".aws"}
 

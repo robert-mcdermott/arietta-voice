@@ -11,9 +11,9 @@ from pathlib import Path
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.kokoro_experiment import CASES, FIRST_TEXT, ROOT, measure, run_bounded, write_json
-from scripts.latency_baseline import quantiles, summarize_turns
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bench.archive.kokoro_experiment import CASES, FIRST_TEXT, ROOT, measure, run_bounded, write_json
+from bench.latency_baseline import quantiles, summarize_turns
 
 ENV_KEYS = ('ONNX_PROVIDER', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
             'VECLIB_MAXIMUM_THREADS', 'TOKENIZERS_PARALLELISM')
@@ -72,7 +72,7 @@ def probe(args):
     import asyncio
     from arietta_voice.assets import cache_root
     from arietta_voice.tts import KokoroTextToSpeech
-    from scripts.hardware_validation import isolated_config, validation_lock
+    from bench.hardware_validation import isolated_config, validation_lock
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', HF_HUB_DISABLE_IMPLICIT_TOKEN='1')
     with validation_lock(ROOT/'tmp/hardware-validation'):
         for name in ('kokoro-v1.0.onnx', 'voices-v1.0.bin'):

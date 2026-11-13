@@ -1,6 +1,6 @@
 # Arietta Voice
 
-![Arietta Logo](arietta_logo.png)
+![Arietta Logo](assets/arietta_logo.png)
 
 Arietta Voice is a local-first framework for building a wake-word-driven voice
 assistant on Apple Silicon Macs. It combines local speech-to-text,
@@ -18,11 +18,11 @@ The default assistant persona is named `Bridget`, and the default wake word is
 also `Bridget`. Both are easy to change in your private
 `config/arietta_voice.local.toml` after running `uv run arietta-voice config-init`.
 
-For a detailed customization walkthrough, see [GETTING_STARTED.md](./GETTING_STARTED.md).
+For a detailed customization walkthrough, see [docs/getting-started.md](docs/getting-started.md).
 
-For planned improvements, see [ROADMAP.md](./ROADMAP.md). The
-[release guide](./RELEASING.md) explains app versioning, and
-[CHANGELOG.md](./CHANGELOG.md) records user-visible changes.
+For planned improvements, see [ROADMAP.md](ROADMAP.md). The
+[release guide](docs/releasing.md) explains app versioning, and
+[CHANGELOG.md](CHANGELOG.md) records user-visible changes.
 
 ## What This Project Includes
 
@@ -132,7 +132,7 @@ untrusted Host headers and cross-origin browser mutations, and marks responses
 non-cacheable. These controls do not provide TLS or a multi-user permission model.
 
 **Screenshot of the Arietta admin console's tool managment panel:**
-![arietta console](arietta_console.png)
+![arietta console](assets/arietta_console.png)
 
 
 The voice runtime and web console can run as separate processes. For example,
@@ -174,7 +174,7 @@ For a headless Mac mini or other always-on Mac, use macOS `launchd` to start
 the voice runtime and admin console automatically after reboot/login. Because
 the voice runtime uses microphone/audio access, run it as a user LaunchAgent
 rather than a root LaunchDaemon. See [Run Automatically on macOS With
-launchd](./GETTING_STARTED.md#9-run-automatically-on-macos-with-launchd) for a
+launchd](docs/getting-started.md#9-run-automatically-on-macos-with-launchd) for a
 step-by-step setup.
 
 The Knowledge page can list, create, edit, delete, search, and re-index local
@@ -211,12 +211,14 @@ For actual microphone/speaker checks and a bounded local soak, follow
 isolated synthetic persona and preserves private settings and knowledge.
 
 For repeatable stage timings and 100 warm no-tool turns on the local Mac, see
-[the Phase 2 latency baseline](evals/LATENCY_BASELINE.md). It uses paced synthetic
+[the latency baseline](evals/LATENCY_BASELINE.md). It uses paced synthetic
 input and real speaker output, with an explicit software timing boundary.
 
-For the isolated Moonshine 0.1.5 streaming comparison and repeatable commands,
-see [the upgrade experiment](evals/MOONSHINE_EXPERIMENT.md). It uses synthetic
-WAV files and a separate environment; production remains on locked 0.0.54.
+The benchmark harnesses live in [`bench/`](bench/README.md). Concluded
+experiments (Kokoro ONNX/MLX, Moonshine streaming, ONNX environment and audio
+underflow investigations) are kept for reference under
+[`docs/archive/experiments/`](docs/archive/experiments/) with their harnesses
+in `bench/archive/`; they are not part of the default test run.
 
 ## Wake Word Behavior
 
@@ -228,28 +230,11 @@ The initial wake-word implementation is local and transcript-based:
 - If the wake utterance also contains a command, like `Bridget what time is it`, the assistant handles that in the same turn.
 - If you only say `Bridget`, the assistant answers with the configured acknowledgement and keeps listening for the follow-up.
 
-This approach keeps the system simple and fully local while reusing the existing STT/VAD pipeline. It is also deliberately extensible: the wake-word logic lives in [`src/arietta_voice/wake.py`](./src/arietta_voice/wake.py), so a future acoustic hotword backend can be added without rewriting the runtime.
+This approach keeps the system simple and fully local while reusing the existing STT/VAD pipeline. It is also deliberately extensible: the wake-word logic lives in [`src/arietta_voice/wake.py`](src/arietta_voice/wake.py), so a future acoustic hotword backend can be added without rewriting the runtime.
 
 ## Configuration
 
-The isolated [ONNX/MLX Kokoro comparison](evals/KOKORO_EXPERIMENT.md) records TTS
-latency, resource use and a blinded listening protocol. Its candidate environment
-and synthetic audio stay under ignored `tmp/`; production continues using ONNX.
-An [opt-in MLX integration trial](evals/KOKORO_INTEGRATION.md) now supports the
-shared inference worker and compares conversation latency and memory with the
-other models resident. Use its separate environment and temporary CLI overrides;
-the standard installation still defaults to ONNX.
-The [ONNX environment investigation](evals/ONNX_ENVIRONMENT_INVESTIGATION.md)
-checks the production/trial latency gap with repeated conversations and native
-stage probes; the earlier slowdown did not reproduce.
-The [100-turn counterbalanced comparison](evals/KOKORO_100_TURN_COMPARISON.md)
-rotates production ONNX, trial ONNX and trial MLX through all six execution
-orders, with read-only CPU, thermal, power and memory-pressure monitoring.
-The [MLX live and shared-model soak protocol](evals/MLX_LIVE_SOAK.md) adds
-operator playback/AEC/interruption checks and continuous model-residency and
-memory monitoring in the isolated trial environment.
-
-The tracked [`config/arietta_voice.toml`](./config/arietta_voice.toml) provides
+The tracked [`config/arietta_voice.toml`](config/arietta_voice.toml) provides
 shared defaults. Create private settings and a private persona before customizing:
 
 ```bash
@@ -278,7 +263,7 @@ The most important editable files are:
 - `config/arietta_voice.local.toml`: private configuration overrides
 - `config/SOUL.local.md`: private system prompt/personality
 - `config/MEMORY.md`: optional long-lived memory file, created automatically when memory is enabled
-- [`knowledge`](./knowledge): your editable local knowledge articles
+- [`knowledge`](knowledge): your editable local knowledge articles
 
 The main config sections are:
 
@@ -389,7 +374,7 @@ resuming listening or starting playback; voice barge-in still begins with output
 not during initial generation. Endpoint decisions retain capture because an
 unfinished utterance may continue. See
 [AEC and interruption validation](evals/AEC_VALIDATION.md) for evidence and limits.
-The [capture/alignment investigation](evals/CAPTURE_ALIGNMENT_INVESTIGATION.md)
+The [capture/alignment investigation](docs/archive/experiments/CAPTURE_ALIGNMENT_INVESTIGATION.md)
 documents the startup/wait fixes and isolated MLX repeat.
 
 During gaps after speech begins, the player feeds bounded 20 ms silence blocks
@@ -397,7 +382,7 @@ into available device capacity and includes them in the AEC reference. It polls
 the producer every 10 ms without adding a startup prebuffer. Genuine output
 underflows still reset alignment. Playback events include bounded write/wait/
 capture-poll timing metadata to help distinguish generation gaps from scheduling
-stalls. See the [output-underflow investigation](evals/OUTPUT_UNDERFLOW_INVESTIGATION.md)
+stalls. See the [output-underflow investigation](docs/archive/experiments/OUTPUT_UNDERFLOW_INVESTIGATION.md)
 for matched device probes, live checks and limitations.
 The opt-in [forced-gap live protocol](evals/FORCED_GAP_VALIDATION.md) exercises
 the same player with microphone/AEC active and checks interruption during and
@@ -611,17 +596,17 @@ Edit `config/SOUL.local.md`. Keep it focused and durable. Project-specific facts
 
 ### Add knowledge
 
-Add markdown files to [`knowledge`](./knowledge). Copy the template at
-[`examples/knowledge-template.md`](./examples/knowledge-template.md) into a new
+Add markdown files to [`knowledge`](knowledge). Copy the template at
+[`examples/knowledge-template.md`](examples/knowledge-template.md) into a new
 file there. Only `knowledge/README.md` and `knowledge/getting-started.md` are
 tracked by default; other knowledge files and subdirectories are ignored.
 Keep personal content in new files, since edits to the two starter documents
-remain tracked. See the [knowledge README](./knowledge/README.md) for existing
+remain tracked. See the [knowledge README](knowledge/README.md) for existing
 tracked files and custom knowledge directory locations.
 
 ### Add a deterministic tool
 
-Copy [`src/arietta_voice/tools/tool_template.py`](./src/arietta_voice/tools/tool_template.py) to a new module in the same directory, implement `maybe_handle(...)`, then add the module name to `[tools].enabled`.
+Copy [`src/arietta_voice/tools/tool_template.py`](src/arietta_voice/tools/tool_template.py) to a new module in the same directory, implement `maybe_handle(...)`, then add the module name to `[tools].enabled`.
 
 Use deterministic tools when:
 
@@ -633,7 +618,7 @@ The built-in `local_time` tool is the canonical example.
 
 ### Add a model-requested tool
 
-Copy [`src/arietta_voice/model_tools/tool_template.py`](./src/arietta_voice/model_tools/tool_template.py) to a new module in the same directory, implement `invoke(...)`, then add the module name to `[model_tools].enabled`.
+Copy [`src/arietta_voice/model_tools/tool_template.py`](src/arietta_voice/model_tools/tool_template.py) to a new module in the same directory, implement `invoke(...)`, then add the module name to `[model_tools].enabled`.
 
 Use model-requested tools when:
 
@@ -680,14 +665,19 @@ The current repo is a strong foundation for a home assistant or office assistant
 
 ```text
 .
-├── config/                     # Configuration files, SOUL definitions, and memory examples
+├── assets/                     # Logo and screenshots
+├── bench/                      # Latency, hardware and soak harnesses (archive/ holds concluded experiments)
+├── config/                     # Shared config template, default persona, memory example
+├── docs/                       # Getting started, architecture, releasing, archived plans and experiments
+├── evals/                      # Synthetic evaluation corpus and measured baselines
 ├── knowledge/                  # User-editable Markdown knowledge base
+├── scripts/                    # Release checks
 ├── src/
 │   └── arietta_voice/
 │       ├── tools/              # Deterministic tools (directly invoked)
 │       ├── model_tools/        # Tools invoked by model reasoning
 │       └── ...                 # Core runtime, models, audio, and knowledge handling
-├── tests/                      # Unit tests for config, tools, knowledge, wake word, and model tooling
+└── tests/                      # Unit and process regression tests
 ```
 
 ## Notes

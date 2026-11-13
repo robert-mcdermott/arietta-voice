@@ -157,7 +157,7 @@ Kokoro assets. Stop the normal voice runtime. From the repository root:
 
 ```bash
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/hardware_validation.py --mode live --minutes 5 \
+  bench/hardware_validation.py --mode live --minutes 5 \
   --tts-backend mlx \
   --mlx-kokoro-model tmp/kokoro-experiment/Kokoro-82M-bf16 \
   --host-metrics
@@ -168,7 +168,7 @@ checks. Once that process exits, run:
 
 ```bash
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/hardware_validation.py --minutes 15 \
+  bench/hardware_validation.py --minutes 15 \
   --tts-backend mlx \
   --mlx-kokoro-model tmp/kokoro-experiment/Kokoro-82M-bf16 \
   --fixtures tmp/kokoro-integration/fixtures.npz \

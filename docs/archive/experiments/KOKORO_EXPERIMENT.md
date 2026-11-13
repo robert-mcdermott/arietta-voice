@@ -13,7 +13,7 @@ virtual environment; the app dependency manifest and lockfile are unchanged.
   API and eSpeak setup as the production adapter, with default CPU execution.
 - Candidate: `mlx-audio==0.5.8`, `mlx==0.31.1`, `misaki[en]==0.9.4` and
   `en_core_web_sm==3.8.0`, with all resolved packages captured in
-  [candidate requirements](kokoro_candidate_requirements.txt). Both environments
+  [candidate requirements](../../../bench/archive/kokoro_candidate_requirements.txt). Both environments
   use Python 3.13.3 and NumPy 2.4.4. The English spaCy model is installed explicitly
   before running, preventing Misaki's automatic package installation path.
 - Model: `mlx-community/Kokoro-82M-bf16`, revision
@@ -76,7 +76,7 @@ or installing into Arietta's `.venv`:
 ```bash
 uv venv --python 3.13 tmp/kokoro-experiment/mlx-venv
 uv pip install --python tmp/kokoro-experiment/mlx-venv/bin/python \
-  -r evals/kokoro_candidate_requirements.txt
+  -r bench/archive/kokoro_candidate_requirements.txt
 ```
 
 Download only `config.json`, `kokoro-v1_0.safetensors` and
@@ -100,13 +100,13 @@ PY
 ```
 
 ```bash
-uv run --locked scripts/kokoro_experiment.py --backend onnx \
+uv run --locked bench/archive/kokoro_experiment.py --backend onnx \
   --model /absolute/path/to/kokoro-v1.0.onnx \
   --voices /absolute/path/to/voices-v1.0.bin \
   --output tmp/kokoro-experiment/1-onnx.json --repeats 3
 
 uv run --no-project --python tmp/kokoro-experiment/mlx-venv/bin/python \
-  scripts/kokoro_experiment.py --backend mlx \
+  bench/archive/kokoro_experiment.py --backend mlx \
   --model tmp/kokoro-experiment/Kokoro-82M-bf16 \
   --output tmp/kokoro-experiment/2-mlx.json --repeats 3
 ```
@@ -169,7 +169,7 @@ Local final reports, raw WAVs and environment metadata are in
 `tmp/kokoro-experiment/final/`. Rebuild the blinded listening pairs with:
 
 ```bash
-uv run --locked -m scripts.kokoro_listening \
+uv run --locked -m bench.archive.kokoro_listening \
   --onnx tmp/kokoro-experiment/final/1-onnx.json \
   --mlx tmp/kokoro-experiment/final/2-mlx.json \
   --output tmp/kokoro-experiment/listening-new

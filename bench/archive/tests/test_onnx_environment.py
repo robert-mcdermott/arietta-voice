@@ -3,8 +3,8 @@ from copy import deepcopy
 
 import pytest
 
-from scripts.latency_baseline import finish_row
-from scripts.onnx_environment import StageTimer, compare_blocks
+from bench.latency_baseline import finish_row
+from bench.archive.onnx_environment import StageTimer, compare_blocks
 
 
 def blocks():

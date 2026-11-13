@@ -121,7 +121,7 @@ normal runtime, then run from the repository root:
 
 ```sh
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/hardware_validation.py --mode live --minutes 5 \
+  bench/hardware_validation.py --mode live --minutes 5 \
   --tts-backend mlx \
   --mlx-kokoro-model tmp/kokoro-experiment/Kokoro-82M-bf16 --host-metrics
 ```

@@ -56,7 +56,7 @@ of an eventual migration; the production environment remains compatible today.
 
 ## Protocol and timing boundaries
 
-`scripts/moonshine_experiment.py` generates ten fixed Kokoro `af_heart` fixtures:
+`bench/archive/moonshine_experiment.py` generates ten fixed Kokoro `af_heart` fixtures:
 wake word, inline command, ambient name mention, a question containing goodbye,
 farewell, three sentences, product names, technical jargon, numbers and silence.
 Fixtures are mono PCM16 at 16 kHz, with identical 250 ms pre-roll and one second
@@ -174,29 +174,29 @@ existing completed outputs are rejected. Downloads need internet access.
 uv venv --python 3.13.3 tmp/moonshine-0.1.5
 uv pip install --python tmp/moonshine-0.1.5/bin/python \
   'moonshine-voice==0.1.5' 'numpy==2.4.4'
-uv run --locked scripts/moonshine_experiment.py fixtures --output tmp/moonshine-fixtures
+uv run --locked bench/archive/moonshine_experiment.py fixtures --output tmp/moonshine-fixtures
 
 # Resolve the existing baseline cache without downloading or changing it.
-uv run --locked scripts/moonshine_experiment.py prepare \
+uv run --locked bench/archive/moonshine_experiment.py prepare \
   --output tmp/moonshine-baseline-model.json
 # Explicit candidate download goes only into this separate cache.
 uv run --no-project --python tmp/moonshine-0.1.5/bin/python python \
-  scripts/moonshine_experiment.py prepare --download \
+  bench/archive/moonshine_experiment.py prepare --download \
   --cache tmp/moonshine-assets-0.1.5 --output tmp/moonshine-candidate-model.json
 
-uv run --locked scripts/moonshine_experiment.py run \
+uv run --locked bench/archive/moonshine_experiment.py run \
   --model tmp/moonshine-baseline-model.json --fixtures tmp/moonshine-fixtures \
   --mode batch --output tmp/moonshine-results/baseline-batch.json
-uv run --locked scripts/moonshine_experiment.py run \
+uv run --locked bench/archive/moonshine_experiment.py run \
   --model tmp/moonshine-baseline-model.json --fixtures tmp/moonshine-fixtures \
   --mode stream --paced --output tmp/moonshine-results/baseline-stream.json
 
 uv run --no-project --python tmp/moonshine-0.1.5/bin/python python \
-  scripts/moonshine_experiment.py run --model tmp/moonshine-candidate-model.json \
+  bench/archive/moonshine_experiment.py run --model tmp/moonshine-candidate-model.json \
   --fixtures tmp/moonshine-fixtures --mode batch \
   --output tmp/moonshine-results/candidate-batch.json
 uv run --no-project --python tmp/moonshine-0.1.5/bin/python python \
-  scripts/moonshine_experiment.py run --model tmp/moonshine-candidate-model.json \
+  bench/archive/moonshine_experiment.py run --model tmp/moonshine-candidate-model.json \
   --fixtures tmp/moonshine-fixtures --mode stream --paced \
   --output tmp/moonshine-results/candidate-stream.json
 ```

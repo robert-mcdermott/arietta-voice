@@ -10,8 +10,8 @@ import wave
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.kokoro_experiment import CASES, ROOT, write_json, write_wav
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bench.archive.kokoro_experiment import CASES, ROOT, write_json, write_wav
 
 LISTENING_CASES = ('numbers', 'technical', 'paragraph')
 

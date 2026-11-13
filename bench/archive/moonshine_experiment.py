@@ -1,6 +1,6 @@
 """Opt-in, isolated Moonshine experiment. Never reads app config or opens audio devices.
 
-See evals/MOONSHINE_EXPERIMENT.md. Use the project's uv environment for fixtures
+See docs/archive/experiments/MOONSHINE_EXPERIMENT.md. Use the project's uv environment for fixtures
 and baseline; use a separate pinned uv environment for candidate commands.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ import sys
 import time
 import wave
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / 'src') not in sys.path:
     sys.path.insert(0, str(ROOT / 'src'))
 

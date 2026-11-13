@@ -1,7 +1,7 @@
 # Arietta Voice Versioning and Releases
 
 The existing application baseline is **0.1.0**. The only version declaration is
-`[project].version` in [pyproject.toml](pyproject.toml). Runtime code reads the
+`[project].version` in [pyproject.toml](../pyproject.toml). Runtime code reads the
 installed distribution metadata through `arietta_voice.__version__`; the CLI,
 FastAPI metadata, and existing `api_version` / `api.version` response fields use
 that value. These API fields report the application build, not a separately
@@ -52,7 +52,7 @@ does not automatically require a major version; user-visible compatibility does.
    uv version 0.2.0
    ```
 
-3. Move the appropriate entries from `Unreleased` in [CHANGELOG.md](CHANGELOG.md)
+3. Move the appropriate entries from `Unreleased` in [CHANGELOG.md](../CHANGELOG.md)
    into a version section with the actual release date. Include config/index
    migrations, changed models, and rollback notes where applicable.
 4. Run the release checks:
@@ -73,7 +73,7 @@ does not automatically require a major version; user-visible compatibility does.
    wheel/sdist versions and known private paths; still review public files for
    accidentally pasted personal content. Confirm the hosted CI run passes on
    the release commit. For model/audio/runtime changes, also run the
-   hardware and evaluation gates in [ROADMAP.md](ROADMAP.md). Passing unit tests
+   hardware and evaluation gates in [ROADMAP.md](../ROADMAP.md). Passing unit tests
    alone does not validate microphone operation or new model compatibility.
 5. Stage the intended files explicitly, inspect `git diff --cached`, and commit
    the version, lockfile, changelog, and release changes together. Tag the reviewed
@@ -97,7 +97,7 @@ is `0.1.1`; the roadmap's feature milestones begin at `0.2.0`.
 
 CI validates locked installs, unit/process tests, synthetic evaluations, builds,
 version consistency, and tracked-private-file allowlists on pushes and pull
-requests. See [evals/README.md](evals/README.md) for commands and limits. A future
+requests. See [evals/README.md](../evals/README.md) for commands and limits. A future
 tag-triggered release workflow
 should reject a tag that differs from package metadata and build from that exact
 commit. Keep publication separately authorized and retain a manual Apple Silicon

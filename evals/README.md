@@ -65,7 +65,7 @@ resets, and abort-before-producer-cleanup during cancellation/failure. The
 [AEC validation report](AEC_VALIDATION.md) records the separate native and live
 checks, observed queue drops/underflow, and acoustic measurement limits.
 
-The opt-in [Moonshine upgrade experiment](MOONSHINE_EXPERIMENT.md) runs real
+The opt-in [Moonshine upgrade experiment](../docs/archive/experiments/MOONSHINE_EXPERIMENT.md) runs real
 decoders in a separate environment against fixed synthetic WAV files. CI runs
 only its synthetic contracts: partial replacement, final snapshot deduplication,
 error/incomplete-final rejection, input/event limits, stream cleanup and process

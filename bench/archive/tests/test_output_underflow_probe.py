@@ -3,7 +3,7 @@ import asyncio
 import numpy as np
 import pytest
 
-from scripts import output_underflow_probe as probe
+from bench.archive import output_underflow_probe as probe
 
 
 @pytest.mark.parametrize('gap_s', [0., .6])

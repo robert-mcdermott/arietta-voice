@@ -246,7 +246,7 @@ Stop the normal voice runtime, keep the intended output device connected, and ru
 from the repository root:
 
 ```bash
-uv run --locked scripts/kokoro_comparison.py \
+uv run --locked bench/archive/kokoro_comparison.py \
   --fixtures tmp/kokoro-integration/fixtures.npz \
   --model tmp/kokoro-experiment/Kokoro-82M-bf16 \
   --output tmp/kokoro-comparison/new-100-turn-run

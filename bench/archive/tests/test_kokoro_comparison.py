@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from scripts.host_state import cpu_busy, parse_swap, parse_vm
-from scripts.kokoro_comparison import CONDITIONS, schedule, summarize
-from scripts.latency_baseline import case_order, finish_row, summarize_turns
+from bench.host_state import cpu_busy, parse_swap, parse_vm
+from bench.archive.kokoro_comparison import CONDITIONS, schedule, summarize
+from bench.latency_baseline import case_order, finish_row, summarize_turns
 
 
 def test_schedule_balances_conditions_positions_cases_and_histories():

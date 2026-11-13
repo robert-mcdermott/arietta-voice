@@ -37,7 +37,7 @@ environment, which had different versions of the other model dependencies.
 ```bash
 uv venv --python 3.13 tmp/kokoro-integration/venv
 uv pip install --python tmp/kokoro-integration/venv/bin/python \
-  -r evals/kokoro_integration_requirements.txt
+  -r bench/archive/kokoro_integration_requirements.txt
 uv pip install --no-deps --python tmp/kokoro-integration/venv/bin/python -e .
 ```
 
@@ -65,7 +65,7 @@ The trial pins MLX Audio 0.5.8, MLX 0.31.1, Misaki 0.9.4 and the English spaCy
 model 3.8.0. Integrating MLX Audio requires newer Transformers 5.17.0,
 tokenizers 0.23.3, Hugging Face Hub 1.16.1 and safetensors 0.8.0. Gemma's
 MLX-VLM 0.4.4, Torch 2.11.0, Moonshine 0.0.54 and ONNX Runtime 1.24.4 stay at
-production versions. The [full trial freeze](kokoro_integration_requirements.txt)
+production versions. The [full trial freeze](../../../bench/archive/kokoro_integration_requirements.txt)
 is separate from `uv.lock`.
 
 ## Full-conversation protocol
@@ -99,7 +99,7 @@ establish long-term memory stability or the Phase 2 100-turn acceptance target.
 Prepare identical synthetic input once using the production ONNX adapter:
 
 ```bash
-uv run --locked scripts/kokoro_integration.py prepare \
+uv run --locked bench/archive/kokoro_integration.py prepare \
   --output tmp/kokoro-integration/fixtures-new.npz
 ```
 
@@ -108,7 +108,7 @@ them. The NPZ has a matching JSON corpus/hash manifest. For each trial block:
 
 ```bash
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/latency_baseline.py --turns 10 --idle-seconds 5 \
+  bench/latency_baseline.py --turns 10 --idle-seconds 5 \
   --fixtures tmp/kokoro-integration/fixtures-new.npz \
   --conversation-turns 5 --resource-metrics --tts-backend mlx \
   --mlx-kokoro-model tmp/kokoro-experiment/Kokoro-82M-bf16
@@ -126,7 +126,7 @@ metadata. The existing benchmark timeout and hardware-validation lock apply.
 Summarize the four matched trial reports, excluding the production reference:
 
 ```bash
-uv run --locked scripts/kokoro_integration.py summarize \
+uv run --locked bench/archive/kokoro_integration.py summarize \
   PATH_TO_ONNX_1/report.json PATH_TO_MLX_1/report.json \
   PATH_TO_MLX_2/report.json PATH_TO_ONNX_2/report.json \
   --output tmp/kokoro-integration/summary-new.json
@@ -140,7 +140,7 @@ Run the separate native cancellation/recovery check without opening audio:
 
 ```bash
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/kokoro_integration.py recovery \
+  bench/archive/kokoro_integration.py recovery \
   --model tmp/kokoro-experiment/Kokoro-82M-bf16 \
   --output tmp/kokoro-integration/recovery-new.json
 ```

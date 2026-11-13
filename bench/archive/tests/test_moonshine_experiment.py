@@ -9,7 +9,7 @@ import wave
 import numpy as np
 import pytest
 
-from scripts.moonshine_experiment import (
+from bench.archive.moonshine_experiment import (
     TranscriptCollector, load_fixture, run_bounded, stream_once, word_errors,
 )
 

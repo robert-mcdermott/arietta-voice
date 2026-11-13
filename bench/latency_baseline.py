@@ -1,6 +1,6 @@
 """Opt-in paced synthetic speech benchmark on the actual Mac; no private context.
 
-uv run --locked scripts/latency_baseline.py --turns 100 --audible
+uv run --locked bench/latency_baseline.py --turns 100 --audible
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ if not __package__:
 
 from arietta_voice.config import load_config, validate_config
 from arietta_voice.runtime_status import read_runtime_status
-from scripts.hardware_validation import (
+from bench.hardware_validation import (
     isolated_config, collect_environment, protected_fingerprints, validation_lock,
     write_report, rss_sample, summarize_resources, summarize_events, stop_process, _synthesize,
 )

@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 import pytest
 
-from scripts import live_load_soak as soak
+from bench import live_load_soak as soak
 
 
 def test_case_order_is_balanced_in_each_cycle_and_varies():

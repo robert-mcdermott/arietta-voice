@@ -13,9 +13,9 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from scripts.kokoro_experiment import ROOT, write_json
-from scripts.latency_baseline import case_order, quantiles, summarize_turns
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
+from bench.archive.kokoro_experiment import ROOT, write_json
+from bench.latency_baseline import case_order, quantiles, summarize_turns
 
 CONDITIONS = ('production_onnx','trial_onnx','trial_mlx')
 
@@ -133,8 +133,8 @@ def run(args):
     from arietta_voice.config import load_config
     from arietta_voice.private_config import render_config_toml, write_private_text
     from arietta_voice.runtime_status import read_runtime_status
-    from scripts.hardware_validation import isolated_config, protected_fingerprints, validation_lock
-    from scripts.host_state import HostState
+    from bench.hardware_validation import isolated_config, protected_fingerprints, validation_lock
+    from bench.host_state import HostState
     os.umask(0o077)
     os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_IMPLICIT_TOKEN='1')
     with validation_lock(ROOT/'tmp/kokoro-comparison-lock'):
@@ -147,8 +147,8 @@ def run(args):
         versions = {k:package_versions(p) for k,p in [('production',args.production_python),('trial',args.trial_python)]}
         write_json(args.output/'packages.json',versions)
         evidence={}
-        for name,path in [('comparison',Path(__file__)),('host_monitor',ROOT/'scripts/host_state.py'),
-                          ('latency_harness',ROOT/'scripts/latency_baseline.py'),('fixtures',args.fixtures),
+        for name,path in [('comparison',Path(__file__)),('host_monitor',ROOT/'bench/host_state.py'),
+                          ('latency_harness',ROOT/'bench/latency_baseline.py'),('fixtures',args.fixtures),
                           ('mlx_weights',args.model/'kokoro-v1_0.safetensors'),
                           ('mlx_voice',args.model/'voices/af_heart.safetensors')]:
             with path.open('rb') as handle:evidence[name]=hashlib.file_digest(handle,'sha256').hexdigest()
@@ -168,7 +168,7 @@ def run(args):
         try:
             for index,block in enumerate(plan,1):
                 condition=block['condition'];interpreter=args.production_python if condition=='production_onnx' else args.trial_python
-                cmd=['uv','run','--no-project','--python',str(interpreter),'scripts/latency_baseline.py',
+                cmd=['uv','run','--no-project','--python',str(interpreter),'bench/latency_baseline.py',
                     '--config',str(profile),'--turns',str(block['turns']),'--case-offset',str(block['case_offset']),
                     '--idle-seconds','5','--fixtures',str(args.fixtures),'--conversation-turns','5','--resource-metrics',
                     '--tts-backend','mlx' if condition=='trial_mlx' else 'onnx']

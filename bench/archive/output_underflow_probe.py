@@ -16,9 +16,9 @@ import sys
 import time
 
 if not __package__:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.hardware_validation import isolated_config, protected_fingerprints, validation_lock, write_report
+from bench.hardware_validation import isolated_config, protected_fingerprints, validation_lock, write_report
 
 PROMPTS = (
     'Count from one to twenty, saying every number.',
@@ -46,8 +46,8 @@ def run(args):
     from arietta_voice.streaming import speech_stream
     from arietta_voice.turns import CancellationToken
     from arietta_voice.worker import InferenceWorker
-    from scripts.hardware_validation import apply_trial_overrides, collect_environment
-    root = Path(__file__).resolve().parents[1]
+    from bench.hardware_validation import apply_trial_overrides, collect_environment
+    root = Path(__file__).resolve().parents[2]
     directory = args.output.resolve()
     if not directory.is_relative_to(root/'tmp') or directory.exists():
         raise ValueError('Output must be a fresh directory under repository tmp')
@@ -142,7 +142,7 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1', HF_HUB_DISABLE_IMPLICIT_TOKEN='1')
-    with validation_lock(Path(__file__).resolve().parents[1]/'tmp/hardware-validation'):
+    with validation_lock(Path(__file__).resolve().parents[2]/'tmp/hardware-validation'):
         return run(args)
 
 

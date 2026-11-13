@@ -87,7 +87,7 @@ medians cannot be added or subtracted to explain the end-to-end median.
 
 ## Component isolation
 
-The new `scripts/onnx_environment.py probe` instruments the existing ONNX
+The new `bench/archive/onnx_environment.py probe` instruments the existing ONNX
 adapter inside an isolated child process. It measures phonemization, native
 `InferenceSession.run`, and silence trimming without changing their arguments
 or outputs. There is a 240-second outer bound. Probes require already cached
@@ -157,11 +157,11 @@ Use the existing trial environment and shared fixtures from
 with the normal voice runtime stopped. From the repository root:
 
 ```bash
-uv run --locked scripts/onnx_environment.py probe --label production \
+uv run --locked bench/archive/onnx_environment.py probe --label production \
   --repeats 5 --output tmp/onnx-environment/new-production-alone.json
 
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/onnx_environment.py probe --label trial --repeats 5 \
+  bench/archive/onnx_environment.py probe --label trial --repeats 5 \
   --output tmp/onnx-environment/new-trial-alone.json
 ```
 
@@ -172,7 +172,7 @@ STT/chat/endpoint/TTS loading. It writes no config override. Repeat the four-blo
 order above for each mode. Package/code fingerprints are collected after
 measurement, and all results stay under ignored `tmp/`.
 
-For conversation runs, use the existing `scripts/latency_baseline.py` commands
+For conversation runs, use the existing `bench/latency_baseline.py` commands
 with `--tts-backend onnx --conversation-turns 5 --resource-metrics`, identical
 `--fixtures` and source profile for every block. The recorded experiment used
 the prior synthetic profile at `tmp/kokoro-integration/profile/app.toml` with
@@ -192,7 +192,7 @@ directory printed by the benchmark, for example:
 Include all four blocks for the measured protocol, then compare:
 
 ```bash
-uv run --locked scripts/onnx_environment.py compare \
+uv run --locked bench/archive/onnx_environment.py compare \
   tmp/onnx-environment/new-runs.json \
   --output tmp/onnx-environment/new-summary.json
 ```

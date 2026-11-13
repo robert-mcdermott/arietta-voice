@@ -3,8 +3,8 @@ from copy import deepcopy
 
 import pytest
 
-from scripts.kokoro_integration import summarize
-from scripts.latency_baseline import finish_row
+from bench.archive.kokoro_integration import summarize
+from bench.latency_baseline import finish_row
 
 
 def reports():

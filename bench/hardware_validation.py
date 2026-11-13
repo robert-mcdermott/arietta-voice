@@ -1,7 +1,7 @@
 """Opt-in local hardware/model validation; never part of the synthetic CI suite.
 
-uv run --locked scripts/hardware_validation.py --minutes 15
-uv run --locked scripts/hardware_validation.py --mode live --minutes 5
+uv run --locked bench/hardware_validation.py --minutes 15
+uv run --locked bench/hardware_validation.py --mode live --minutes 5
 """
 from __future__ import annotations
 
@@ -331,7 +331,7 @@ def _components(config, report, path, minutes, microphone_seconds, playback,
         ).astype(np.float32)
         fixtures = None
         if fixtures_path is not None:
-            from scripts.latency_baseline import load_shared_fixtures
+            from bench.latency_baseline import load_shared_fixtures
             fixtures = load_shared_fixtures(fixtures_path)
             report["fixture_sha256"] = hashlib.sha256(fixtures_path.read_bytes()).hexdigest()
             report["fixture_count"] = len(fixtures)
@@ -447,7 +447,7 @@ def _run_child(config, directory, mode, minutes, microphone_seconds, playback,
         else:
             from arietta_voice.runtime import AriettaVoiceRuntime
             if forced_gap_seconds:
-                from scripts.forced_gap_validation import ForcedGapRuntime
+                from bench.forced_gap_validation import ForcedGapRuntime
                 runtime = ForcedGapRuntime(config, forced_gap_seconds)
             else:
                 runtime = AriettaVoiceRuntime(config)
@@ -497,7 +497,7 @@ def main():
     parser.add_argument("--fixtures", type=Path, help="Cycle existing synthetic NPZ fixtures (components only)")
     parser.add_argument("--soak-interval", type=float, default=5, help="Pause between component turns, 0..30 seconds")
     args = parser.parse_args()
-    from scripts.forced_gap_validation import validate_gap_options
+    from bench.forced_gap_validation import validate_gap_options
     try:
         validate_gap_options(args.mode, args.forced_gap_seconds)
     except ValueError as exc:
@@ -530,7 +530,7 @@ def run_profile(args, root):
     directory = root / "tmp" / "hardware-validation" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     directory.mkdir(parents=True, mode=0o700)
     config = isolated_config(source, directory)
-    from scripts.forced_gap_validation import validate_gap_options
+    from bench.forced_gap_validation import validate_gap_options
     validate_gap_options(args.mode, args.forced_gap_seconds,
                          aec=config.audio.aec_enabled, tts=config.audio.tts_enabled)
     apply_trial_overrides(config, args.tts_backend, args.mlx_kokoro_model)
@@ -552,7 +552,7 @@ def run_profile(args, root):
     samples = []
     monitor, host = None, []
     if args.host_metrics:
-        from scripts.host_state import HostState
+        from bench.host_state import HostState
         monitor = HostState()
     started, ready_at, last_print = time.monotonic(), None, 0
     duration_completed = False
@@ -614,7 +614,7 @@ def run_profile(args, root):
         report["status"] = "completed" if duration_completed and report["status"] == "stopped" else "incomplete"
         report["automated_gates"] = live_gates(report, status, samples)
         if args.forced_gap_seconds:
-            from scripts.forced_gap_validation import forced_gap_gates
+            from bench.forced_gap_validation import forced_gap_gates
             report['forced_gap_gates'] = forced_gap_gates(report)
             if not all(report['forced_gap_gates'].values()):
                 report['status'] = 'failed'

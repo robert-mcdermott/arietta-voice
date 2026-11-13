@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from scripts import forced_gap_validation as gap
+from bench import forced_gap_validation as gap
 
 
 @pytest.mark.parametrize('seconds,mode,aec,tts', [

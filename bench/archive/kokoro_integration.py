@@ -7,9 +7,9 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.kokoro_experiment import ROOT, run_bounded, write_json
-from scripts.latency_baseline import QUESTIONS, summarize_turns
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bench.archive.kokoro_experiment import ROOT, run_bounded, write_json
+from bench.latency_baseline import QUESTIONS, summarize_turns
 
 
 def prepare(args):
@@ -80,7 +80,7 @@ def recovery(args):
     from arietta_voice.config import load_config, validate_config
     from arietta_voice.worker import InferenceWorker, WorkerCancelled
     from arietta_voice.turns import CancellationToken
-    from scripts.hardware_validation import isolated_config, validation_lock
+    from bench.hardware_validation import isolated_config, validation_lock
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
                       HF_HUB_DISABLE_IMPLICIT_TOKEN='1')
     with validation_lock(ROOT/'tmp/hardware-validation'):

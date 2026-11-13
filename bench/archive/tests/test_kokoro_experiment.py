@@ -8,7 +8,7 @@ import wave
 import numpy as np
 import pytest
 
-from scripts.kokoro_experiment import CASES, case_order, measure, run_bounded, summarize, validate_pcm, write_wav
+from bench.archive.kokoro_experiment import CASES, case_order, measure, run_bounded, summarize, validate_pcm, write_wav
 
 
 def test_case_order_is_repeatable_balanced_and_shared_by_backends():
@@ -110,7 +110,7 @@ def test_summary_rejects_incomplete_or_incomparable_runs(fault):
 
 
 def test_listening_level_matching_retains_samples_and_caps_peaks():
-    from scripts.kokoro_listening import match_level
+    from bench.archive.kokoro_listening import match_level
     pcm = np.sin(np.arange(2400)*.1).astype(np.float32)*.1
     matched, gain = match_level(pcm)
     assert len(matched) == len(pcm)
@@ -123,7 +123,7 @@ def test_listening_level_matching_retains_samples_and_caps_peaks():
 
 def test_listening_rejects_tampered_or_escaping_samples(tmp_path):
     import hashlib
-    from scripts.kokoro_listening import read_sample
+    from bench.archive.kokoro_listening import read_sample
     audio = tmp_path/'sample.wav'
     write_wav(audio, np.ones(100, dtype=np.float32)*.1)
     row = {'id': 'numbers', 'repeat': 0, 'wav': 'sample.wav',

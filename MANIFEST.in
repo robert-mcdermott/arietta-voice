@@ -1,9 +1,9 @@
 include conftest.py uv.lock .python-version
-include CHANGELOG.md RELEASING.md ROADMAP.md
+include CHANGELOG.md ROADMAP.md
+recursive-include docs *.md
 recursive-include tests *.py
 recursive-include evals *.py *.json *.md
-include evals/kokoro_candidate_requirements.txt
-include evals/kokoro_integration_requirements.txt
+recursive-include bench *.py *.txt *.md
 recursive-include scripts *.py
 prune config
 prune knowledge

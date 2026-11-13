@@ -10,19 +10,19 @@ This guide walks through the main ways to customize Arietta Voice for your own u
 - personalize the assistant's name, wake word, and `SOUL.md`
 - verify your changes
 
-If you want the short overview, start with [README.md](./README.md). If you want the practical customization walkthrough, this is the file to use.
+If you want the short overview, start with [README.md](../README.md). If you want the practical customization walkthrough, this is the file to use.
 
 ## 1. Know Which Files Matter
 
 The main files and directories you will touch are:
 
-- [`config/arietta_voice.toml`](./config/arietta_voice.toml): tracked shared defaults
+- [`config/arietta_voice.toml`](../config/arietta_voice.toml): tracked shared defaults
 - `config/arietta_voice.local.toml`: ignored private configuration
 - `config/SOUL.local.md`: ignored private personality, tone, and behavior rules
 - `config/MEMORY.md`: optional long-term memory file, created automatically if memory is enabled
-- [`knowledge/`](./knowledge): your markdown knowledge base
-- [`src/arietta_voice/tools/`](./src/arietta_voice/tools): deterministic tools
-- [`src/arietta_voice/model_tools/`](./src/arietta_voice/model_tools): model-requested tools
+- [`knowledge/`](../knowledge): your markdown knowledge base
+- [`src/arietta_voice/tools/`](../src/arietta_voice/tools): deterministic tools
+- [`src/arietta_voice/model_tools/`](../src/arietta_voice/model_tools): model-requested tools
 
 Create private copies once before customizing:
 
@@ -35,7 +35,7 @@ original files untouched, and saves private backups under `config/.private-backu
 It refuses to overwrite existing private files. Once you have verified the
 copies, restore any personal edits in tracked templates to their committed
 defaults; keep future customization in the private files. See
-[configuration precedence](README.md#configuration) for custom paths and merging.
+[configuration precedence](../README.md#configuration) for custom paths and merging.
 
 Good first commands:
 
@@ -56,7 +56,7 @@ Run `admin-setup` once, using the same `--config` as `serve` if customized.
 There is no built-in password. It writes an ignored credential file containing
 a salted password hash, usable by both interactive and LaunchAgent starts.
 Source editing is disabled until explicitly enabled; see
-[Admin tool permissions](README.md#admin-tool-permissions).
+[Admin tool permissions](../README.md#admin-tool-permissions).
 
 You can run `uv run arietta-voice` and `uv run arietta-voice serve` in separate
 terminals. In that setup the admin console can inspect health, logs, runtime
@@ -68,7 +68,7 @@ manually started runtime, restart that runtime terminal yourself.
 
 Conversation text is hidden from runtime logs and status by default; the
 runtime monitor's last-user/last-assistant fields will be blank. See
-[Privacy and logging](README.md#privacy-and-logging) for debugging opt-in,
+[Privacy and logging](../README.md#privacy-and-logging) for debugging opt-in,
 rotation settings, and how memory, recordings, and Bedrock differ from logs.
 Restart the runtime and API after changing logging settings so both processes
 use the same policy. Existing log files are not scrubbed during an upgrade.
@@ -147,12 +147,12 @@ Do not invent device states or automation results.
 
 Knowledge is the easiest and safest way to teach Arietta new facts.
 
-Create markdown files in [`knowledge/`](./knowledge) by copying
-[`examples/knowledge-template.md`](./examples/knowledge-template.md) to a new
+Create markdown files in [`knowledge/`](../knowledge) by copying
+[`examples/knowledge-template.md`](../examples/knowledge-template.md) to a new
 file there. Personal articles and subdirectories are ignored by Git. Only
 `knowledge/README.md` and `knowledge/getting-started.md` remain tracked, so
 keep private content out of those two starter files. See the
-[knowledge README](./knowledge/README.md) for previously tracked articles and
+[knowledge README](../knowledge/README.md) for previously tracked articles and
 knowledge directories outside this default location.
 
 ### A minimal article
@@ -336,23 +336,23 @@ Use them when:
 - the answer should come directly from the tool
 - the tool performs a precise action or lookup
 
-The built-in example is [`src/arietta_voice/tools/local_time.py`](./src/arietta_voice/tools/local_time.py).
+The built-in example is [`src/arietta_voice/tools/local_time.py`](../src/arietta_voice/tools/local_time.py).
 
 ### How deterministic tools work
 
 Each deterministic tool:
 
-- lives in [`src/arietta_voice/tools/`](./src/arietta_voice/tools)
+- lives in [`src/arietta_voice/tools/`](../src/arietta_voice/tools)
 - exposes `create_tool(context)`
 - returns an object with `name` and `maybe_handle(user_text)`
 - returns `ToolResponse` when it wants to handle the turn
 
-The base context lives in [`src/arietta_voice/tools/base.py`](./src/arietta_voice/tools/base.py) and gives the tool access to:
+The base context lives in [`src/arietta_voice/tools/base.py`](../src/arietta_voice/tools/base.py) and gives the tool access to:
 
 - `context.config`
 - `context.knowledge_retriever`
 
-Start from the template at [`src/arietta_voice/tools/tool_template.py`](./src/arietta_voice/tools/tool_template.py).
+Start from the template at [`src/arietta_voice/tools/tool_template.py`](../src/arietta_voice/tools/tool_template.py).
 
 ### Deterministic tool order matters
 
@@ -455,7 +455,7 @@ enabled = [
 
 ### Context-only deterministic tools
 
-Deterministic tools do not always have to answer directly. The built-in knowledge retrieval tool in [`src/arietta_voice/tools/knowledge_retrieval.py`](./src/arietta_voice/tools/knowledge_retrieval.py) returns `ToolResponse(..., bypass_model=False, context=...)`, which means:
+Deterministic tools do not always have to answer directly. The built-in knowledge retrieval tool in [`src/arietta_voice/tools/knowledge_retrieval.py`](../src/arietta_voice/tools/knowledge_retrieval.py) returns `ToolResponse(..., bypass_model=False, context=...)`, which means:
 
 - the tool matched
 - the tool gathered grounding context
@@ -473,19 +473,19 @@ Use them when:
 - the tool gathers supporting information rather than speaking directly
 - the tool is useful, but only for some questions
 
-The built-in example is [`src/arietta_voice/model_tools/search_knowledge.py`](./src/arietta_voice/model_tools/search_knowledge.py).
+The built-in example is [`src/arietta_voice/model_tools/search_knowledge.py`](../src/arietta_voice/model_tools/search_knowledge.py).
 
 ### How model-requested tools work
 
 Each model-requested tool:
 
-- lives in [`src/arietta_voice/model_tools/`](./src/arietta_voice/model_tools)
+- lives in [`src/arietta_voice/model_tools/`](../src/arietta_voice/model_tools)
 - exposes `create_tool(context)`
 - defines `name`, `description`, and `arguments_example`
 - implements `invoke(arguments)`
 - returns `ModelToolExecution(followup_context=...)`
 
-The runtime flow is in [`src/arietta_voice/model_tooling.py`](./src/arietta_voice/model_tooling.py):
+The runtime flow is in [`src/arietta_voice/model_tooling.py`](../src/arietta_voice/model_tooling.py):
 
 1. the model is shown the available tool metadata
 2. it may emit a single JSON tool call
@@ -493,7 +493,7 @@ The runtime flow is in [`src/arietta_voice/model_tooling.py`](./src/arietta_voic
 4. the tool returns `followup_context`
 5. the model gets one more chance to answer using that grounded context
 
-Start from the template at [`src/arietta_voice/model_tools/tool_template.py`](./src/arietta_voice/model_tools/tool_template.py).
+Start from the template at [`src/arietta_voice/model_tools/tool_template.py`](../src/arietta_voice/model_tools/tool_template.py).
 
 ### Example model-requested tool
 

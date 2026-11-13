@@ -1,6 +1,6 @@
 # Changelog
 
-User-visible changes to Arietta Voice. See [RELEASING.md](RELEASING.md) for
+User-visible changes to Arietta Voice. See [docs/releasing.md](docs/releasing.md) for
 version policy and the release procedure.
 
 ## Unreleased
