@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from arietta_voice.config import AppConfig
 from arietta_voice.runtime_status import read_runtime_status
-
 
 PopenFactory = Callable[..., subprocess.Popen]
 
@@ -58,7 +57,11 @@ class RuntimeSupervisor:
 
     def start(self) -> dict[str, Any]:
         if self.process is not None and self.process.poll() is None:
-            return {"changed": False, "message": "Voice runtime is already managed by the API.", **self.status()}
+            return {
+                "changed": False,
+                "message": "Voice runtime is already managed by the API.",
+                **self.status(),
+            }
 
         observed = read_runtime_status(self.config)
         if observed.get("is_running"):

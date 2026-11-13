@@ -5,7 +5,6 @@ import re
 from arietta_voice.models import ToolResponse
 from arietta_voice.tools.base import ToolContext
 
-
 IDENTITY_PATTERNS = (
     re.compile(r"\bwho are you\b"),
     re.compile(r"\bwhat(?:'s| is) your name\b"),

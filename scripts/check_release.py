@@ -3,21 +3,22 @@
 Run with uv run scripts/check_release.py [--artifacts DIRECTORY]. This is a
 path/metadata gate, not a credential scanner: review changes to public files too.
 """
+
 from __future__ import annotations
 
 import argparse
-from email.parser import BytesParser
-from pathlib import Path, PurePosixPath
 import subprocess
 import tarfile
 import tomllib
 import zipfile
-
+from email.parser import BytesParser
+from pathlib import Path, PurePosixPath
 
 PUBLIC_KNOWLEDGE = {"knowledge/README.md", "knowledge/getting-started.md"}
 PUBLIC_CONFIG = {
-    "config/arietta_voice.toml", "config/arietta_voice.toml.dist",
-    "config/arietta_voice.toml.example", "config/SOUL.md", "config/MEMORY.md.example",
+    "config/arietta_voice.toml",
+    "config/SOUL.md",
+    "config/MEMORY.md.example",
 }
 PRIVATE_DIRECTORIES = {"logs", ".knowledge_index", ".private-backups", ".venv", "tmp", ".aws"}
 
@@ -34,15 +35,18 @@ def private_path(name: str) -> bool:
         bool(PRIVATE_DIRECTORIES.intersection(path.parts))
         or path.name == "MEMORY.md"
         or path.name in {".env", "credentials", ".DS_Store"}
-        or path.name.startswith(".env.") and path.name != ".env.example"
+        or path.name.startswith(".env.")
+        and path.name != ".env.example"
         or name.endswith((".local.toml", ".local.md", ".admin.json", ".working", ".bak"))
     )
 
 
 def check_tracked(root: Path) -> list[str]:
-    records = subprocess.check_output(
-        ["git", "ls-files", "--stage", "-z"], cwd=root
-    ).decode("utf-8").split("\0")
+    records = (
+        subprocess.check_output(["git", "ls-files", "--stage", "-z"], cwd=root)
+        .decode("utf-8")
+        .split("\0")
+    )
     errors = []
     for record in filter(None, records):
         metadata, name = record.split("\t", 1)
@@ -57,9 +61,11 @@ def check_versions(root: Path) -> tuple[str, list[str]]:
     project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
     lock = tomllib.loads((root / "uv.lock").read_text())
     versions = [p["version"] for p in lock["package"] if p["name"] == project["name"]]
-    return project["version"], ([] if versions == [project["version"]] else [
-        "Project and uv.lock versions differ; run uv lock and uv sync --locked."
-    ])
+    return project["version"], (
+        []
+        if versions == [project["version"]]
+        else ["Project and uv.lock versions differ; run uv lock and uv sync --locked."]
+    )
 
 
 def _metadata_errors(data: bytes, expected_version: str) -> list[str]:
@@ -77,10 +83,17 @@ def check_wheel(path: Path, expected_version: str) -> list[str]:
             name = member.filename
             parts = PurePosixPath(name).parts
             allowed = (
-                len(parts) > 1 and parts[0] == "arietta_voice" and name.endswith(".py")
-                or len(parts) > 1 and parts[0] == f"arietta_voice-{expected_version}.dist-info"
+                len(parts) > 1
+                and parts[0] == "arietta_voice"
+                and name.endswith(".py")
+                or len(parts) > 1
+                and parts[0] == f"arietta_voice-{expected_version}.dist-info"
             )
-            if private_path(name) or not allowed or (member.external_attr >> 16) & 0o170000 == 0o120000:
+            if (
+                private_path(name)
+                or not allowed
+                or (member.external_attr >> 16) & 0o170000 == 0o120000
+            ):
                 errors.append(f"Unexpected wheel member: {name}")
             if name.endswith(".dist-info/METADATA"):
                 metadata.append(archive.read(member))
@@ -136,8 +149,10 @@ def main() -> int:
         for error in errors:
             print(error)
         return 1
-    print(f"Release checks passed for {version} (tracked paths, lockfile"
-          + (", wheel and sdist)." if arguments.artifacts else ")."))
+    print(
+        f"Release checks passed for {version} (tracked paths, lockfile"
+        + (", wheel and sdist)." if arguments.artifacts else ").")
+    )
     return 0
 
 

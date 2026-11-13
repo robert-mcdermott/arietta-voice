@@ -1,7 +1,7 @@
 # Forced-gap playback, AEC and interruption validation
 
 October 13, 2026. Follow-up to the
-[speaker-output investigation](OUTPUT_UNDERFLOW_INVESTIGATION.md), whose live
+[speaker-output investigation](../docs/archive/experiments/OUTPUT_UNDERFLOW_INVESTIGATION.md), whose live
 sample did not encounter a producer gap. This test deliberately exercises gap
 silence with microphone capture and AEC active. The production audio path,
 ONNX default, private settings and model dependencies are unchanged.
@@ -162,7 +162,7 @@ runtime, then run from the repository root:
 
 ```sh
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/hardware_validation.py --mode live --minutes 8 \
+  bench/hardware_validation.py --mode live --minutes 8 \
   --forced-gap-seconds 4 --tts-backend mlx \
   --mlx-kokoro-model tmp/kokoro-experiment/Kokoro-82M-bf16 --host-metrics
 ```

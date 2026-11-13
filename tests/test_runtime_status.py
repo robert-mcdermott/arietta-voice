@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import json
 
 import pytest
 
 from arietta_voice.config import default_config
-from arietta_voice.runtime_status import read_runtime_status, runtime_status_path, write_runtime_status
+from arietta_voice.runtime_status import (
+    read_runtime_status,
+    runtime_status_path,
+    write_runtime_status,
+)
 
 
 def _config(tmp_path: Path):
@@ -24,13 +28,20 @@ def _iso(seconds_ago: float = 0.0) -> str:
 
 def test_waiting_for_audio_is_alive_but_not_ready(tmp_path):
     config = _config(tmp_path)
-    write_runtime_status(config, {'heartbeat_at': _iso(), 'lifecycle': 'running',
-        'state': 'waiting_for_audio', 'session_active': False,
-        'reliability': {'devices': {'connection': 'waiting', 'reconnect_attempts': 2}}})
+    write_runtime_status(
+        config,
+        {
+            "heartbeat_at": _iso(),
+            "lifecycle": "running",
+            "state": "waiting_for_audio",
+            "session_active": False,
+            "reliability": {"devices": {"connection": "waiting", "reconnect_attempts": 2}},
+        },
+    )
     status = read_runtime_status(config)
-    assert status['is_running'] and not status['session_active']
-    assert 'Waiting for the configured audio devices' in status['note']
-    assert status['reliability']['devices']['reconnect_attempts'] == 2
+    assert status["is_running"] and not status["session_active"]
+    assert "Waiting for the configured audio devices" in status["note"]
+    assert status["reliability"]["devices"]["reconnect_attempts"] == 2
 
 
 def test_missing_runtime_status_reports_not_running(tmp_path: Path) -> None:
@@ -66,14 +77,27 @@ def test_fresh_runtime_status_reports_voice_state(tmp_path: Path) -> None:
     assert status["process_id"] == 12345
 
 
-@pytest.mark.parametrize("content_enabled, active, visible", [
-    (False, True, False), (False, False, False), (True, False, False), (True, True, True),
-])
-def test_status_content_privacy_on_disk_and_on_read(tmp_path, content_enabled, active, visible) -> None:
+@pytest.mark.parametrize(
+    "content_enabled, active, visible",
+    [
+        (False, True, False),
+        (False, False, False),
+        (True, False, False),
+        (True, True, True),
+    ],
+)
+def test_status_content_privacy_on_disk_and_on_read(
+    tmp_path, content_enabled, active, visible
+) -> None:
     config = _config(tmp_path)
     config.logging.content_enabled = content_enabled
-    payload = {"heartbeat_at": _iso(), "lifecycle": "running", "session_active": active,
-               "last_user_transcript": "PRIVATE USER", "last_assistant_text": "PRIVATE ANSWER"}
+    payload = {
+        "heartbeat_at": _iso(),
+        "lifecycle": "running",
+        "session_active": active,
+        "last_user_transcript": "PRIVATE USER",
+        "last_assistant_text": "PRIVATE ANSWER",
+    }
     write_runtime_status(config, payload)
     assert ("PRIVATE" in runtime_status_path(config).read_text()) is visible
     assert ("PRIVATE" in json.dumps(read_runtime_status(config))) is visible
@@ -126,11 +150,16 @@ def test_stopped_runtime_status_reports_clean_exit(tmp_path: Path) -> None:
 def test_heartbeat_continues_during_blocking_work(tmp_path):
     import time
     from types import SimpleNamespace
+
     from arietta_voice.runtime_status import RuntimeStatusPublisher
+
     publisher = RuntimeStatusPublisher(_config(tmp_path), interval_seconds=0.02)
     runtime = SimpleNamespace(state="thinking", reliability_snapshot=lambda: {"turn_stage": "chat"})
     writes = []
-    runtime._publish_status = lambda **kwargs: (writes.append(time.monotonic()), publisher.publish(runtime, lifecycle=kwargs.get("lifecycle", "running")))
+    runtime._publish_status = lambda **kwargs: (
+        writes.append(time.monotonic()),
+        publisher.publish(runtime, lifecycle=kwargs.get("lifecycle", "running")),
+    )
     publisher.start(runtime)
     try:
         time.sleep(0.09)

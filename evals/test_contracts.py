@@ -1,4 +1,5 @@
 """Deterministic end-to-end contracts; this is not a model-quality benchmark."""
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +19,6 @@ from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime import AriettaVoiceRuntime
 from arietta_voice.wake import build_wake_word_detector
 from arietta_voice.worker import WorkerFailure
-
 
 CASES = json.loads(Path(__file__).with_name("cases.json").read_text())
 assert CASES["schema_version"] == 1
@@ -47,8 +47,11 @@ def test_prompt_contract(case, tmp_path):
     config.prompts.memory_path.write_text(case["memory"])
     config.memory.enabled = case["enabled"]
     config.assistant.max_history_turns = case["limit"]
-    history = [ConversationTurn(role=role, content=f"{role} {i}")
-               for i in range(3) for role in ("user", "assistant")]
+    history = [
+        ConversationTurn(role=role, content=f"{role} {i}")
+        for i in range(3)
+        for role in ("user", "assistant")
+    ]
     original = list(history)
     context = ToolResponse("synthetic", "", False, case["context"])
     messages = PromptManager(config).build_messages(history, "Current synthetic question", context)
@@ -58,7 +61,7 @@ def test_prompt_contract(case, tmp_path):
         expected.append({"role": "system", "content": system})
     if case["context"]:
         expected.append({"role": "system", "content": case["context"]})
-    retained = original[-case["limit"] * 2:] if case["limit"] else []
+    retained = original[-case["limit"] * 2 :] if case["limit"] else []
     expected.extend({"role": turn.role, "content": turn.content} for turn in retained)
     expected.append({"role": "user", "content": "Current synthetic question"})
     assert messages == expected
@@ -89,8 +92,12 @@ def test_tool_policy_contract(case, tmp_path, monkeypatch):
     invoke = Mock(return_value=ModelToolExecution("Synthetic counter result", {"count": 1}))
     if case.get("fails"):
         invoke.side_effect = RuntimeError("synthetic tool failure")
-    tool = SimpleNamespace(name="synthetic_counter", description="read a synthetic counter",
-                           arguments_example={}, invoke=invoke)
+    tool = SimpleNamespace(
+        name="synthetic_counter",
+        description="read a synthetic counter",
+        arguments_example={},
+        invoke=invoke,
+    )
     monkeypatch.setattr(ModelToolRegistry, "_load_tool", lambda self, name: tool)
     registry = ModelToolRegistry(config)
     generate = Mock(side_effect=[case["output"], case.get("followup", "Synthetic answer")])
@@ -101,11 +108,14 @@ def test_tool_policy_contract(case, tmp_path, monkeypatch):
     else:
         response, used = maybe_generate_with_model_tools(
             [{"role": "user", "content": "Read the synthetic counter"}],
-            model_tool_registry=registry, llm_generate=generate,
+            model_tool_registry=registry,
+            llm_generate=generate,
         )
         assert (used is not None) == bool(case["calls"])
         assert generate.call_count == 1 + case["calls"]
-        assert response == (case.get("followup", "Synthetic answer") if case["calls"] else case["output"])
+        assert response == (
+            case.get("followup", "Synthetic answer") if case["calls"] else case["output"]
+        )
     assert invoke.call_count == case["calls"]
 
 

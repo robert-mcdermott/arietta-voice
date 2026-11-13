@@ -4,7 +4,7 @@ October 12, 2026. Production remains on the locked model stack, including
 Moonshine 0.0.54. No private config, persona, credentials, knowledge, memory or
 backups are rewritten by these changes or the isolated validation.
 
-The October 13 [capture/alignment follow-up](CAPTURE_ALIGNMENT_INVESTIGATION.md)
+The October 13 [capture/alignment follow-up](../docs/archive/experiments/CAPTURE_ALIGNMENT_INVESTIGATION.md)
 distinguishes normal startup discards from faults, prevents unused capture
 backlogs during model waits, and records a separate live MLX repeat.
 
@@ -78,7 +78,7 @@ and continuity, not an echo-reduction or speech-recognition quality score.
 The isolated hardware harness is used for a five-minute microphone/speaker check:
 
 ```bash
-uv run --locked scripts/hardware_validation.py --mode live --minutes 5
+uv run --locked bench/hardware_validation.py --mode live --minutes 5
 ```
 
 It uses the synthetic voice-aware persona, default wake phrases, no private

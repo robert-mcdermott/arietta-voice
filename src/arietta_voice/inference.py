@@ -1,4 +1,5 @@
 """Heavy models and tool execution live only in the inference child process."""
+
 from __future__ import annotations
 
 import asyncio
@@ -23,45 +24,53 @@ class InferenceEngine:
     def service(self):
         if self._service is None:
             from arietta_voice.conversation import ConversationService
+
             self._service = ConversationService(self.config)
         return self._service
 
     def stt(self):
         if self._stt is None:
             from arietta_voice.stt import MoonshineSpeechToText
+
             self._stt = MoonshineSpeechToText(self.config.models.stt_language)
         return self._stt
 
     def endpoint(self):
         if self._endpoint is None:
             from arietta_voice.turn_detection import SmartTurnEndpointDetector
+
             self._endpoint = SmartTurnEndpointDetector(self.config.audio.sample_rate)
         return self._endpoint
 
     def speaker(self):
         if self._speaker is None:
             from arietta_voice.tts import build_speaker
+
             self._speaker = build_speaker(self.config.audio)
         return self._speaker
 
     def handle(self, operation, payload):
-        if operation == 'resource_snapshot':
+        if operation == "resource_snapshot":
             import resource
             import sys
-            mx = sys.modules.get('mlx.core')
+
+            mx = sys.modules.get("mlx.core")
             llm = self._service._llm if self._service is not None else None
-            return dict(peak_rss_mib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss /
-                        (2**20 if sys.platform == 'darwin' else 1024),
-                        mlx_active_mib=mx.get_active_memory()/2**20 if mx else None,
-                        mlx_peak_mib=mx.get_peak_memory()/2**20 if mx else None,
-                        mlx_cache_mib=mx.get_cache_memory()/2**20 if mx else None,
-                        stt_loaded=self._stt is not None and self._stt.is_loaded(),
-                        chat_loaded=llm is not None and llm.is_loaded(),
-                        tts_loaded=self._speaker is not None and self._speaker.is_loaded(),
-                        endpoint_loaded=self._endpoint is not None and self._endpoint.is_loaded(),
-                        tts_backend=self.config.audio.tts_backend)
+            return dict(
+                peak_rss_mib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                / (2**20 if sys.platform == "darwin" else 1024),
+                mlx_active_mib=mx.get_active_memory() / 2**20 if mx else None,
+                mlx_peak_mib=mx.get_peak_memory() / 2**20 if mx else None,
+                mlx_cache_mib=mx.get_cache_memory() / 2**20 if mx else None,
+                stt_loaded=self._stt is not None and self._stt.is_loaded(),
+                chat_loaded=llm is not None and llm.is_loaded(),
+                tts_loaded=self._speaker is not None and self._speaker.is_loaded(),
+                endpoint_loaded=self._endpoint is not None and self._endpoint.is_loaded(),
+                tts_backend=self.config.audio.tts_backend,
+            )
         if operation == "warmup":
             from arietta_voice.llm import build_chat_model
+
             self.stt().ensure_loaded()
             service = self.service()
             service._llm = build_chat_model(self.config.models)
@@ -89,7 +98,10 @@ class InferenceEngine:
             result = service.chat(**payload)
             if len(result.response) > 12_000:
                 raise ValueError("Response exceeds the speech limit")
-            return {**asdict(result), "model_loaded": service._llm is not None and service._llm.is_loaded()}
+            return {
+                **asdict(result),
+                "model_loaded": service._llm is not None and service._llm.is_loaded(),
+            }
         if operation == "chat_next":
             if self._chat is None:
                 raise ValueError("No active conversation stream")
@@ -108,16 +120,22 @@ class InferenceEngine:
         if operation == "memory_start":
             from arietta_voice.llm import build_chat_model
             from arietta_voice.memory import MemoryStore
+
             self.handle("memory_close", None)
-            self._memory_store = MemoryStore(self.config.prompts.memory_path, self.config.memory.enabled,
-                                             self.config.memory.consolidate_every_turns)
+            self._memory_store = MemoryStore(
+                self.config.prompts.memory_path,
+                self.config.memory.enabled,
+                self.config.memory.consolidate_every_turns,
+            )
             model = None
             if self.config.memory.enabled:
                 service = self.service()
                 if service._llm is None:
                     service._llm = build_chat_model(self.config.models)
                 model = service._llm
-            self._memory = self._memory_store.prepare_update(model, payload["user"], payload["assistant"], payload["turn_count"])
+            self._memory = self._memory_store.prepare_update(
+                model, payload["user"], payload["assistant"], payload["turn_count"]
+            )
             return None
         if operation == "memory_next":
             if self._memory is None:
@@ -160,8 +178,12 @@ class InferenceEngine:
                 samples = np.asarray(samples, dtype=np.float32)
                 # The backend may produce a whole sentence before slicing IPC
                 # frames; cap retained backend output as well as the wire chunk.
-                if (samples.ndim != 1 or not 8000 <= rate <= 96000
-                        or len(samples) > rate * 30 or not np.isfinite(samples).all()):
+                if (
+                    samples.ndim != 1
+                    or not 8000 <= rate <= 96000
+                    or len(samples) > rate * 30
+                    or not np.isfinite(samples).all()
+                ):
                     raise ValueError("Invalid or oversized TTS output")
                 self._tts_pending = (samples, rate)
             samples, rate = self._tts_pending

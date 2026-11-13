@@ -38,6 +38,10 @@ jobs:
           uv run --no-project --python 3.13 scripts/check_release.py
       - name: Install locked dependencies
         run: uv sync --locked --group dev
+      - name: Lint and formatting
+        run: |
+          uv run --locked ruff check .
+          uv run --locked ruff format --check .
       - name: Unit and process regression tests
         id: unit
         run: uv run --locked pytest tests --junitxml=tmp/ci/unit.xml

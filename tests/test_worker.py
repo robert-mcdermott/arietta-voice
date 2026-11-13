@@ -1,8 +1,9 @@
 """Exercise real spawned workers without loading models or audio hardware."""
+
 import os
-from pathlib import Path
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -44,6 +45,7 @@ def test_worker_serializes_reuses_and_reloads(worker):
 
 def test_spawned_worker_receives_config_snapshot_and_reloads_only_when_invalidated(tmp_path):
     from arietta_voice.config import default_config
+
     config = default_config(tmp_path)
     config.assistant.name = "Synthetic first"
     instance = InferenceWorker(config, handler_factory=Handler)
@@ -82,11 +84,13 @@ def test_busy_request_has_no_queue_and_shutdown_cancels_active_work(worker):
     worker.call("ok", timeout_s=5)
     waiting = threading.Event()
     errors = []
+
     def run():
         try:
             worker.call("wait", timeout_s=5, on_wait=waiting.set)
         except Exception as exc:
             errors.append(exc)
+
     thread = threading.Thread(target=run)
     thread.start()
     assert waiting.wait(2)
@@ -104,14 +108,19 @@ def test_busy_request_has_no_queue_and_shutdown_cancels_active_work(worker):
 def test_explicit_cancellation_kills_tool_before_late_action_and_allows_next_turn(worker, tmp_path):
     from arietta_voice.turns import CancellationToken
     from arietta_voice.worker import WorkerCancelled
-    first = worker.call('ok', timeout_s=5)
+
+    first = worker.call("ok", timeout_s=5)
     token, entered, errors = CancellationToken(), threading.Event(), []
-    marker = tmp_path / 'cancelled-tool-action'
+    marker = tmp_path / "cancelled-tool-action"
+
     def run():
         try:
-            worker.call('late_write', str(marker), timeout_s=5, cancellation=token, on_wait=entered.set)
+            worker.call(
+                "late_write", str(marker), timeout_s=5, cancellation=token, on_wait=entered.set
+            )
         except Exception as exc:
             errors.append(exc)
+
     thread = threading.Thread(target=run)
     thread.start()
     assert entered.wait(2)
@@ -120,7 +129,7 @@ def test_explicit_cancellation_kills_tool_before_late_action_and_allows_next_tur
     assert not thread.is_alive() and isinstance(errors[0], WorkerCancelled)
     assert worker.pid is None
     assert worker.cancellations == 1 and worker.restarts == 0
-    assert worker.call('ok', timeout_s=5) != first
+    assert worker.call("ok", timeout_s=5) != first
     time.sleep(1.1)
     assert not marker.exists()
 
@@ -128,8 +137,9 @@ def test_explicit_cancellation_kills_tool_before_late_action_and_allows_next_tur
 def test_cancelled_request_never_starts_a_worker(worker):
     from arietta_voice.turns import CancellationToken
     from arietta_voice.worker import WorkerCancelled
+
     token = CancellationToken()
     token.cancel()
     with pytest.raises(WorkerCancelled):
-        worker.call('ok', timeout_s=5, cancellation=token)
+        worker.call("ok", timeout_s=5, cancellation=token)
     assert worker.pid is None

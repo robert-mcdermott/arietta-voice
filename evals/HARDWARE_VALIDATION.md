@@ -12,29 +12,29 @@ From the repository, with the existing `uv` environment:
 ```bash
 # Real VAD, STT, endpoint, MLX chat and TTS using a synthetic audio round trip.
 # Does not open the microphone or speaker.
-uv run --locked scripts/hardware_validation.py
+uv run --locked bench/hardware_validation.py
 
 # Also check five seconds of microphone callbacks and play one synthetic phrase.
-uv run --locked scripts/hardware_validation.py --microphone-seconds 5 --playback
+uv run --locked bench/hardware_validation.py --microphone-seconds 5 --playback
 
 # Run the complete microphone -> runtime -> speaker path, then stop automatically.
-uv run --locked scripts/hardware_validation.py --mode live --minutes 15
+uv run --locked bench/hardware_validation.py --mode live --minutes 15
 
 # Optional separate repeated-model load test; no microphone or audible playback.
-uv run --locked scripts/hardware_validation.py --minutes 15
+uv run --locked bench/hardware_validation.py --minutes 15
 ```
 
 For the prepared, separate MLX integration environment, the harness accepts
 temporary `--tts-backend mlx --mlx-kokoro-model PATH` overrides. They apply only
 to the disposable test profile. `--host-metrics` records read-only macOS host
 CPU, power, thermal and memory-pressure samples. See
-[the MLX live and continuous-soak protocol](MLX_LIVE_SOAK.md) for commands.
+[the MLX live and continuous-soak protocol](../docs/archive/experiments/MLX_LIVE_SOAK.md) for commands.
 Playback summaries also include AEC reset reasons and startup/stale packet
 discards; runtime audio status separates real queue overruns by phase from
 intentional queue discards. Inspect these alongside the automatic gates, which
 do not require zero overruns/resets. See the
-[capture/alignment investigation](CAPTURE_ALIGNMENT_INVESTIGATION.md).
-The [speaker-output investigation](OUTPUT_UNDERFLOW_INVESTIGATION.md) adds a
+[capture/alignment investigation](../docs/archive/experiments/CAPTURE_ALIGNMENT_INVESTIGATION.md).
+The [speaker-output investigation](../docs/archive/experiments/OUTPUT_UNDERFLOW_INVESTIGATION.md) adds a
 separate fixed-PCM/streamed-MLX probe and bounded playback timing summaries.
 Underflow contexts remain in individual playback events; the report aggregates
 write/padding counts and timing maxima, with zero timed playbacks for older logs.

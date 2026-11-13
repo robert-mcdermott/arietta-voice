@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 import re
+from datetime import datetime
 
 from arietta_voice.models import ToolResponse
 from arietta_voice.tools.base import ToolContext
-
 
 TIME_PATTERNS = (
     re.compile(r"\bwhat(?:'s| is) the time\b"),

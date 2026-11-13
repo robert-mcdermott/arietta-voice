@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Protocol
 
 from arietta_voice.config import WakeWordConfig
-
 
 WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 LEADING_FILLERS = {"hey", "hi", "hello", "okay", "ok"}
@@ -50,11 +49,11 @@ class TranscriptWakeWordDetector:
 
         for normalized_phrase, original_phrase in self._phrases:
             phrase_words = normalized_phrase.split()
-            candidate = [word.group().casefold() for word in words[:len(phrase_words)]]
+            candidate = [word.group().casefold() for word in words[: len(phrase_words)]]
             if candidate == phrase_words:
                 # Slice the original string so case, punctuation, numbers, and
                 # non-ASCII command text survive wake-word matching.
-                remainder = transcript[words[len(phrase_words) - 1].end():]
+                remainder = transcript[words[len(phrase_words) - 1].end() :]
                 prompt = re.sub(r"^[,.:;!?]+(?:\s+|$)", "", remainder).lstrip()
                 return WakeWordMatch(
                     phrase=original_phrase,

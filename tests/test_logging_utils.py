@@ -1,6 +1,6 @@
-from concurrent.futures import ProcessPoolExecutor
 import json
 import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from arietta_voice.logging_utils import EventLogger
@@ -11,7 +11,12 @@ def test_content_is_omitted_unless_enabled(tmp_path: Path) -> None:
     logger = EventLogger(path)
     logger.log("user_transcript", content={"text": "PRIVATE SPEECH"}, latency_ms=42)
     logger.log("tool_call", content={"details": {"custom_key": "PRIVATE RESULT"}}, tool="lookup")
-    logger.log("legacy_event", text="PRIVATE LEGACY", details={"query": "PRIVATE QUERY"}, error="PRIVATE ERROR")
+    logger.log(
+        "legacy_event",
+        text="PRIVATE LEGACY",
+        details={"query": "PRIVATE QUERY"},
+        error="PRIVATE ERROR",
+    )
     text = path.read_text()
     assert "PRIVATE" not in text
     records = [json.loads(line) for line in text.splitlines()]
@@ -70,7 +75,9 @@ def _write_events(path: str, writer: int) -> None:
 
 def test_separate_processes_can_share_event_log(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
-    with ProcessPoolExecutor(max_workers=2, mp_context=multiprocessing.get_context("spawn")) as pool:
+    with ProcessPoolExecutor(
+        max_workers=2, mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
         results = [pool.submit(_write_events, str(path), writer) for writer in range(2)]
         for result in results:
             result.result(timeout=30)

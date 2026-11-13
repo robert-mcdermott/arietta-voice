@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from fastapi.testclient import TestClient
 
 from arietta_voice import __version__
@@ -12,12 +11,12 @@ from arietta_voice.config import load_config
 from arietta_voice.runtime_status import runtime_status_path
 
 
-
 @pytest.fixture(autouse=True)
 def explicit_admin_credentials(monkeypatch):
     monkeypatch.setenv("ARIETTA_ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ARIETTA_ADMIN_PASSWORD", "test-only-long-password")
     monkeypatch.delenv("ARIETTA_ADMIN_ALLOWED_HOSTS", raising=False)
+
 
 def _write_api_config(tmp_path: Path) -> Path:
     config_dir = tmp_path / "config"
@@ -111,6 +110,7 @@ def _client_with_service(config_path: Path) -> tuple[TestClient, AriettaApiServi
     service = AriettaApiService(config_path)
     from dataclasses import asdict
     from unittest.mock import Mock
+
     from arietta_voice.api import ChatRequest
 
     def in_process(operation, payload, **kwargs):
@@ -155,19 +155,35 @@ def test_api_loads_private_credentials_and_source_permission(tmp_path, monkeypat
     assert "password_hash" not in payload.text
 
 
-@pytest.mark.parametrize("method, path, payload", [
-    ("post", "/api/tools/create", {"module_name": "blocked"}),
-    ("post", "/api/model-tools/create", {"module_name": "blocked"}),
-    ("put", "/api/tools/local_time/source", {"content": "raise RuntimeError('should not execute')"}),
-    ("put", "/api/model-tools/system_info/source", {"content": "raise RuntimeError('should not execute')"}),
-])
+@pytest.mark.parametrize(
+    "method, path, payload",
+    [
+        ("post", "/api/tools/create", {"module_name": "blocked"}),
+        ("post", "/api/model-tools/create", {"module_name": "blocked"}),
+        (
+            "put",
+            "/api/tools/local_time/source",
+            {"content": "raise RuntimeError('should not execute')"},
+        ),
+        (
+            "put",
+            "/api/model-tools/system_info/source",
+            {"content": "raise RuntimeError('should not execute')"},
+        ),
+    ],
+)
 def test_source_mutations_are_disabled_by_default(tmp_path, monkeypatch, method, path, payload):
     client, service = _client_with_service(_write_api_config(tmp_path))
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Source mutation reached the service while disabled")
 
-    for name in ("create_tool", "create_model_tool", "write_tool_source", "write_model_tool_source"):
+    for name in (
+        "create_tool",
+        "create_model_tool",
+        "write_tool_source",
+        "write_model_tool_source",
+    ):
         monkeypatch.setattr(service, name, forbidden)
     assert client.request(method, path, json=payload).status_code == 401
     result = client.request(method, path, json=payload, auth=("admin", "test-only-long-password"))
@@ -179,10 +195,21 @@ def test_browser_boundaries_and_no_store(tmp_path):
     client = _client(_write_api_config(tmp_path))
     auth = ("admin", "test-only-long-password")
     assert client.get("/health", headers={"Host": "attacker.example"}).status_code == 400
-    for headers in ({"Origin": "https://attacker.example"}, {"Origin": "null"}, {"Sec-Fetch-Site": "cross-site"}):
-        response = client.post("/api/tools/enabled", json={"enabled": []}, auth=auth, headers=headers)
+    for headers in (
+        {"Origin": "https://attacker.example"},
+        {"Origin": "null"},
+        {"Sec-Fetch-Site": "cross-site"},
+    ):
+        response = client.post(
+            "/api/tools/enabled", json={"enabled": []}, auth=auth, headers=headers
+        )
         assert response.status_code == 403
-    response = client.post("/api/tools/enabled", json={"enabled": []}, auth=auth, headers={"Origin": "http://localhost"})
+    response = client.post(
+        "/api/tools/enabled",
+        json={"enabled": []},
+        auth=auth,
+        headers={"Origin": "http://localhost"},
+    )
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["x-frame-options"] == "DENY"
@@ -200,14 +227,21 @@ def test_static_inventory_and_source_reads_do_not_execute_plugins(tmp_path, monk
     )
     external = tmp_path / "external_side_effect"
     external.mkdir()
-    (external / "__init__.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).write_text('external import')")
+    (external / "__init__.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('external import')"
+    )
     monkeypatch.syspath_prepend(str(tmp_path))
     service.tool_admin.tools_directory = tools_dir
     service.model_tool_admin.tools_directory = tools_dir
     service.config.tools.enabled = ("side_effect", "external_side_effect.plugin")
     service.config.model_tools.enabled = ("side_effect", "external_side_effect.plugin")
     auth = ("admin", "test-only-long-password")
-    for path in ("/api/state", "/api/tools", "/api/tools/side_effect/source", "/api/model-tools/side_effect/source"):
+    for path in (
+        "/api/state",
+        "/api/tools",
+        "/api/tools/side_effect/source",
+        "/api/model-tools/side_effect/source",
+    ):
         assert client.get(path, auth=auth).status_code == 200
         assert not marker.exists()
     inventory = client.get("/api/tools", auth=auth).json()
@@ -249,7 +283,6 @@ def test_detailed_health_requires_authentication(tmp_path: Path) -> None:
 
 
 def test_chat_without_tools_does_not_load_or_execute_plugins(tmp_path: Path, monkeypatch) -> None:
-    from arietta_voice import api
 
     client, service = _client_with_service(_write_api_config(tmp_path))
     service.config.model_tools.enabled = ("missing_private_plugin",)
@@ -263,12 +296,16 @@ def test_chat_without_tools_does_not_load_or_execute_plugins(tmp_path: Path, mon
         return '{"tool_call":{"name":"forbidden","arguments":{}}}'
 
     monkeypatch.setattr(service, "probe_tools", forbidden)
-    from arietta_voice import tools, model_tools
+    from arietta_voice import model_tools, tools
+
     monkeypatch.setattr(tools, "ToolRegistry", forbidden)
     monkeypatch.setattr(model_tools, "ModelToolRegistry", forbidden)
     monkeypatch.setattr(service, "_llm_generate", generate)
-    response = client.post("/api/chat", auth=("admin", "test-only-long-password"),
-                           json={"message": "What is your name?", "use_tools": False})
+    response = client.post(
+        "/api/chat",
+        auth=("admin", "test-only-long-password"),
+        json={"message": "What is your name?", "use_tools": False},
+    )
     assert response.status_code == 200
     assert response.json()["used_tool"] is None
     assert response.json()["model_tool"] is None
@@ -352,7 +389,9 @@ def test_knowledge_file_crud_endpoints(tmp_path: Path) -> None:
     )
     listed = client.get("/api/knowledge/files", auth=("admin", "test-only-long-password"))
     read = client.get("/api/knowledge/files/new-note.md", auth=("admin", "test-only-long-password"))
-    deleted = client.delete("/api/knowledge/files/new-note.md", auth=("admin", "test-only-long-password"))
+    deleted = client.delete(
+        "/api/knowledge/files/new-note.md", auth=("admin", "test-only-long-password")
+    )
 
     assert created.status_code == 200
     assert created.json()["created"] is True
@@ -414,9 +453,15 @@ def test_logs_endpoint_paginates_and_filters(tmp_path: Path) -> None:
     client = _client(config_path)
 
     first_page = client.get("/api/logs?limit=2", auth=("admin", "test-only-long-password"))
-    second_page = client.get("/api/logs?limit=2&offset=2", auth=("admin", "test-only-long-password"))
-    event_filtered = client.get("/api/logs?limit=10&event=alpha", auth=("admin", "test-only-long-password"))
-    search_filtered = client.get("/api/logs?limit=10&q=banana", auth=("admin", "test-only-long-password"))
+    second_page = client.get(
+        "/api/logs?limit=2&offset=2", auth=("admin", "test-only-long-password")
+    )
+    event_filtered = client.get(
+        "/api/logs?limit=10&event=alpha", auth=("admin", "test-only-long-password")
+    )
+    search_filtered = client.get(
+        "/api/logs?limit=10&q=banana", auth=("admin", "test-only-long-password")
+    )
 
     assert [item["event"] for item in first_page.json()["items"]] == ["gamma", "alpha"]
     assert first_page.json()["has_next"] is True
@@ -424,7 +469,10 @@ def test_logs_endpoint_paginates_and_filters(tmp_path: Path) -> None:
     assert [item["event"] for item in second_page.json()["items"]] == ["beta", "alpha"]
     assert second_page.json()["has_previous"] is True
     assert event_filtered.json()["total"] == 2
-    assert [item["text"] for item in event_filtered.json()["items"]] == ["third apricot", "first apple"]
+    assert [item["text"] for item in event_filtered.json()["items"]] == [
+        "third apricot",
+        "first apple",
+    ]
     assert search_filtered.json()["total"] == 1
     assert search_filtered.json()["items"][0]["event"] == "beta"
 
@@ -463,7 +511,9 @@ def test_tools_endpoint_lists_registry_inventory(tmp_path: Path) -> None:
     )
     assert payload["assistant_tools"]["load_errors"] == []
 
-    validated = client.post("/api/tools/assistant_identity/validate", auth=("admin", "test-only-long-password"))
+    validated = client.post(
+        "/api/tools/assistant_identity/validate", auth=("admin", "test-only-long-password")
+    )
     assert validated.status_code == 200
     assert validated.json()["enabled"] is True
 
@@ -536,7 +586,9 @@ def test_tool_create_endpoint_writes_valid_tool(tmp_path: Path) -> None:
         auth=("admin", "test-only-long-password"),
         json={"text": "please run banana checkout"},
     )
-    validated = client.post("/api/tools/demo_tool/validate", auth=("admin", "test-only-long-password"))
+    validated = client.post(
+        "/api/tools/demo_tool/validate", auth=("admin", "test-only-long-password")
+    )
 
     assert created.status_code == 200
     assert created.json()["module_name"] == "demo_tool"
@@ -620,7 +672,9 @@ def test_model_tools_enabled_endpoint_persists_config_and_instructions(tmp_path:
         auth=("admin", "test-only-long-password"),
         json={"enabled": ["system_info"]},
     )
-    instructions = client.post("/api/model-tools/instructions", auth=("admin", "test-only-long-password"))
+    instructions = client.post(
+        "/api/model-tools/instructions", auth=("admin", "test-only-long-password")
+    )
 
     assert enabled.status_code == 200
     assert enabled.json()["enabled"] == ["system_info"]
@@ -708,7 +762,9 @@ def test_model_tool_source_endpoints_read_write_and_invoke(tmp_path: Path) -> No
             "enable": True,
         },
     )
-    read = client.get("/api/model-tools/source_model_tool/source", auth=("admin", "test-only-long-password"))
+    read = client.get(
+        "/api/model-tools/source_model_tool/source", auth=("admin", "test-only-long-password")
+    )
     updated_content = read.json()["content"].replace(
         "Original model follow-up.",
         "Edited model follow-up.",
@@ -734,13 +790,21 @@ def test_model_tool_source_endpoints_read_write_and_invoke(tmp_path: Path) -> No
     assert "Edited model follow-up." in invoked.json()["followup_context"]
 
 
-@pytest.mark.parametrize("failure, code", [("WorkerTimeout", 504), ("WorkerBusy", 503), ("WorkerFailure", 502)])
+@pytest.mark.parametrize(
+    "failure, code", [("WorkerTimeout", 504), ("WorkerBusy", 503), ("WorkerFailure", 502)]
+)
 def test_chat_failure_has_safe_actionable_error_and_can_recover(tmp_path, failure, code):
     from unittest.mock import Mock
+
     from arietta_voice import worker
+
     client, service = _client_with_service(_write_api_config(tmp_path))
-    service.worker.call = Mock(side_effect=[getattr(worker, failure)("PRIVATE failure details"),
-        {"response": "Recovered", "source": "model", "used_tool": None, "model_tool": None}])
+    service.worker.call = Mock(
+        side_effect=[
+            getattr(worker, failure)("PRIVATE failure details"),
+            {"response": "Recovered", "source": "model", "used_tool": None, "model_tool": None},
+        ]
+    )
     auth = ("admin", "test-only-long-password")
     response = client.post("/api/chat", auth=auth, json={"message": "hello"})
     assert response.status_code == code
@@ -755,44 +819,58 @@ def test_chat_failure_has_safe_actionable_error_and_can_recover(tmp_path, failur
 
 def test_cancel_route_requires_auth_and_remembers_early_stop(tmp_path):
     client, service = _client_with_service(_write_api_config(tmp_path))
-    auth = ('admin', 'test-only-long-password')
-    assert client.post('/api/chat/turn-one/cancel').status_code == 401
-    assert client.post('/api/chat/turn-one/cancel', auth=auth).json() == {'cancelled': True}
-    result = client.post('/api/chat', auth=auth, json={'message':'Synthetic', 'request_id':'turn-one'})
+    auth = ("admin", "test-only-long-password")
+    assert client.post("/api/chat/turn-one/cancel").status_code == 401
+    assert client.post("/api/chat/turn-one/cancel", auth=auth).json() == {"cancelled": True}
+    result = client.post(
+        "/api/chat", auth=auth, json={"message": "Synthetic", "request_id": "turn-one"}
+    )
     assert result.status_code == 409
     assert service.chat_turns == 0
-    assert client.post('/api/chat/turn-one/cancel', auth=auth).json() == {'cancelled': False}
-    assert client.post('/api/chat', auth=auth,
-                       json={'message':'What is your name?', 'request_id':'turn-two'}).status_code == 200
+    assert client.post("/api/chat/turn-one/cancel", auth=auth).json() == {"cancelled": False}
+    assert (
+        client.post(
+            "/api/chat", auth=auth, json={"message": "What is your name?", "request_id": "turn-two"}
+        ).status_code
+        == 200
+    )
 
 
 def test_cancel_active_chat_suppresses_late_result_and_preserves_new_turn(tmp_path):
     import threading
     from unittest.mock import Mock
+
     from arietta_voice.api import ChatRequest
     from arietta_voice.worker import WorkerCancelled
+
     _, service = _client_with_service(_write_api_config(tmp_path))
     entered, release, errors = threading.Event(), threading.Event(), []
+
     def late_result(*args, **kwargs):
         entered.set()
         assert release.wait(2)
         # Deliberately ignore the token here; service must still reject stale output.
-        return dict(response='Late answer', source='model', used_tool=None, model_tool=None)
+        return dict(response="Late answer", source="model", used_tool=None, model_tool=None)
+
     service.worker = Mock(call=late_result, pid=None)
+
     def run():
         try:
-            service.chat(ChatRequest(message='Synthetic', request_id='old'))
+            service.chat(ChatRequest(message="Synthetic", request_id="old"))
         except Exception as exc:
             errors.append(exc)
+
     thread = threading.Thread(target=run)
     thread.start()
     assert entered.wait(2)
-    assert service.cancel_chat('old')
+    assert service.cancel_chat("old")
     release.set()
     thread.join(2)
     assert not thread.is_alive() and isinstance(errors[0], WorkerCancelled)
     assert service.chat_turns == 0
-    service.worker.call = lambda *a, **kw: dict(response='New', source='model', used_tool=None, model_tool=None)
-    assert service.chat(ChatRequest(message='New', request_id='new')).response == 'New'
-    assert not service.cancel_chat('old')
+    service.worker.call = lambda *a, **kw: dict(
+        response="New", source="model", used_tool=None, model_tool=None
+    )
+    assert service.chat(ChatRequest(message="New", request_id="new")).response == "New"
+    assert not service.cancel_chat("old")
     assert service.chat_turns == 1

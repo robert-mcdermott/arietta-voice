@@ -10,7 +10,9 @@ from arietta_voice.model_tools.base import ModelToolContext, ModelToolExecution
 # built-in default.
 class ExampleModelTool:
     name = "example_model_tool"
-    description = "you need a short follow-up lookup that the model cannot answer reliably on its own"
+    description = (
+        "you need a short follow-up lookup that the model cannot answer reliably on its own"
+    )
     arguments_example = {"topic": "<short topic>"}
 
     def invoke(self, arguments: dict[str, object]) -> ModelToolExecution | None:

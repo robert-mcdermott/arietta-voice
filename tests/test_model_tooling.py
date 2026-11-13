@@ -4,8 +4,8 @@ from pathlib import Path
 
 from arietta_voice.config import KnowledgeConfig, default_config
 from arietta_voice.knowledge import KnowledgeRetriever
-from arietta_voice.model_tools import ModelToolRegistry
 from arietta_voice.model_tooling import maybe_generate_with_model_tools, parse_model_tool_request
+from arietta_voice.model_tools import ModelToolRegistry
 
 
 def test_parse_model_tool_request_accepts_fenced_json() -> None:
@@ -179,13 +179,13 @@ def test_maybe_generate_with_model_tools_executes_system_info(tmp_path: Path, mo
         llm_generate=fake_llm,
     )
 
-    assert response == "This machine is a Macmini9,1 with 16 GB of RAM and plenty of free disk space."
+    assert (
+        response == "This machine is a Macmini9,1 with 16 GB of RAM and plenty of free disk space."
+    )
     assert tool_use is not None
     assert tool_use.name == "get_system_info"
     assert tool_use.details == {}
     assert len(calls) == 2
     assert any(
-        "Macmini9,1" in message["content"]
-        for message in calls[1]
-        if message["role"] == "system"
+        "Macmini9,1" in message["content"] for message in calls[1] if message["role"] == "system"
     )

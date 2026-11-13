@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from arietta_voice.config import AppConfig
@@ -23,18 +23,22 @@ def _check(name: str, ok: bool, detail: str, **metadata: Any) -> dict[str, Any]:
 
 def list_audio_devices() -> list[dict[str, Any]]:
     from arietta_voice.devices import device_inventory
+
     return device_inventory()
 
 
 def run_startup_diagnostics(config: AppConfig, *, include_hardware: bool = True) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
-    if config.audio.tts_backend == 'mlx':
+    if config.audio.tts_backend == "mlx":
         try:
             from arietta_voice.tts_mlx import validate_trial
+
             validate_trial(config.audio.mlx_kokoro_model, config.audio.voice)
-            checks.append(_check('tts_backend', True, 'Experimental MLX dependencies and local assets found'))
+            checks.append(
+                _check("tts_backend", True, "Experimental MLX dependencies and local assets found")
+            )
         except ValueError as exc:
-            checks.append(_check('tts_backend', False, str(exc)))
+            checks.append(_check("tts_backend", False, str(exc)))
 
     soul_exists = config.prompts.soul_path.exists()
     checks.append(
@@ -81,7 +85,9 @@ def run_startup_diagnostics(config: AppConfig, *, include_hardware: bool = True)
     )
 
     config.knowledge.directory.mkdir(parents=True, exist_ok=True)
-    knowledge_readable = config.knowledge.directory.exists() and os.access(config.knowledge.directory, os.R_OK)
+    knowledge_readable = config.knowledge.directory.exists() and os.access(
+        config.knowledge.directory, os.R_OK
+    )
     checks.append(
         _check(
             "knowledge_directory",
@@ -101,17 +107,28 @@ def run_startup_diagnostics(config: AppConfig, *, include_hardware: bool = True)
             checks.append(
                 _check(
                     "audio_devices",
-                    input_count > 0 and (output_count > 0 or not (config.audio.tts_enabled or config.audio.chime_enabled)),
+                    input_count > 0
+                    and (
+                        output_count > 0
+                        or not (config.audio.tts_enabled or config.audio.chime_enabled)
+                    ),
                     f"Found {input_count} input and {output_count} output audio devices",
                     input_count=input_count,
                     output_count=output_count,
                 )
             )
             from arietta_voice.devices import select_devices
+
             selected_input, selected_output = select_devices(config.audio)
-            checks.append(_check('audio_selection', True, 'Selected audio devices support the required formats',
-                                 input=selected_input['selector'],
-                                 output=selected_output['selector'] if selected_output else None))
+            checks.append(
+                _check(
+                    "audio_selection",
+                    True,
+                    "Selected audio devices support the required formats",
+                    input=selected_input["selector"],
+                    output=selected_output["selector"] if selected_output else None,
+                )
+            )
         except Exception as exc:
             checks.append(
                 _check(

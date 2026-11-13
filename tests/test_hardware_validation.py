@@ -1,14 +1,14 @@
 """Safety/reporting contracts only; CI must never open devices or load models."""
-from dataclasses import asdict
+
 import json
-from pathlib import Path
+from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from arietta_voice.config import default_config
-from scripts import hardware_validation as validation
+from bench import hardware_validation as validation
 
 
 def test_test_profile_preserves_source_settings_and_excludes_private_context(tmp_path):
@@ -41,8 +41,13 @@ def test_test_profile_preserves_source_settings_and_excludes_private_context(tmp
     assert "private" not in config.prompts.soul_path.read_text()
     assert "text-to-speech" in config.prompts.soul_path.read_text()
     assert config.wake_word.phrases == default_config(target).wake_word.phrases
-    for path in (config.prompts.soul_path, config.prompts.memory_path,
-                 config.logging.directory, config.knowledge.directory, config.knowledge.index_directory):
+    for path in (
+        config.prompts.soul_path,
+        config.prompts.memory_path,
+        config.logging.directory,
+        config.knowledge.directory,
+        config.knowledge.index_directory,
+    ):
         assert path.is_relative_to(target)
 
 
@@ -75,9 +80,11 @@ def test_resource_summary_excludes_startup_ramp(tmp_path):
 
 
 def test_event_summary_detects_content_without_copying_it(tmp_path):
-    events = [{"event": "session_ended", "reason": "user_goodbye"},
-              {"event": "assistant_audio_complete", "interrupted": True},
-              {"event": "user_transcript", "text": "synthetic private phrase"}]
+    events = [
+        {"event": "session_ended", "reason": "user_goodbye"},
+        {"event": "assistant_audio_complete", "interrupted": True},
+        {"event": "user_transcript", "text": "synthetic private phrase"},
+    ]
     (tmp_path / "events.jsonl").write_text("\n".join(map(json.dumps, events)))
     (tmp_path / "events.jsonl.lock").write_text("")
     result = validation.summarize_events(tmp_path)
@@ -98,13 +105,36 @@ def test_private_fingerprint_detects_edits_without_modifying_files(tmp_path):
     assert validation.protected_fingerprints(tmp_path) != before
 
 
-@pytest.mark.parametrize("failure", [None, "turn", "heartbeat", "missing_heartbeat", "content", "status_content", "device", "duration", "broken_log"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "turn",
+        "heartbeat",
+        "missing_heartbeat",
+        "content",
+        "status_content",
+        "device",
+        "duration",
+        "broken_log",
+    ],
+)
 def test_live_gates_do_not_hide_failures(failure):
-    status = {"lifecycle": "stopped", "last_error": None,
-              "reliability": {"turn_failures": 0, "turn_timeouts": 0, "worker_restarts": 0,
-                              "audio": {"input_overflows": 0}}}
-    report = {"duration_completed": True, "raw_status_has_content": False,
-              "events": {"content_fields_present": False, "invalid_records": 0}}
+    status = {
+        "lifecycle": "stopped",
+        "last_error": None,
+        "reliability": {
+            "turn_failures": 0,
+            "turn_timeouts": 0,
+            "worker_restarts": 0,
+            "audio": {"input_overflows": 0},
+        },
+    }
+    report = {
+        "duration_completed": True,
+        "raw_status_has_content": False,
+        "events": {"content_fields_present": False, "invalid_records": 0},
+    }
     samples = [{"ready": True, "heartbeat_age_seconds": 0.5}]
     if failure == "turn":
         status["reliability"]["turn_failures"] = 1
@@ -133,52 +163,89 @@ def test_partial_event_is_reported_as_failure_without_disclosing_text(tmp_path):
 
 
 def test_playback_alignment_and_underflow_counts_are_preserved(tmp_path):
-    rows = [dict(event='assistant_audio_complete', interrupted=True, alignment_resets=2, output_underflows=1),
-            dict(event='assistant_audio_complete', interrupted=False, alignment_resets=1, output_underflows=0)]
-    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
+    rows = [
+        dict(
+            event="assistant_audio_complete",
+            interrupted=True,
+            alignment_resets=2,
+            output_underflows=1,
+        ),
+        dict(
+            event="assistant_audio_complete",
+            interrupted=False,
+            alignment_resets=1,
+            output_underflows=0,
+        ),
+    ]
+    (tmp_path / "events.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
     report = validation.summarize_events(tmp_path)
-    assert report['alignment_resets'] == 3
-    assert report['output_underflows'] == report['voice_interruptions'] == 1
-    assert report['alignment_reset_reasons'] == {}
-    assert report['capture_discard_reasons'] == {}
-    assert report['output_timing']['playbacks'] == 0
+    assert report["alignment_resets"] == 3
+    assert report["output_underflows"] == report["voice_interruptions"] == 1
+    assert report["alignment_reset_reasons"] == {}
+    assert report["capture_discard_reasons"] == {}
+    assert report["output_timing"]["playbacks"] == 0
 
 
 def test_output_timing_summary_sums_counts_and_takes_maxima(tmp_path):
-    rows = [dict(event='assistant_audio_complete', output_timing={
-        'writes':count, 'gap_silence_writes':1, 'gap_silence_samples':480,
-        'producer_wait_max_ms':delay}) for count,delay in [(4,100),(2,80)]]
-    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
-    report = validation.summarize_events(tmp_path)['output_timing']
-    assert report['playbacks'] == 2
-    assert report['writes'] == 6
-    assert report['gap_silence_writes'] == 2
-    assert report['gap_silence_samples'] == 960
-    assert report['producer_wait_max_ms'] == 100
+    rows = [
+        dict(
+            event="assistant_audio_complete",
+            output_timing={
+                "writes": count,
+                "gap_silence_writes": 1,
+                "gap_silence_samples": 480,
+                "producer_wait_max_ms": delay,
+            },
+        )
+        for count, delay in [(4, 100), (2, 80)]
+    ]
+    (tmp_path / "events.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+    report = validation.summarize_events(tmp_path)["output_timing"]
+    assert report["playbacks"] == 2
+    assert report["writes"] == 6
+    assert report["gap_silence_writes"] == 2
+    assert report["gap_silence_samples"] == 960
+    assert report["producer_wait_max_ms"] == 100
 
 
 def test_forced_gap_summary_is_bounded_and_does_not_copy_arbitrary_content(tmp_path):
-    rows = [dict(event='forced_gap_case_complete',case_id=i,phase='gap',
-                 gap_silence_writes=10,text='synthetic sensitive content') for i in range(35)]
-    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
+    rows = [
+        dict(
+            event="forced_gap_case_complete",
+            case_id=i,
+            phase="gap",
+            gap_silence_writes=10,
+            text="synthetic sensitive content",
+        )
+        for i in range(35)
+    ]
+    (tmp_path / "events.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
     report = validation.summarize_events(tmp_path)
-    assert len(report['forced_gap_cases']) == 32
-    assert report['forced_gap_cases_omitted'] == 3
-    assert report['content_fields_present']
-    assert 'synthetic sensitive content' not in json.dumps(report)
+    assert len(report["forced_gap_cases"]) == 32
+    assert report["forced_gap_cases_omitted"] == 3
+    assert report["content_fields_present"]
+    assert "synthetic sensitive content" not in json.dumps(report)
 
 
 def test_playback_reason_counters_are_aggregated(tmp_path):
-    rows = [dict(event='assistant_audio_complete', alignment_resets=1,
-                 alignment_reset_reasons={'timestamp_gap': 1},
-                 capture_discard_reasons={'before_playback': 2}),
-            dict(event='assistant_audio_complete', alignment_resets=2,
-                 alignment_reset_reasons={'timestamp_gap': 1, 'output_underflow': 1},
-                 capture_discard_reasons={'before_playback': 1})]
-    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(row) for row in rows))
+    rows = [
+        dict(
+            event="assistant_audio_complete",
+            alignment_resets=1,
+            alignment_reset_reasons={"timestamp_gap": 1},
+            capture_discard_reasons={"before_playback": 2},
+        ),
+        dict(
+            event="assistant_audio_complete",
+            alignment_resets=2,
+            alignment_reset_reasons={"timestamp_gap": 1, "output_underflow": 1},
+            capture_discard_reasons={"before_playback": 1},
+        ),
+    ]
+    (tmp_path / "events.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
     report = validation.summarize_events(tmp_path)
-    assert report['alignment_reset_reasons'] == {'timestamp_gap': 2, 'output_underflow': 1}
-    assert report['capture_discard_reasons'] == {'before_playback': 3}
+    assert report["alignment_reset_reasons"] == {"timestamp_gap": 2, "output_underflow": 1}
+    assert report["capture_discard_reasons"] == {"before_playback": 3}
 
 
 def test_cleanup_never_signals_an_unrelated_process_group(monkeypatch):
@@ -195,8 +262,11 @@ def test_cleanup_never_signals_an_unrelated_process_group(monkeypatch):
 
 def test_tts_uses_remaining_turn_budget_and_closes_stream():
     worker = Mock(pid=1)
-    runtime = SimpleNamespace(_turn_deadline=123.0, worker=worker,
-                              config=SimpleNamespace(runtime=SimpleNamespace(turn_timeout_s=60)))
+    runtime = SimpleNamespace(
+        _turn_deadline=123.0,
+        worker=worker,
+        config=SimpleNamespace(runtime=SimpleNamespace(turn_timeout_s=60)),
+    )
     runtime._infer = Mock(side_effect=[None, None])
     with pytest.raises(ValueError, match="no audio"):
         validation._synthesize(runtime, "synthetic")
@@ -217,18 +287,34 @@ def test_trial_overrides_leave_source_and_private_profile_untouched(tmp_path):
 
 @pytest.mark.parametrize("failure", [None, "pid", "restart", "resident", "backend", "memory"])
 def test_soak_rejects_worker_replacement_or_incomplete_model_evidence(failure):
-    snapshot = dict(stt_loaded=True, chat_loaded=True, tts_loaded=True, endpoint_loaded=True,
-                    tts_backend="mlx", peak_rss_mib=100, mlx_active_mib=200,
-                    mlx_peak_mib=300, mlx_cache_mib=50)
+    snapshot = dict(
+        stt_loaded=True,
+        chat_loaded=True,
+        tts_loaded=True,
+        endpoint_loaded=True,
+        tts_backend="mlx",
+        peak_rss_mib=100,
+        mlx_active_mib=200,
+        mlx_peak_mib=300,
+        mlx_cache_mib=50,
+    )
     worker = SimpleNamespace(pid=42, restarts=0, call=Mock(return_value=snapshot))
-    runtime = SimpleNamespace(worker=worker, config=SimpleNamespace(audio=SimpleNamespace(tts_backend="mlx")))
-    if failure == "pid": worker.pid = 43
-    if failure == "restart": worker.restarts = 1
-    if failure == "resident": snapshot["chat_loaded"] = False
-    if failure == "backend": snapshot["tts_backend"] = "onnx"
-    if failure == "memory": snapshot["mlx_active_mib"] = float("nan")
+    runtime = SimpleNamespace(
+        worker=worker, config=SimpleNamespace(audio=SimpleNamespace(tts_backend="mlx"))
+    )
+    if failure == "pid":
+        worker.pid = 43
+    if failure == "restart":
+        worker.restarts = 1
+    if failure == "resident":
+        snapshot["chat_loaded"] = False
+    if failure == "backend":
+        snapshot["tts_backend"] = "onnx"
+    if failure == "memory":
+        snapshot["mlx_active_mib"] = float("nan")
     if failure:
-        with pytest.raises(ValueError): validation.resident_sample(runtime, 0, 42)
+        with pytest.raises(ValueError):
+            validation.resident_sample(runtime, 0, 42)
     else:
         result = validation.resident_sample(runtime, 0, 42)
         assert result["worker_pid"] == 42 and result["mlx_active_mib"] == 200

@@ -1,4 +1,5 @@
 """Shared isolation for unit tests and synthetic evaluations (never live models)."""
+
 import os
 import socket
 
@@ -18,7 +19,10 @@ def isolated_environment(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "locate_project_root", explicit_root)
     for name in tuple(os.environ):
-        if name.startswith(("AWS_", "ARIETTA_ADMIN_")) or name in {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}:
+        if name.startswith(("AWS_", "ARIETTA_ADMIN_")) or name in {
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+        }:
             monkeypatch.delenv(name)
     for name in ("AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"):
         monkeypatch.setenv(name, str(tmp_path / "empty-aws-config"))
@@ -28,7 +32,9 @@ def isolated_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-cache"))
 
     def synthetic_only(*args, **kwargs):
-        raise AssertionError("Live models, cloud clients and audio devices must be replaced with test fakes")
+        raise AssertionError(
+            "Live models, cloud clients and audio devices must be replaced with test fakes"
+        )
 
     for target in (
         "arietta_voice.llm.GemmaChatModel.ensure_loaded",
@@ -39,7 +45,9 @@ def isolated_environment(tmp_path, monkeypatch):
         "arietta_voice.turn_detection.SmartTurnEndpointDetector.ensure_loaded",
         "arietta_voice.knowledge.BgeTextEmbedder.__init__",
         "boto3.Session",
-        "sounddevice.InputStream", "sounddevice.OutputStream", "sounddevice.play",
+        "sounddevice.InputStream",
+        "sounddevice.OutputStream",
+        "sounddevice.play",
     ):
         monkeypatch.setattr(target, synthetic_only)
 

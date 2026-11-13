@@ -3,9 +3,10 @@
 Limits apply to item size as well as item count. Cancellation clears queued data,
 wakes both sides and never allows a cancelled channel to be reused for a new turn.
 """
-from collections import deque
+
 import threading
 import time
+from collections import deque
 
 
 class TurnCancelled(Exception):
@@ -36,9 +37,9 @@ class CancellationToken:
 
     def check(self, deadline=None):
         if self.cancelled:
-            raise TurnCancelled('Turn cancelled')
+            raise TurnCancelled("Turn cancelled")
         if deadline is not None and time.monotonic() >= deadline:
-            raise TurnTimeout('Turn exceeded its time limit')
+            raise TurnTimeout("Turn exceeded its time limit")
 
     def cancel(self):
         with self._lock:
@@ -62,7 +63,7 @@ class CancellationToken:
 class BoundedChannel:
     def __init__(self, token, *, max_items, max_item_size, size=len, deadline=None):
         if max_items < 1 or max_item_size < 1:
-            raise ValueError('Channel limits must be positive')
+            raise ValueError("Channel limits must be positive")
         self.token, self.deadline = token, deadline
         self.max_items, self.max_item_size, self.size = max_items, max_item_size, size
         self._items = deque()
@@ -83,17 +84,17 @@ class BoundedChannel:
 
     def put(self, item):
         if self.size(item) > self.max_item_size:
-            raise ValueError('Stream item exceeds its size limit')
+            raise ValueError("Stream item exceeds its size limit")
         with self._condition:
             while True:
                 self.token.check(self.deadline)
                 if self._finished:
-                    raise ChannelClosed('Channel closed')
+                    raise ChannelClosed("Channel closed")
                 if len(self._items) < self.max_items:
                     self._items.append(item)
                     self._condition.notify_all()
                     return
-                self._condition.wait(.05)
+                self._condition.wait(0.05)
 
     def get(self, on_wait=None, timeout=None):
         until = time.monotonic() + timeout if timeout is not None else None
@@ -107,10 +108,10 @@ class BoundedChannel:
                     self._condition.notify_all()
                     return item
                 if self._finished:
-                    raise ChannelClosed('Channel drained')
+                    raise ChannelClosed("Channel drained")
                 if until is not None and time.monotonic() >= until:
                     raise ChannelEmpty()
-                wait = .05 if until is None else min(.05, max(0, until - time.monotonic()))
+                wait = 0.05 if until is None else min(0.05, max(0, until - time.monotonic()))
                 self._condition.wait(wait)
                 if on_wait is not None:
                     on_wait()

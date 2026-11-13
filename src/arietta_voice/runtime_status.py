@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
-import time
 import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from arietta_voice.config import AppConfig
-
 
 RUNTIME_STATUS_FILENAME = "runtime_status.json"
 DEFAULT_STALE_AFTER_SECONDS = 60.0
@@ -60,9 +59,8 @@ def read_runtime_status(
     heartbeat_at = str(payload.get("heartbeat_at") or "").strip() or None
     heartbeat_age = _heartbeat_age_seconds(heartbeat_at)
     lifecycle = str(payload.get("lifecycle") or "running")
-    is_stale = (
-        lifecycle == "running"
-        and (heartbeat_age is None or heartbeat_age > stale_after_seconds)
+    is_stale = lifecycle == "running" and (
+        heartbeat_age is None or heartbeat_age > stale_after_seconds
     )
     is_running = lifecycle == "running" and not is_stale
 
@@ -108,7 +106,9 @@ def write_runtime_status(config: AppConfig, payload: dict[str, Any]) -> None:
     path = runtime_status_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".tmp")
-    with os.fdopen(os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w", encoding="utf-8") as handle:
+    with os.fdopen(
+        os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "w", encoding="utf-8"
+    ) as handle:
         os.fchmod(handle.fileno(), 0o600)
         json.dump(_redact_conversation(config, payload), handle, indent=2, sort_keys=True)
     tmp_path.replace(path)
@@ -135,9 +135,11 @@ class RuntimeStatusPublisher:
 
     def start(self, runtime: Any) -> None:
         self._stop_event.clear()
+
         def heartbeat():
             while not self._stop_event.wait(self.interval_seconds):
                 runtime._publish_status()
+
         self._thread = threading.Thread(target=heartbeat, name="arietta-heartbeat", daemon=True)
         self._thread.start()
         runtime._publish_status(force=True)
@@ -180,7 +182,9 @@ class RuntimeStatusPublisher:
             "display_speech_level": float(getattr(runtime, "display_speech_level", 0.0) or 0.0),
             "display_speaking_active": bool(getattr(runtime, "display_speaking_active", False)),
             "last_error": getattr(runtime, "last_error", None),
-            "reliability": runtime.reliability_snapshot() if hasattr(runtime, "reliability_snapshot") else {},
+            "reliability": runtime.reliability_snapshot()
+            if hasattr(runtime, "reliability_snapshot")
+            else {},
         }
 
 

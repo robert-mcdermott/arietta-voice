@@ -1,7 +1,7 @@
 # Continuous streamed playback and live-capture soak
 
 October 13–19, 2026. Follow-up to [forced-gap validation](FORCED_GAP_VALIDATION.md)
-and the earlier [15-minute model-only soak](MLX_LIVE_SOAK.md). ONNX remains the
+and the earlier [15-minute model-only soak](../docs/archive/experiments/MLX_LIVE_SOAK.md). ONNX remains the
 default; this experiment uses the prepared MLX trial environment and cached
 assets without changing production code, dependencies or private settings.
 
@@ -215,7 +215,7 @@ With the normal runtime stopped and the existing trial environment prepared:
 
 ```sh
 uv run --no-project --python tmp/kokoro-integration/venv/bin/python \
-  scripts/live_load_soak.py --minutes 30 \
+  bench/live_load_soak.py --minutes 30 \
   --fixtures tmp/kokoro-integration/fixtures.npz \
   --tts-backend mlx \
   --mlx-kokoro-model tmp/kokoro-experiment/Kokoro-82M-bf16

@@ -14,10 +14,10 @@ Stop the normal voice runtime, then run from the repository:
 ```bash
 # 100 measured warm turns, plus one separately reported first turn.
 # Answers and normal thinking chimes play through the default output device.
-uv run --locked scripts/latency_baseline.py --turns 100 --audible
+uv run --locked bench/latency_baseline.py --turns 100 --audible
 
 # The same real output-device path with zero-valued samples instead of sound.
-uv run --locked scripts/latency_baseline.py --turns 100
+uv run --locked bench/latency_baseline.py --turns 100
 ```
 
 The script accepts `--config /path/to/base.toml` and `--idle-seconds` (default
@@ -38,7 +38,7 @@ Local files are never migrated or rewritten. No microphone is opened and no
 ambient speech is collected. It uses the existing locked model stack and the
 same cache/download policy as [hardware validation](HARDWARE_VALIDATION.md).
 
-Ten fixed questions in `scripts/latency_baseline.py` cover short arithmetic,
+Ten fixed questions in `bench/latency_baseline.py` cover short arithmetic,
 facts and two one-sentence explanations. Kokoro generates input fixtures in
 memory. After resampling to the capture rate, trailing samples below -60 dB of
 peak are trimmed; the end of that waveform defines input speech end. Fixture

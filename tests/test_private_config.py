@@ -1,17 +1,25 @@
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
-import subprocess
 
 import pytest
 
 from arietta_voice.config import load_config
-from arietta_voice.private_config import initialize_private_config, local_config_path, update_private_section
+from arietta_voice.private_config import (
+    initialize_private_config,
+    local_config_path,
+    update_private_section,
+)
 
 
 def test_local_overrides_merge_by_setting_and_resolve_relative_paths(tmp_path):
     base = tmp_path / "custom.toml"
-    base.write_text('[assistant]\nname="Original"\nmax_history_turns=2\n[tools]\nenabled=["local_time"]')
-    local_config_path(base).write_text('[assistant]\nname="Private"\n[tools]\nenabled=[]\n[prompts]\nsoul_path="SOUL.local.md"')
+    base.write_text(
+        '[assistant]\nname="Original"\nmax_history_turns=2\n[tools]\nenabled=["local_time"]'
+    )
+    local_config_path(base).write_text(
+        '[assistant]\nname="Private"\n[tools]\nenabled=[]\n[prompts]\nsoul_path="SOUL.local.md"'
+    )
     config = load_config(base)
     assert config.assistant.name == "Private"
     assert config.assistant.max_history_turns == 2
@@ -37,7 +45,9 @@ def test_private_config_is_validated_and_unknown_fields_rejected(tmp_path):
 
 def test_initialization_preserves_effective_settings_and_original_files(tmp_path):
     base = tmp_path / "arietta_voice.toml"
-    base.write_text('[assistant]\nname="Private persona"\n[models]\naws_secret_access_key="synthetic-secret"\n[prompts]\nsoul_path="custom-soul.md"')
+    base.write_text(
+        '[assistant]\nname="Private persona"\n[models]\naws_secret_access_key="synthetic-secret"\n[prompts]\nsoul_path="custom-soul.md"'
+    )
     soul = tmp_path / "custom-soul.md"
     soul.write_text("Private custom persona.\n")
     original_config, original_soul = base.read_bytes(), soul.read_bytes()
@@ -61,7 +71,9 @@ def test_admin_updates_only_private_config_and_preserves_unrelated_values(tmp_pa
     base.write_text('[assistant]\nname="Original"\n[tools]\nenabled=[]')
     original = base.read_bytes()
     local = local_config_path(base)
-    local.write_text('[models]\naws_secret_access_key="synthetic-secret"\n[assistant]\nname="Private"')
+    local.write_text(
+        '[models]\naws_secret_access_key="synthetic-secret"\n[assistant]\nname="Private"'
+    )
     update_private_section(base, "tools", {"enabled": ["local_time"]})
     update_private_section(base, "model_tools", {"enabled": []})
     config = load_config(base)
@@ -75,10 +87,22 @@ def test_admin_updates_only_private_config_and_preserves_unrelated_values(tmp_pa
 
 def test_repository_ignores_private_settings_and_backups():
     root = Path(__file__).resolve().parents[1]
-    private_paths = ["config/arietta_voice.local.toml", "config/SOUL.local.md",
-                     "config/arietta_voice.admin.json", "config/arietta_voice.local.toml.lock",
-                     "config/.private-backups/example/original.toml", "config/arietta_voice.toml.working",
-                     "config/.arietta_voice.local.toml.partial", "config/.SOUL.local.md.partial",
-                     "config/.arietta_voice.admin.json.partial"]
-    result = subprocess.run(["git", "check-ignore", "--no-index", "--", *private_paths], cwd=root, capture_output=True, text=True, check=True)
+    private_paths = [
+        "config/arietta_voice.local.toml",
+        "config/SOUL.local.md",
+        "config/arietta_voice.admin.json",
+        "config/arietta_voice.local.toml.lock",
+        "config/.private-backups/example/original.toml",
+        "config/arietta_voice.toml.working",
+        "config/.arietta_voice.local.toml.partial",
+        "config/.SOUL.local.md.partial",
+        "config/.arietta_voice.admin.json.partial",
+    ]
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--", *private_paths],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     assert set(result.stdout.splitlines()) == set(private_paths)

@@ -6,7 +6,11 @@ import zipfile
 import pytest
 
 from scripts.check_release import (
-    PUBLIC_CONFIG, PUBLIC_KNOWLEDGE, check_artifacts, check_tracked, check_versions,
+    PUBLIC_CONFIG,
+    PUBLIC_KNOWLEDGE,
+    check_artifacts,
+    check_tracked,
+    check_versions,
 )
 
 
@@ -29,13 +33,25 @@ def test_public_starter_files_are_allowed(repository):
     assert check_tracked(repository) == []
 
 
-@pytest.mark.parametrize("name", [
-    "knowledge/custom.md", "knowledge/nested/custom.md", "knowledge/photo.png",
-    "config/arietta_voice.local.toml", "config/SOUL.local.md", "config/arietta_voice.admin.json",
-    "config/.private-backups/settings.toml", "config/arietta_voice.toml.working",
-    "config/MEMORY.md", "logs/events.jsonl", "logs/recording.wav",
-    ".knowledge_index/vectors.npy", ".env", ".aws/credentials",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "knowledge/custom.md",
+        "knowledge/nested/custom.md",
+        "knowledge/photo.png",
+        "config/arietta_voice.local.toml",
+        "config/SOUL.local.md",
+        "config/arietta_voice.admin.json",
+        "config/.private-backups/settings.toml",
+        "config/arietta_voice.toml.working",
+        "config/MEMORY.md",
+        "logs/events.jsonl",
+        "logs/recording.wav",
+        ".knowledge_index/vectors.npy",
+        ".env",
+        ".aws/credentials",
+    ],
+)
 def test_force_added_private_files_fail_without_deleting_local_data(repository, name):
     (repository / ".gitignore").write_text("*\n")
     stage(repository, [name])
@@ -92,15 +108,18 @@ def test_distribution_metadata_and_private_paths(tmp_path):
     assert check_artifacts(tmp_path, "0.1.0") == []
 
 
-@pytest.mark.parametrize("options", [
-    {"version": "0.2.0"},
-    {"wheel_extra": "arietta_voice/SOUL.local.md"},
-    {"wheel_extra": "arietta_voice/../../private.txt"},
-    {"sdist_extra": "config/arietta_voice.local.toml"},
-    {"sdist_extra": "knowledge/custom.md"},
-    {"sdist_extra": "logs/recording.wav"},
-    {"sdist_extra": "src/link.py", "symlink": True},
-])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"version": "0.2.0"},
+        {"wheel_extra": "arietta_voice/SOUL.local.md"},
+        {"wheel_extra": "arietta_voice/../../private.txt"},
+        {"sdist_extra": "config/arietta_voice.local.toml"},
+        {"sdist_extra": "knowledge/custom.md"},
+        {"sdist_extra": "logs/recording.wav"},
+        {"sdist_extra": "src/link.py", "symlink": True},
+    ],
+)
 def test_distributions_reject_private_members_and_version_drift(tmp_path, options):
     distributions(tmp_path, **options)
     assert check_artifacts(tmp_path, "0.1.0")
