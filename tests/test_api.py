@@ -324,6 +324,58 @@ def test_admin_console_requires_basic_auth(tmp_path: Path) -> None:
     assert "Arietta Voice" in authenticated.text
 
 
+def test_console_assets_are_authenticated_and_contained(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+    auth = ("admin", "test-only-long-password")
+
+    assert client.get("/static/js/main.js").status_code == 401
+
+    page = client.get("/admin", auth=auth)
+    assert page.headers["content-type"].startswith("text/html")
+    policy = page.headers["content-security-policy"]
+    assert "script-src 'self'" in policy and "unsafe-inline" not in policy
+    # The policy only holds if the page carries no inline script or style.
+    assert "<style" not in page.text and " style=" not in page.text
+    assert all("src=" in tag for tag in page.text.split("<script")[1:])
+
+    script = client.get("/static/js/main.js", auth=auth)
+    assert script.status_code == 200
+    assert script.headers["content-type"].startswith("text/javascript")
+    assert (
+        client.get("/static/css/console.css", auth=auth)
+        .headers["content-type"]
+        .startswith("text/css")
+    )
+
+    for escape in (
+        "/static/../app.py",
+        "/static/%2e%2e/app.py",
+        "/static/..%2fapp.py",
+        "/static/js/../../service.py",
+        "/static/js",
+        "/static/missing.js",
+    ):
+        assert client.get(escape, auth=auth).status_code == 404, escape
+
+
+def test_console_page_references_only_packaged_assets(tmp_path: Path) -> None:
+    import re
+
+    from arietta_voice.web.app import STATIC_DIR, STATIC_MEDIA_TYPES
+
+    page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    references = re.findall(r'(?:src|href)="(/static/[^"]+)"', page)
+    assert references
+    for reference in references:
+        assert (STATIC_DIR / reference.removeprefix("/static/")).is_file(), reference
+    for script in (STATIC_DIR / "js").glob("*.js"):
+        for imported in re.findall(r'from "\./([^"]+)"', script.read_text(encoding="utf-8")):
+            assert (STATIC_DIR / "js" / imported).is_file(), f"{script.name} imports {imported}"
+    assert {path.suffix for path in STATIC_DIR.rglob("*") if path.is_file()} <= set(
+        STATIC_MEDIA_TYPES
+    )
+
+
 def test_state_and_config_are_authenticated(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 

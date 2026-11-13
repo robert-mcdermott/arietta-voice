@@ -173,21 +173,26 @@ operation well enough to replace the pipeline.
 
 ## Console track
 
-The console today is a working admin tool with a generic look: equal-weight
-coloured buttons, raw JSON panes, a read-only configuration dump, a dashboard
-of debug counters, and 2,100 lines of HTML, CSS and JavaScript inside a Python
-string in `api.py`.
-
 **C1 — with Milestones 0–1**
 
-- Extract the frontend into static files served from the package; split
-  `api.py` into app, routes and service modules. No build step required.
-- One design system: typography, spacing, a restrained palette, a single
-  primary action per view, and proper light and dark themes.
-- **Home** becomes a live view of the assistant: current state, the
-  conversation as it happens, and a per-turn latency timeline, pushed over
-  server-sent events instead of polling.
-- **Chat** streams responses and shows tool activity inline.
+Done:
+
+- The frontend is static files served from the package (`web/static/`, no
+  build step), and `api.py` is split into app, service and schema modules
+  under `web/`. A strict content security policy forbids inline script.
+- One design system in the brand's violet: shared tokens for type, spacing
+  and colour, a single primary action per view, and light and dark themes.
+- **Home** shows the assistant's state, runtime controls, turn progress, the
+  current exchange and recent activity. Debug counters moved to **System**.
+- **Chat** is a conversation view with per-answer tool and timing detail.
+- **Activity** describes events in plain language; **Settings** shows the
+  effective configuration by section instead of a JSON dump.
+
+Still to do:
+
+- Push updates over server-sent events instead of polling.
+- Stream chat responses token by token.
+- A per-turn latency timeline on Home (needs the Milestone 1 stage timings).
 - Browser smoke tests in CI.
 
 **C2 — with Milestones 2–3**

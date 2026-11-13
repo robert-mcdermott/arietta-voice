@@ -131,7 +131,12 @@ HTTP Basic credentials are not encrypted by HTTP itself. The API rejects
 untrusted Host headers and cross-origin browser mutations, and marks responses
 non-cacheable. These controls do not provide TLS or a multi-user permission model.
 
-**Screenshot of the Arietta admin console's tool managment panel:**
+The console has seven sections: **Home** (live assistant status and runtime
+controls), **Chat**, **Knowledge**, **Tools**, **Activity** (the event log),
+**System** (health checks, audio and process detail) and **Settings** (the
+configuration in effect). It follows your system light or dark preference.
+
+**Screenshot of the earlier console design (to be replaced):**
 ![arietta console](assets/arietta_console.png)
 
 
@@ -406,7 +411,7 @@ single GPU scheduler. The timeout bounds inference work, not a stuck native audi
 driver or arbitrary subprocesses started by a custom plugin. Admin tool-validation,
 probe/invoke, and knowledge-index maintenance actions are outside the chat deadline.
 
-Each turn has a cancellation token. The web console's Chat Test has a **Stop**
+Each turn has a cancellation token. The web console's Chat page has a **Stop**
 button; terminal keypresses interrupt voice generation/playback, and detected
 speech interrupts playback. Cancellation discards queued output, aborts speaker
 output before waiting for generation cleanup, and terminates a worker blocked
@@ -438,7 +443,7 @@ TOML settings.
 When `[memory].enabled` is true, a fully delivered voice turn queues a memory
 update and immediately returns to listening. Extraction and optional
 consolidation begin after one second of quiet listening, using the same model
-worker. No second model is loaded. The web Chat Test still does not write memory.
+worker. No second model is loaded. The console Chat page still does not write memory.
 No config migration or new private setting is required.
 
 The queue holds at most two pending turns plus one active job. Each user/assistant
@@ -495,7 +500,7 @@ the requested tool has executed. The final answer then streams; malformed or
 unavailable tool requests fail without speaking the payload. When model tools
 are enabled and the planner answers directly, that answer is already complete
 before speech begins. Deterministic tool replies are also already complete.
-The web Chat Test shares this conversation policy but still displays one final
+The console Chat page shares this conversation policy but still displays one final
 response; this change does not introduce an HTTP streaming endpoint.
 
 Bedrock uses [ConverseStream](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html),
@@ -557,9 +562,9 @@ credentials, and admin password hashes are kept separately from app config.
 ### Admin tool permissions
 
 Inventory and source views inspect syntax and literal metadata without importing
-plugin code. They report **not validated**, not runtime readiness. Explicit
-Validate, Probe/Invoke, Save Enabled, and Preview Instructions actions may import
-and execute existing plugins. Instruction preview uses
+plugin code, so a listed tool is not yet proven to load; the Tools page says so.
+Explicit Validate, Test, Invoke, Save, and Preview model instructions actions
+may import and execute existing plugins. Instruction preview uses
 `POST /api/model-tools/instructions`.
 
 Creating tools and saving Python source are disabled by default, including at
@@ -675,6 +680,7 @@ The current repo is a strong foundation for a home assistant or office assistant
 ├── src/
 │   └── arietta_voice/
 │       ├── tools/              # Deterministic tools (directly invoked)
+│       ├── web/                # Console API (app, service, schemas) and static frontend
 │       ├── model_tools/        # Tools invoked by model reasoning
 │       └── ...                 # Core runtime, models, audio, and knowledge handling
 └── tests/                      # Unit and process regression tests

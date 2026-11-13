@@ -7,6 +7,19 @@ version policy and the release procedure.
 
 ### Changed
 
+- The web console is redesigned. It now has Home, Chat, Knowledge, Tools,
+  Activity, System and Settings sections, light and dark themes that follow the
+  system preference, and a layout that works at phone width. Home shows what the
+  assistant is doing; audio counters and process detail moved to System. The
+  event log is described in plain language, and Settings groups the effective
+  configuration by section.
+- Console pages use `#/section` addresses, so a section can be bookmarked.
+- Model tools can be invoked from the Tools list again. The button had been
+  permanently disabled since the tool inventory stopped importing tool code.
+- The console frontend is served as packaged static files under
+  `/static/` (authenticated like the rest of the console) with a content
+  security policy that forbids inline script and style. The API implementation
+  moved to `arietta_voice.web`; `arietta_voice.api` remains as an import alias.
 - Repository layout: guides now live in `docs/` (`getting-started.md`,
   `architecture.md`, `releasing.md`), images in `assets/`, and the latency,
   hardware and soak harnesses in `bench/` (previously `scripts/`). Concluded

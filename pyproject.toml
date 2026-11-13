@@ -32,6 +32,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+arietta_voice = ["web/static/*", "web/static/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "evals"]
 

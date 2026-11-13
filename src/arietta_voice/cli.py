@@ -260,7 +260,7 @@ def main() -> int:
     if args.command == "serve":
         import uvicorn
 
-        from arietta_voice.api import create_app
+        from arietta_voice.web import create_app
 
         try:
             app = create_app(args.config)
