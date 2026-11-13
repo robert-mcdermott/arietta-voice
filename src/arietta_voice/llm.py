@@ -99,37 +99,6 @@ class GemmaChatModel:
         finally:
             chunks.close()
 
-    def generate_with_image(
-        self,
-        prompt: str,
-        image_path: str | Path,
-        *,
-        max_tokens: int = 120,
-        temperature: float = 0.0,
-    ) -> str:
-        self.ensure_loaded()
-        from mlx_vlm import generate
-        from mlx_vlm.prompt_utils import apply_chat_template
-
-        formatted_prompt = apply_chat_template(
-            self._processor,
-            self._model.config,
-            prompt,
-            num_images=1,
-        )
-
-        result = generate(
-            self._model,
-            self._processor,
-            formatted_prompt,
-            image=str(image_path),
-            max_tokens=max_tokens,
-            temperature=temperature,
-            repetition_penalty=1.1,
-            verbose=False,
-        )
-        return result.text if hasattr(result, "text") else str(result)
-
 
 class BedrockChatModel:
     provider = "bedrock"
