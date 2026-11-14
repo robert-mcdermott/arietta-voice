@@ -5,6 +5,14 @@ version policy and the release procedure.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.2.0rc1 — 2026-11-14
+
+Release candidate for 0.2.0, the first tagged release: everything since the
+0.1.0 baseline. The final 0.2.0 waits on one 30-minute audible soak on the
+default ONNX speech stack (Milestone 0 in the roadmap).
+
 ### Changed
 
 - One tool interface replaces the separate "deterministic" and
