@@ -5,6 +5,12 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.2.0rc7 — 2026-11-14
+
+Seventh release candidate for 0.2.0: experimental transcription while you
+speak, off by default. No dependency changes. The final 0.2.0 still waits on
+the 30-minute audible soak.
+
 ### Added
 
 - Experimental: transcribe while you are still speaking
