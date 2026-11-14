@@ -64,7 +64,7 @@ wheels = [
 
 [[package]]
 name = "arietta-voice"
-version = "0.2.0rc3"
+version = "0.2.0rc4"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },

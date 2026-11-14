@@ -5,6 +5,13 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.2.0rc4 — 2026-11-14
+
+Fourth release candidate for 0.2.0: an optional smarter model for questions the
+local one cannot answer, off unless configured, and an Ollama chat provider.
+No dependency changes. The final 0.2.0 still waits on the 30-minute audible
+soak.
+
 ### Added
 
 - An optional smarter model (`[smarter_model]`, also in the console's
