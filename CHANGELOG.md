@@ -7,6 +7,17 @@ version policy and the release procedure.
 
 ### Changed
 
+- All dependencies upgraded to their latest releases (81 packages), including
+  transformers 5.5.4 to 5.23.0, torch 2.11 to 2.15, mlx 0.31 to 0.32, mlx-vlm
+  0.4.4 to 0.7.12, huggingface-hub 1.x to 2.4, onnxruntime 1.24 to 1.32,
+  kokoro-onnx 0.5 to 0.6, livekit 1.1 to 1.2 and fastapi 0.136 to 0.162.
+  Transcription, end-of-turn detection, voice activity, echo cancellation,
+  knowledge embeddings and chat answers were unchanged with the real models;
+  synthesised speech differs very slightly with the new Kokoro release. Median
+  time to first audio in the latency benchmark went from 1.75 s to 1.68 s.
+  Run `uv sync` after updating. The environment is about 0.4 GB larger.
+- `moonshine-voice` stays below 0.0.55 because 0.1.x changed its API and model
+  format; the reason is now recorded in `pyproject.toml`.
 - Faster turn-taking. The end of a turn is now also checked after 250 ms of
   silence (`audio.endpoint_early_ms`), and work on the answer starts at once
   when Smart Turn is at least 70% confident. The assistant keeps listening

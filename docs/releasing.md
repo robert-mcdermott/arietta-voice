@@ -37,6 +37,27 @@ Keep application version, config schema version, knowledge `INDEX_VERSION`, and
 model revisions separate. A model/library upgrade warrants an app release, but
 does not automatically require a major version; user-visible compatibility does.
 
+## Dependency policy
+
+Ship on the latest release of every dependency. Cap or pin an older version
+only for a demonstrated incompatibility, and write the reason next to the cap in
+`pyproject.toml`. Today the only cap is `moonshine-voice<0.0.55`, because 0.1.x
+changed its transcription API and model format.
+
+Before a release, refresh the lock with the uv version CI uses, so the lockfile
+format matches:
+
+```bash
+uvx uv@0.12.10 lock --upgrade
+uv sync --locked --group dev
+```
+
+Then run the checks below and a real-model smoke on the Mac: transcription,
+end-of-turn detection, knowledge embeddings, speech and a few chat turns, for
+example with `bench/latency_baseline.py --turns 30 --model-tools`. Unit tests
+replace every model with a fake, so they cannot catch a library change that
+alters real model output.
+
 ## Preparing a release
 
 1. Review the working tree and the proposed release scope. Keep personal config,

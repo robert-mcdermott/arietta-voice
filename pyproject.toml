@@ -12,6 +12,9 @@ dependencies = [
     "kokoro-onnx>=0.4",
     "livekit>=1.1.5",
     "mlx-vlm>=0.4.4",
+    # Capped: 0.1.x changed the transcription API and model format (see
+    # docs/archive/experiments/MOONSHINE_EXPERIMENT.md). Lift with the streaming
+    # transcription work in ROADMAP.md, Milestone 1.
     "moonshine-voice>=0.0.40,<0.0.55",
     "numpy>=2.4.4",
     "onnxruntime>=1.24.4",
