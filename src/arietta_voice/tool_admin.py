@@ -55,16 +55,13 @@ class ToolAdmin:
     def user_names(self) -> list[str]:
         if not self.tools_directory.is_dir():
             return []
-        builtin = set(builtin_names())
         return sorted(
-            p.stem
-            for p in self.tools_directory.glob("*.py")
-            if TOOL_NAME.fullmatch(p.stem) and p.stem not in builtin
+            p.stem for p in self.tools_directory.glob("*.py") if TOOL_NAME.fullmatch(p.stem)
         )
 
     def inventory(self) -> dict[str, Any]:
         enabled = enabled_tool_names(self.config)
-        known = [*builtin_names(), *self.user_names()]
+        known = list(dict.fromkeys([*builtin_names(), *self.user_names()]))
         names = [*enabled, *(name for name in known if name not in enabled)]
         records = [self.inspect(name) for name in names]
         return {
@@ -253,13 +250,13 @@ class ToolAdmin:
     def _source_path(self, name: str) -> tuple[Path, str]:
         if not TOOL_NAME.fullmatch(name):
             raise ValueError(f"Tool names are lowercase letters, digits and underscores: {name!r}")
+        path = user_tool_path(self.config, name)
+        if path.is_file():
+            return path, "user"  # Your file replaces a built-in of the same name.
         if name in builtin_names():
             package = importlib.import_module("arietta_voice.tools.builtin")
             return Path(package.__file__).parent / f"{name}.py", "builtin"
-        path = user_tool_path(self.config, name)
-        if not path.is_file():
-            raise FileNotFoundError(f"No tool file for {name!r} in {self.tools_directory}")
-        return path, "user"
+        raise FileNotFoundError(f"No tool file for {name!r} in {self.tools_directory}")
 
     def _config_path(self) -> Path:
         return self.config_path or self.config.project_root / "config" / "arietta_voice.toml"

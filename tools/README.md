@@ -7,6 +7,10 @@ from the console's Tools page. Restart the voice runtime afterwards.
 Only this README and `example_dice.py` are tracked by Git; your own tools stay
 local. The folder can be moved with `[tools].directory`.
 
+A file here with the same name as a built-in tool (such as `weather.py`)
+replaces that built-in, so a built-in added in an upgrade never hides a tool
+you already have. The console's Tools page marks it as yours.
+
 A tool is a class with a name, a description of when to use it, a JSON-schema
 description of its arguments, and a `run` method:
 

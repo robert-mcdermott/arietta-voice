@@ -135,6 +135,29 @@ def test_user_tools_load_from_the_tools_directory(tmp_path) -> None:
     assert registry.run("weather", {"city": "Oslo"}).content == "Sunny in Oslo."
 
 
+def test_a_user_tool_replaces_a_built_in_of_the_same_name(tmp_path) -> None:
+    from arietta_voice.tool_admin import ToolAdmin
+
+    config = default_config(tmp_path)
+    config.tools.enabled = ("local_time",)
+    config.tools.directory.mkdir(parents=True, exist_ok=True)
+    (config.tools.directory / "local_time.py").write_text(
+        "from arietta_voice.tools import BaseTool, ToolResult\n"
+        "class Mine(BaseTool):\n"
+        "    name = 'local_time'\n"
+        "    description = 'my own clock'\n"
+        "    triggers = (r'what time is it',)\n"
+        "    def run(self, arguments):\n"
+        "        return ToolResult(speak='Time for tea.')\n"
+        "def create_tool(context):\n"
+        "    return Mine(context)\n"
+    )
+    hit = ToolRegistry(config).fast_path("What time is it?")
+    assert hit.result.speak == "Time for tea."
+    record = next(r for r in ToolAdmin(config).inventory()["tools"] if r["name"] == "local_time")
+    assert record["origin"] == "user" and record["description"] == "my own clock"
+
+
 def test_broken_or_missing_tools_are_reported_without_disabling_the_rest(tmp_path) -> None:
     config = default_config(tmp_path)
     config.tools.enabled = ("local_time", "missing_tool", "broken", "misnamed")
