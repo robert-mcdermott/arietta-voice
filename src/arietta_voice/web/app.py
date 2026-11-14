@@ -19,6 +19,7 @@ from arietta_voice.web.schemas import (
     ChatRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
+    SettingsUpdateRequest,
     TimerCreateRequest,
     ToolCreateRequest,
     ToolEnabledRequest,
@@ -297,6 +298,20 @@ def create_app(
         _user: str = Depends(require_admin),
     ) -> dict[str, Any]:
         return svc().validate_tool(tool_name)
+
+    @app.get("/api/settings")
+    def api_settings(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().settings()
+
+    @app.put("/api/settings")
+    def api_update_settings(
+        payload: SettingsUpdateRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().update_settings(payload.changes)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/api/timers")
     def api_timers(_user: str = Depends(require_admin)) -> dict[str, Any]:

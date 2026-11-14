@@ -36,6 +36,7 @@ from arietta_voice.timers import (
 from arietta_voice.tool_admin import ToolAdmin
 from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turns import CancellationToken
+from arietta_voice.web import settings as settings_module
 from arietta_voice.web.schemas import ChatRequest, TimerCreateRequest, ToolCreateRequest
 from arietta_voice.worker import (
     InferenceWorker,
@@ -416,6 +417,25 @@ class AriettaApiService:
             "enabled": enabled_tool_names(self.config),
             "instruction_text": self.tool_admin.instruction_text(),
         }
+
+    # Settings the console can change (see web/settings.py).
+
+    def settings(self) -> dict[str, Any]:
+        return {
+            **settings_module.describe(self.config, self._base_config_path()),
+            "runtime_running": bool(self.runtime_status().get("is_running")),
+        }
+
+    def update_settings(self, changes: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        changed = settings_module.apply(self.config, self._base_config_path(), changes)
+        if changed:
+            # The console's own worker reads settings when it starts.
+            self.worker.invalidate()
+            self.event_logger.log("api_settings_changed", settings=changed)
+        return {"changed": changed, **self.settings()}
+
+    def _base_config_path(self) -> Path:
+        return self.config_path or self.config.project_root / "config" / "arietta_voice.toml"
 
     # Timers and reminders. The voice runtime announces them; the console lists,
     # adds and cancels them through the same file.

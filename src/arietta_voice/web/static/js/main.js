@@ -5,7 +5,7 @@ import { chatPending, initChat, showChat } from "./chat.js";
 import { $, $$, guard, setError } from "./core.js";
 import { loadContentLoggingFlag, loadOverview, pollRuntime, runtimeAction } from "./home.js";
 import { initKnowledge, knowledgeDirty, knowledgeEditing, loadKnowledgeFiles } from "./knowledge.js";
-import { loadDiagnostics, loadSettings } from "./system.js";
+import { initSettings, loadDiagnostics, loadSettings, settingsDirty } from "./system.js";
 import { initTimers } from "./timers.js";
 import { initTools, loadTools, toolsBusy, toolSourceDirty } from "./tools.js";
 
@@ -16,7 +16,7 @@ const VIEWS = {
   tools: ["Tools", "What your assistant can do beyond answering from its model."],
   activity: ["Activity", "A record of what the assistant heard, did and said."],
   system: ["System", "Health, audio and process detail for troubleshooting."],
-  settings: ["Settings", "The configuration currently in effect."],
+  settings: ["Settings", "Change how your assistant sounds and behaves."],
 };
 const RUNTIME_POLL_MS = 1500;
 const OVERVIEW_POLL_MS = 6000;
@@ -90,6 +90,7 @@ function init() {
   initKnowledge();
   initTools();
   initTimers();
+  initSettings(() => runtimeAction("restart"));
   initActivity();
 
   $$(".nav-button").forEach((button) =>
@@ -117,7 +118,7 @@ function init() {
   });
 
   window.addEventListener("beforeunload", (event) => {
-    if (toolSourceDirty() || knowledgeDirty() || chatPending()) {
+    if (toolSourceDirty() || knowledgeDirty() || chatPending() || settingsDirty()) {
       event.preventDefault();
       event.returnValue = "";
     }

@@ -254,6 +254,10 @@ edited the tracked files, review the private copies before restoring the tracked
 files to their committed defaults. Ignore rules do not protect tracked files or
 remove content from earlier commits.
 
+The console's Settings page can also change the common settings (name, wake
+word, voice, model temperature, timers, weather, memory, logging); it validates
+them and writes the private config for you.
+
 Precedence is built-in defaults, selected base TOML, its sibling `.local.toml`,
 then CLI runtime overrides. Sections merge by setting; arrays replace the entire
 base array, including `[]`. With `--config /path/custom.toml`, the sibling is

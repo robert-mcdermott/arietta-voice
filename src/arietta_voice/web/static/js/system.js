@@ -1,6 +1,17 @@
 // System (health, audio and process detail) and Settings (effective configuration).
 
-import { $, api, escapeHtml, formatDuration, localDateTime, table, words } from "./core.js";
+import {
+  $,
+  $$,
+  api,
+  escapeHtml,
+  formatDuration,
+  guard,
+  localDateTime,
+  table,
+  toast,
+  words,
+} from "./core.js";
 
 const STAGE_NAMES = {
   idle: "Ready",
@@ -167,7 +178,157 @@ function settingValue(value) {
   return escapeHtml(value);
 }
 
-export async function loadSettings() {
+// Editable settings: one card per group, saved to the private config.
+
+const settingsState = { groups: [], saving: false };
+
+function fieldInput(field, id) {
+  const value = field.value;
+  if (field.kind === "boolean") {
+    return `<label class="check"><input id="${id}" type="checkbox" ${value ? "checked" : ""}> On</label>`;
+  }
+  if (field.kind === "choice") {
+    return `<div class="segmented" role="group" aria-label="${escapeHtml(field.label)}" id="${id}">${field.choices
+      .map(
+        (choice) =>
+          `<button type="button" class="seg${choice === value ? " active" : ""}" data-choice="${escapeHtml(choice)}" aria-pressed="${choice === value}">${escapeHtml(words(choice).replace(/^./, (c) => c.toUpperCase()))}</button>`,
+      )
+      .join("")}</div>`;
+  }
+  if (field.kind === "number" || field.kind === "integer") {
+    const step = field.kind === "integer" ? "1" : "any";
+    const bounds = `${field.minimum != null ? ` min="${field.minimum}"` : ""}${field.maximum != null ? ` max="${field.maximum}"` : ""}`;
+    return `<input id="${id}" type="number" step="${step}"${bounds} value="${escapeHtml(value)}">`;
+  }
+  const text = Array.isArray(value) ? value.join(", ") : value ?? "";
+  return `<input id="${id}" type="text" maxlength="${field.kind === "list" ? 400 : field.max_length}" value="${escapeHtml(text)}">`;
+}
+
+function fieldId(field) {
+  return `setting-${field.section}-${field.key}`;
+}
+
+function readField(field) {
+  const element = document.getElementById(fieldId(field));
+  if (field.kind === "boolean") return element.checked;
+  if (field.kind === "choice") return element.querySelector(".seg.active")?.dataset.choice;
+  if (field.kind === "number" || field.kind === "integer") {
+    return element.value === "" ? null : Number(element.value);
+  }
+  if (field.kind === "list") {
+    return element.value.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  return element.value.trim();
+}
+
+function sameValue(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function groupChanges(group) {
+  const changes = {};
+  for (const field of group.fields) {
+    const value = readField(field);
+    if (!sameValue(value, field.value)) {
+      (changes[field.section] ||= {})[field.key] = value;
+    }
+  }
+  return changes;
+}
+
+function refreshSaveButtons() {
+  settingsState.groups.forEach((group) => {
+    const button = document.querySelector(`[data-save-group="${group.name}"]`);
+    if (button) button.disabled = settingsState.saving || !Object.keys(groupChanges(group)).length;
+  });
+}
+
+function settingsCard(group) {
+  return `<div class="card settings-card" data-group="${escapeHtml(group.name)}">
+        <div class="card-head"><h3>${escapeHtml(group.title)}</h3>
+          <button class="btn small primary" type="button" data-save-group="${escapeHtml(group.name)}" disabled>Save</button></div>
+        <div class="setting-list">${group.fields
+          .map(
+            (field) => `<div class="setting-row">
+              <label for="${fieldId(field)}" class="setting-label">${escapeHtml(field.label)}${field.private ? ` <span class="pill">Yours</span>` : ""}</label>
+              <div class="setting-input">${fieldInput(field, fieldId(field))}${field.help ? `<p class="hint">${escapeHtml(field.help)}</p>` : ""}</div>
+            </div>`,
+          )
+          .join("")}</div>
+      </div>`;
+}
+
+function renderSettingsForm(payload) {
+  settingsState.groups = payload.groups;
+  $("#settings-form").innerHTML = payload.groups.map(settingsCard).join("");
+}
+
+// After a save, redraw only that card, so edits waiting in other cards survive.
+function replaceGroup(payload, name) {
+  const fresh = payload.groups.find((group) => group.name === name);
+  const index = settingsState.groups.findIndex((group) => group.name === name);
+  if (!fresh || index < 0) return renderSettingsForm(payload);
+  settingsState.groups[index] = fresh;
+  document.querySelector(`.settings-card[data-group="${name}"]`).outerHTML = settingsCard(fresh);
+}
+
+async function saveGroup(name) {
+  const group = settingsState.groups.find((item) => item.name === name);
+  const changes = groupChanges(group);
+  if (!Object.keys(changes).length) return;
+  settingsState.saving = true;
+  refreshSaveButtons();
+  try {
+    const payload = await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ changes }),
+    });
+    replaceGroup(payload, name);
+    toast(`${group.title} saved`, "ok");
+    $("#settings-restart").hidden = !payload.runtime_running;
+  } catch (error) {
+    toast(error.message.replace(/ \(400\)$/, ""), "bad");
+  } finally {
+    settingsState.saving = false;
+    refreshSaveButtons();
+  }
+}
+
+export function initSettings(restartRuntime) {
+  const form = $("#settings-form");
+  form.addEventListener("input", refreshSaveButtons);
+  form.addEventListener("change", refreshSaveButtons);
+  form.addEventListener("click", (event) => {
+    const choice = event.target.closest(".segmented .seg");
+    if (choice) {
+      choice.parentElement.querySelectorAll(".seg").forEach((button) => {
+        const active = button === choice;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      refreshSaveButtons();
+      return;
+    }
+    const save = event.target.closest("[data-save-group]");
+    if (save) guard(saveGroup)(save.dataset.saveGroup);
+  });
+  $("#settings-restart-runtime").addEventListener(
+    "click",
+    guard(async () => {
+      $("#settings-restart").hidden = true;
+      await restartRuntime();
+    }),
+  );
+}
+
+export function settingsDirty() {
+  return settingsState.groups.some((group) => Object.keys(groupChanges(group)).length);
+}
+
+export async function loadSettings({ refreshForm = true } = {}) {
+  if (refreshForm || !settingsState.groups.length) {
+    renderSettingsForm(await api("/api/settings"));
+  }
   const config = await api("/api/config");
   $("#config-json").textContent = JSON.stringify(config, null, 2);
   const general = {};
