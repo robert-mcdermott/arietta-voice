@@ -1053,6 +1053,53 @@ details.fold[open] > summary {
   white-space: nowrap;
 }
 
+.timing-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.timing-bar span {
+  min-width: 2px;
+}
+
+.timing-wait {
+  background: var(--info);
+}
+
+.timing-stt {
+  background: var(--ok);
+}
+
+.timing-respond {
+  background: var(--accent);
+}
+
+.timing-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.timing-legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.timing-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
 /* ---------- Chat ---------- */
 
 .chat {
