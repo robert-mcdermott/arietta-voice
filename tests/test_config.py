@@ -60,8 +60,9 @@ enabled = true
     assert config.knowledge.embedding_model == "BAAI/bge-small-en-v1.5"
     assert config.knowledge.hybrid_alpha == 0.6
     assert config.knowledge.min_vector_score == 0.25
-    assert config.tools.enabled == ("assistant_identity",)
-    assert config.model_tools.enabled == ("system_info",)
+    # The old [model_tools] list is folded into [tools].enabled.
+    assert config.tools.enabled == ("assistant_identity", "system_info")
+    assert config.model_tools.enabled == ()
     assert config.wake_word.phrases == ("test assistant",)
     assert config.wake_word.session_timeout_s == 42.0
     assert config.models.chat_provider == "bedrock"

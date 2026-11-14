@@ -38,6 +38,84 @@ DEFAULT_ENABLED_TOOLS = (
     "system_info",
 )
 
+# Names from before the two tool systems were merged.
+LEGACY_TOOL_NAMES = {"knowledge_retrieval": "search_knowledge"}
+
+# The standard tools of each release before [tools].disabled existed. A private
+# list saved then is read against the newest of these releases it mentions: the
+# standard tools of that release it leaves out were switched off, and anything
+# newer is added. Lists saved since record what is switched off, so this table
+# never needs another entry.
+LEGACY_STANDARD_TOOLS = (
+    ("assistant_identity", "local_time", "search_knowledge", "system_info"),  # 0.1
+    ("set_timer", "set_reminder", "set_alarm", "check_timers", "cancel_timer"),  # 0.2.0rc1
+    ("calculate", "date_math"),  # 0.2.0rc2
+)
+
+
+def canonical_tool_names(names) -> list[str]:
+    """Tool names trimmed and de-duplicated, with old names replaced."""
+    result: list[str] = []
+    for raw in names:
+        name = str(raw).strip()
+        name = LEGACY_TOOL_NAMES.get(name, name)
+        if name and name not in result:
+            result.append(name)
+    return result
+
+
+def merge_tool_lists(
+    standard, chosen=None, disabled=None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The tools to run, in order, and the standard tools switched off.
+
+    ``standard`` is the shipped list. ``chosen`` is the ordered list saved in a
+    private config (None when it has none) and ``disabled`` the tools switched
+    off there (None for a list saved before that was recorded). A standard tool
+    in neither list is newer than the saved one, so it is switched on instead of
+    staying off, just before the next standard tool in the list: after your own
+    tools, whose triggers keep first say. A tool in ``disabled`` stays off even
+    if it is also in ``chosen``.
+    """
+    standard = canonical_tool_names(standard)
+    written = canonical_tool_names(disabled or ())
+    if chosen is not None and disabled is None:
+        chosen = canonical_tool_names(chosen)
+        off = _legacy_disabled(chosen, standard)
+    else:
+        off = set(written)
+        chosen = standard if chosen is None else canonical_tool_names(chosen)
+    tools = [name for name in chosen if name not in off]
+    for index, name in enumerate(standard):
+        if name in tools or name in off:
+            continue
+        following = next((later for later in standard[index + 1 :] if later in tools), None)
+        tools.insert(tools.index(following) if following else len(tools), name)
+    switched_off = [name for name in standard if name in off]
+    return tuple(tools), tuple([*switched_off, *(n for n in written if n not in switched_off)])
+
+
+def _legacy_disabled(chosen: list[str], standard: list[str]) -> set[str]:
+    """The standard tools that a list saved before [tools].disabled switched off."""
+    if not chosen:
+        return set(standard)  # An empty list switched every tool off.
+    releases = LEGACY_STANDARD_TOOLS
+    newest = max(
+        (index for index, release in enumerate(releases) if set(release) & set(chosen)),
+        default=0,
+    )
+    known = {name for release in releases[: newest + 1] for name in release}
+    return known - set(chosen)
+
+
+def standard_tools(path: Path) -> tuple[str, ...]:
+    """The shipped tool list: [tools].enabled in the public config file."""
+    raw = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    values = raw.get("tools", {}).get("enabled")
+    if not isinstance(values, list):
+        return DEFAULT_ENABLED_TOOLS
+    return tuple(canonical_tool_names(values))
+
 
 def locate_project_root(start: Path | None = None) -> Path:
     if start is not None:
@@ -182,6 +260,9 @@ class KnowledgeConfig:
 @dataclass(slots=True)
 class ToolsConfig:
     enabled: tuple[str, ...] = field(default_factory=lambda: DEFAULT_ENABLED_TOOLS)
+    # Standard tools switched off. Standard tools in neither list are added, so
+    # tools from a newer release are switched on after an upgrade.
+    disabled: tuple[str, ...] = ()
     # User tools: one Python file per tool, outside the installed package.
     directory: Path = Path("tools")
 
@@ -295,10 +376,13 @@ def load_config(path: Path | None = None) -> AppConfig:
     if not path.exists() and not local_config_path(path).exists():
         raise FileNotFoundError(path)
     _validate_toml_types(raw, base)
+    shipped_tools = raw.get("tools", {}).get("enabled", base.tools.enabled)
+    private_tools: dict[str, Any] = {}
     override_path = local_config_path(path)
     if override_path != path and override_path.exists():
         overrides = tomllib.loads(override_path.read_text(encoding="utf-8"))
         _validate_toml_types(overrides, base)
+        private_tools = dict(overrides.get("tools", {}))
         for section, values in overrides.items():
             raw.setdefault(section, {}).update(values)
     base_dir = path.parent
@@ -317,6 +401,14 @@ def load_config(path: Path | None = None) -> AppConfig:
     runtime = raw.get("runtime", {})
     timers = raw.get("timers", {})
     weather = raw.get("weather", {})
+
+    # Your saved list keeps its order; standard tools it has not considered are added.
+    chosen = private_tools.get("enabled")
+    # A private list without its own [tools].disabled was saved before that existed.
+    disabled = private_tools.get("disabled") if chosen is not None else tools.get("disabled")
+    if model_tools.get("enabled"):
+        chosen = [*(shipped_tools if chosen is None else chosen), *model_tools["enabled"]]
+    enabled_tools, disabled_tools = merge_tool_lists(shipped_tools, chosen, disabled)
 
     config = AppConfig(
         project_root=base.project_root,
@@ -457,20 +549,12 @@ def load_config(path: Path | None = None) -> AppConfig:
             ),
         ),
         tools=ToolsConfig(
-            enabled=_merge_tuple(
-                tools.get("enabled"),
-                base.tools.enabled,
-                allow_empty=True,
-            ),
+            enabled=enabled_tools,
+            disabled=disabled_tools,
             directory=_resolve_path(base_dir, tools.get("directory", base.tools.directory)),
         ),
-        model_tools=ModelToolsConfig(
-            enabled=_merge_tuple(
-                model_tools.get("enabled"),
-                base.model_tools.enabled,
-                allow_empty=True,
-            ),
-        ),
+        # Its entries are already folded into [tools].enabled above.
+        model_tools=ModelToolsConfig(),
         timers=TimersConfig(
             path=_resolve_path(base_dir, timers.get("path", base.timers.path)),
             repeat_s=float(timers.get("repeat_s", base.timers.repeat_s)),

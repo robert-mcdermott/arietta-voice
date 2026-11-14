@@ -284,7 +284,7 @@ The main config sections are:
 - `[memory]`: optional memory behavior
 - `[logging]`: runtime log locations, content opt-in, and event-log rotation
 - `[knowledge]`: knowledge directory, index directory, backend, and retrieval scoring knobs
-- `[tools]`: enabled tools, in order, and the folder for your own tools
+- `[tools]`: enabled tools, in order, the standard tools you switched off, and the folder for your own tools
 - `[admin]`: source-editing permission (disabled by default)
 - `[runtime]`: turn, endpoint detection, and model startup time limits
 - `[timers]`: where timers and reminders are kept, how often an unanswered one repeats, the snooze length and the alert tone
@@ -680,8 +680,9 @@ tracked files and custom knowledge directory locations.
 
 ### Add a tool
 
-Put a Python file in [`tools/`](tools), then add its name to `[tools].enabled` or
-switch it on from the console's Tools page. [`tools/README.md`](tools/README.md)
+Put a Python file in [`tools/`](tools), then switch it on from the console's
+Tools page, or add its name to `[tools].enabled` in your private config (the
+whole list, in order, before `search_knowledge`). [`tools/README.md`](tools/README.md)
 explains the format and [`tools/example_dice.py`](tools/example_dice.py) is a
 working example. Your tools live outside the installed package, so upgrades
 leave them alone, and only the README and the example are tracked by Git.
@@ -716,6 +717,15 @@ Christmas?", "what day of the week is July 4th?", "what's the date in three
 weeks?", "how many days since Halloween?", "how many days between March 1 and
 June 15?". It knows the common US holidays, including Easter and Thanksgiving.
 
+New built-in tools switch on by themselves after an upgrade, even if your
+private config has its own tool list. That list is `[tools].enabled`, in order,
+plus `[tools].disabled`, the standard tools you switched off; a standard tool in
+neither is new, so it is switched on just before the next standard tool in your
+list (after your own tools). The console's Tools page saves both lists. A list
+saved by 0.2.0rc2 or earlier, before `disabled` existed, is read the same way:
+standard tools of its release that it leaves out stay off, and later ones are
+added.
+
 Configs from before tools were unified keep working: `[model_tools].enabled`
 is still read and added to `[tools].enabled`, and `knowledge_retrieval` means
 `search_knowledge`. Saving the tool list from the console writes the new form.
@@ -749,9 +759,8 @@ is announced, with how late it is, when the assistant starts again. The
 console's Home page lists them with a countdown and can add, stop and cancel
 them.
 
-If your private config lists `[tools].enabled`, add `set_timer`, `set_reminder`,
-`set_alarm`, `check_timers` and `cancel_timer` to it, before `search_knowledge`
-(or switch them on in the console's Tools page), to ask for them by voice.
+The timer tools are on by default, also after an upgrade from a version without
+them, unless your private config lists them in `[tools].disabled`.
 
 ### Weather (optional)
 

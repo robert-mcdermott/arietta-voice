@@ -229,7 +229,11 @@ method returning a `ToolResult`. `ToolResult.content` is information for the
 model; `ToolResult.speak` is a finished answer for the user.
 
 `ToolRegistry` (`src/arietta_voice/tools/registry.py`) loads the tools listed in
-`[tools].enabled`, in order. A tool that fails to load is recorded in
+`[tools].enabled`, in order. When the private config has its own list,
+`merge_tool_lists` (`config.py`) adds each standard tool that is in neither that
+list nor `[tools].disabled`, just before the next standard tool in it, so tools
+from a newer release switch on after an upgrade. A list saved before `disabled`
+existed is read against the standard tools of the newest release it mentions. A tool that fails to load is recorded in
 `registry.errors` and skipped, so one broken file does not disable the rest.
 Before a tool runs, its arguments are checked against its schema; it then runs
 in a thread with its time limit, and its result is truncated to bounded sizes.
