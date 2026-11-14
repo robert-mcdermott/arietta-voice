@@ -75,8 +75,17 @@ answers):
 | --- | ---: | ---: | ---: | ---: |
 | Off (local only) | 2 of 80 | 48 of 48 | 0 | 1.47 s |
 | `when = "unsure"` | 0 of 80 | 48 of 48 | 4 of 80 | 1.28 s |
+| `when = "always"` (one round) | 0 of 40 | 24 of 24 | 39 of 40 | 0.77 s |
 
 In "unsure" mode the cloud model took the four answers the local model began by
 declining (two of them the dinner question) and the rest stayed local, so
 speed was unchanged. With the local model now answering ordinary questions,
 the main value of a smarter model is harder questions than these.
+
+"Always" was first measured at 6.84 s to the first words: the local model began
+each answer and was stopped once the smarter model took over, and stopping a
+generation part way discards the cached prompt, so every turn started from
+scratch. Now the local model writes only its first six tokens, enough to see
+whether it starts a tool call, which finishes normally and keeps the cache;
+the cloud model then answers in about 0.3 s. The one answer kept local was the
+local model asking for a tool.

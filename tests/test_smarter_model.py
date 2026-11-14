@@ -102,7 +102,8 @@ def test_always_hands_over_every_answer_without_a_filler(service_for):
 
 def test_an_answer_from_a_tool_result_stays_local(service_for):
     call = f"<|tool_call>call:lookup{{what:{Q}x{Q}}}<tool_call|>"
-    service, smarter = service_for(call, "It is 42.", when="always")
+    # "always" first asks the local model for a few tokens to see if it wants a tool.
+    service, smarter = service_for(call, call, "It is 42.", when="always")
     clauses, result = turn(service, "What is the stored value?")
     assert clauses == ["It is 42."]
     assert result["model_tool"] == "lookup" and smarter.requests == []
@@ -194,3 +195,24 @@ def test_tool_messages_become_plain_notes():
         {"role": "system", "content": "Tool result:\nit is 42"},
         {"role": "user", "content": "And?"},
     ]
+
+
+def test_always_checks_for_a_tool_with_one_short_local_call(tmp_path, monkeypatch):
+    config = default_config(tmp_path)
+    config.knowledge.enabled = False
+    config.tools.enabled = ("lookup",)
+    module = SimpleNamespace(create_tool=lambda context: Lookup(context))
+    monkeypatch.setattr(tool_registry, "load_module", lambda config, name: (module, "user", None))
+    config.smarter_model.enabled, config.smarter_model.model = True, "bigger:cloud"
+    config.smarter_model.when = "always"
+    calls = []
+
+    def local(messages, *, max_tokens=None, temperature=None, tools=None):
+        calls.append(max_tokens)
+        return "Paris is"
+
+    service = ConversationService(config, generate=local, native_tools=True)
+    monkeypatch.setattr(service, "_smarter_model", lambda: Smarter("Paris."))
+    clauses, result = turn(service, "What's the capital of France?")
+    assert clauses == ["Paris."] and result["smarter"] == "bigger:cloud"
+    assert calls == [6]  # Only the short check: the local answer is never generated.

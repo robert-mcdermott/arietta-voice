@@ -38,6 +38,9 @@ FILLER = "One moment."
 FILLER_AFTER_S = 0.8
 # Said when the local model did not know and the optional smarter model takes over.
 SMARTER_FILLER = "Let me think about that."
+# Tokens the local model writes to show whether it wants a tool before an
+# "always" smarter model answers: a native call starts within these.
+PROBE_TOKENS = 6
 # A tool that changes something asks first. The answer must come within this
 # long; after that a "yes" is just a word, and the action is not taken.
 CONFIRM_WINDOW_S = 60.0
@@ -230,14 +233,15 @@ class ConversationService:
 
         if tools is not None and tools.model_tools and self._native_tools():
             called: list[str] = []
+            turn = self._native_turn(tools, messages, called, max_tokens, temperature, filler)
+            smarter = self._smarter_model()
+            if smarter is not None and self.config.smarter_model.when == "always":
+                if not self._wants_a_tool(tools, messages, temperature):
+                    turn = self._smarter_or(smarter, turn, messages, max_tokens, temperature)
+            else:
+                turn = self._with_smarter(turn, messages, called, max_tokens, temperature)
             yield from self._speech_events(
-                self._with_smarter(
-                    self._native_turn(tools, messages, called, max_tokens, temperature, filler),
-                    messages,
-                    called,
-                    max_tokens,
-                    temperature,
-                ),
+                turn,
                 source="model",
                 used_tool=used_tool,
                 finalize=lambda: {
@@ -404,6 +408,36 @@ class ConversationService:
             return
         yield from held  # The smarter model failed: keep the local answer.
         yield from events
+
+    def _wants_a_tool(self, tools, messages, temperature) -> bool:
+        """Whether the local model would start this turn with a tool call.
+
+        Generates only its first few tokens, which finish normally and so keep
+        the cached prompt; stopping a whole answer part way would discard it
+        and make every turn start from scratch.
+        """
+        events = self._llm_stream(
+            _with_rules(messages, NATIVE_TOOL_RULES),
+            max_tokens=PROBE_TOKENS,
+            temperature=temperature,
+            tools=tool_specs(tools.model_tools),
+        )
+        text = ""
+        try:
+            for event in events:
+                if event.kind == "text":
+                    text += event.text
+        finally:
+            _close(events)
+        return NATIVE_CALL_START in text
+
+    def _smarter_or(self, smarter, local, messages, max_tokens, temperature):
+        """The smarter model's answer, or the local turn if it cannot be reached."""
+        handed = yield from self._smarter_answer(smarter, messages, max_tokens, temperature, True)
+        if handed:
+            _close(local)
+        else:
+            yield from local
 
     def _smarter_answer(self, smarter, messages, max_tokens, temperature, always):
         """Generator: the smarter model's answer; returns False if it could not start."""
