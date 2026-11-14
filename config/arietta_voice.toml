@@ -125,8 +125,26 @@ min_vector_score = 0.3
 enabled = [
   "assistant_identity",
   "local_time",
+  "set_timer",
+  "set_reminder",
+  "set_alarm",
+  "check_timers",
+  "cancel_timer",
   "search_knowledge",
   "system_info",
 ]
 # Your own tools: one Python file per tool. See tools/README.md.
 directory = "../tools"
+
+[timers]
+# Timers and reminders are kept here, so they survive a restart. Private: not
+# tracked by Git. Relative paths resolve beside this config.
+path = "../state/timers.json"
+# One that goes off is said again this often until you answer it ("stop",
+# "okay", "snooze" or any request), at most max_repeats more times.
+repeat_s = 30.0
+max_repeats = 4
+# "Snooze" on its own waits this long.
+snooze_minutes = 5.0
+# A short tone before the announcement.
+alert_tone = true

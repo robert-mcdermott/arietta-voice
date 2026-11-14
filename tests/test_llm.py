@@ -89,23 +89,43 @@ def _fake_mlx(monkeypatch, chunks, calls):
         for text in chunks:
             yield SimpleNamespace(text=text)
 
+    class KVCache:
+        pass
+
+    class RotatingKVCache:
+        pass
+
     package = types.ModuleType("mlx_vlm")
     package.stream_generate = stream_generate
+    package.__path__ = []
     generate = types.ModuleType("mlx_vlm.generate")
     generate.PromptCacheState = PromptCacheState
-    monkeypatch.setitem(sys.modules, "mlx_vlm", package)
-    monkeypatch.setitem(sys.modules, "mlx_vlm.generate", generate)
+    models = types.ModuleType("mlx_vlm.models")
+    models.__path__ = []
+    cache = types.ModuleType("mlx_vlm.models.cache")
+    cache.KVCache, cache.RotatingKVCache = KVCache, RotatingKVCache
+    # A model with one full-attention and one sliding-window layer.
+    cache.make_prompt_cache = lambda language_model: [KVCache(), RotatingKVCache()]
+    for name, module in (
+        ("mlx_vlm", package),
+        ("mlx_vlm.generate", generate),
+        ("mlx_vlm.models", models),
+        ("mlx_vlm.models.cache", cache),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+    PromptCacheState.KVCache = KVCache
     return PromptCacheState
 
 
 def _loaded_gemma(**options):
+    from types import SimpleNamespace
     from unittest.mock import Mock
 
     from arietta_voice.llm import GemmaChatModel
 
     model = GemmaChatModel("synthetic", **options)
     model.ensure_loaded = lambda: None  # The fake below stands in for the loaded model.
-    model._model = object()
+    model._model = SimpleNamespace(language_model=object())
     model._processor = Mock(apply_chat_template=Mock(return_value="prompt"))
     return model
 
@@ -125,10 +145,13 @@ def test_local_stream_reuses_one_prefix_cache_across_conversation_turns(monkeypa
     list(model.stream(messages, reuse_prefix=True))
     assert isinstance(calls[0]["prompt_cache_state"], state_type)
     assert calls[0]["prompt_cache_state"] is calls[1]["prompt_cache_state"]
+    # Sliding-window ring buffers are replaced by plain caches, which can be
+    # rewound to a shared prefix at any length.
+    assert [type(cache) for cache in calls[0]["prompt_cache"]] == [state_type.KVCache] * 2
 
     # Unrelated prompts, such as memory updates, must not touch the cache.
     list(model.stream(messages))
-    assert "prompt_cache_state" not in calls[2]
+    assert "prompt_cache_state" not in calls[2] and "prompt_cache" not in calls[2]
     assert model._prefix_cache is calls[0]["prompt_cache_state"]
 
 

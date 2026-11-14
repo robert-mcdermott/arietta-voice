@@ -54,3 +54,12 @@ class ToolTestRequest(BaseModel):
 
 class ToolSourceWriteRequest(BaseModel):
     content: str = Field(min_length=1, max_length=1_000_000)
+
+
+class TimerCreateRequest(BaseModel):
+    """A timer needs ``duration``; a reminder ``when`` and ``label``; an alarm ``when``."""
+
+    kind: Literal["timer", "reminder", "alarm"] = "timer"
+    duration: str = Field(default="", max_length=120)
+    when: str = Field(default="", max_length=120)
+    label: str = Field(default="", max_length=200)

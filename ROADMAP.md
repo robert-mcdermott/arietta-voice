@@ -100,7 +100,9 @@ Done:
 - Direct answers stream past the tool-planning step instead of waiting for a
   separate generation.
 - The local model reuses the already-processed start of each prompt. This used
-  mlx-vlm's own prefix cache, so no move to `mlx-lm` was needed.
+  mlx-vlm's own prefix cache, so no move to `mlx-lm` was needed. Since the
+  timers work it also keeps working past Gemma's 512-token sliding window,
+  which longer conversations and the full tool list reach on every turn.
 - The first spoken clause can end at a comma or dash.
 - Each spoken turn logs a stage timeline, shown on the console's Home page.
 - The end of a turn is checked after 250 ms of silence, and work starts at once
@@ -158,9 +160,15 @@ acoustically at least once.
 3. **MCP client.** Connect to Model Context Protocol servers so calendar,
    notes, home automation and similar integrations come from the existing
    ecosystem rather than hand-written adapters.
-4. **Built-in skills:** timers, alarms and reminders (requires a scheduler and
-   the ability to speak unprompted), weather, web search with spoken source
-   attribution, and unit/date arithmetic.
+4. **Built-in skills.** Timers, reminders and alarms are done: instant answers
+   for the usual phrasings, model calls for the rest, a shared store that
+   survives restarts, spoken alerts between turns that repeat until answered,
+   "stop" and "snooze" without the wake word, and a console card. Still to do:
+   weather, web search with spoken source attribution, and unit/date
+   arithmetic. Checks with the real model found the 4-bit Gemma unreliable at
+   choosing tools for less usual phrasings ("Is anything counting down right
+   now?") and once claiming to have cancelled a reminder without calling a
+   tool; native tool calling (item 2) is the next step for both.
 5. **Home control** through Home Assistant: read-only status first, then
    explicitly authorized actions.
 6. **Model routing.** Keep the small local model for fast turns and tool

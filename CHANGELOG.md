@@ -99,6 +99,31 @@ version policy and the release procedure.
 
 ### Added
 
+- Timers, reminders and alarms. "Set a 10 minute pasta timer", "remind me to
+  call Mom at 5:30", "wake me up at 7", "how much time is left?" and "cancel the
+  pasta timer" are answered instantly by new built-in tools (`set_timer`,
+  `set_reminder`, `set_alarm`, `check_timers`, `cancel_timer`); the model can
+  call all but `set_alarm`, and asks for a reminder instead. Durations and
+  times are understood in digits or words. When one is due the assistant plays a
+  tone and says it between turns, repeating every 30 seconds until answered (up
+  to four more times); "stop", "okay" or "snooze for 10 minutes" work without the
+  wake word while it rings. They are kept in `state/timers.json` (private), so
+  they survive restarts, and anything missed while the assistant was off is
+  announced when it starts. New `[timers]` settings: `path`, `repeat_s`,
+  `max_repeats`, `snooze_minutes` and `alert_tone`. A private config that lists
+  `[tools].enabled` needs the five tools added to use them by voice.
+- The console's Home page lists timers, reminders and alarms with live
+  countdowns, and can add, stop and cancel them (`/api/timers`).
+- Tools can declare `aliases` for argument names a model might use instead
+  (`{"note": "text"}`), and a number sent for a text argument is accepted as
+  text. The tool instructions now tell the model to answer general knowledge
+  itself and never to claim it set or cancelled something no tool did.
+- Prompt-prefix reuse now keeps working past Gemma's 512-token sliding window.
+  Its sliding-window layers used a ring buffer that cannot be rewound once a
+  prompt and answer pass 512 tokens, so every later turn reprocessed the whole
+  prompt; they now use a plain cache with the same window applied by the
+  attention mask. Greedy answers matched the stock cache in 11 of 12 checks
+  (the twelfth differed late in a long answer).
 - Optional MLX Kokoro speech from the main install: `uv sync --group
   mlx-speech`, download the model, and set `audio.tts_backend = "mlx"` (see
   README). It no longer needs a separate trial environment or exact package

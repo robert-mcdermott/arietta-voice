@@ -23,7 +23,15 @@ PUBLIC_CONFIG = {
 }
 CONSOLE_ASSETS = ("arietta_voice", "web", "static")
 CONSOLE_ASSET_SUFFIXES = (".html", ".css", ".js", ".svg")
-PRIVATE_DIRECTORIES = {"logs", ".knowledge_index", ".private-backups", ".venv", "tmp", ".aws"}
+PRIVATE_DIRECTORIES = {
+    "logs",
+    "state",
+    ".knowledge_index",
+    ".private-backups",
+    ".venv",
+    "tmp",
+    ".aws",
+}
 
 
 def private_path(name: str) -> bool:

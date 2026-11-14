@@ -104,6 +104,9 @@ class GemmaChatModel:
 
                 self._prefix_cache = PromptCacheState()
             options["prompt_cache_state"] = self._prefix_cache
+            # Used when nothing can be reused; mlx-vlm swaps in the kept cache
+            # when the prompt shares a prefix with the last one.
+            options["prompt_cache"] = self._rewindable_cache()
         chunks = stream_generate(
             self._model,
             self._processor,
@@ -128,6 +131,24 @@ class GemmaChatModel:
                 # A stopped generation has advanced the cache past the tokens
                 # recorded for it. Start clean rather than reuse a mismatch.
                 self._prefix_cache = None
+
+    def _rewindable_cache(self) -> list:
+        """The model's cache, with plain caches in place of sliding-window ring buffers.
+
+        Gemma's sliding-attention layers keep only the last 512 tokens in a ring
+        buffer. Once a prompt and its answer pass 512 tokens the ring has
+        wrapped, mlx-vlm cannot rewind it to the shared prefix, and every later
+        turn reprocessed the whole prompt (about a second). A plain cache keeps
+        every token and the model applies the same 512-token window through the
+        attention mask, so attention is unchanged and the prefix can always be
+        reused. The extra memory is small at conversation lengths.
+        """
+        from mlx_vlm.models.cache import KVCache, RotatingKVCache, make_prompt_cache
+
+        return [
+            KVCache() if isinstance(cache, RotatingKVCache) else cache
+            for cache in make_prompt_cache(self._model.language_model)
+        ]
 
 
 class BedrockChatModel:

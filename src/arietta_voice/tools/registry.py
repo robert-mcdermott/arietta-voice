@@ -101,6 +101,12 @@ def describe_problems(tool, name: str) -> list[str]:
     timeout = getattr(tool, "timeout_s", None)
     if not isinstance(timeout, (int, float)) or not 0 < timeout <= MAX_TIMEOUT_S:
         problems.append(f"timeout_s must be between 0 and {MAX_TIMEOUT_S:g} seconds")
+    aliases = getattr(tool, "aliases", {})
+    properties = (getattr(tool, "parameters", None) or {}).get("properties", {})
+    if not isinstance(aliases, dict) or any(
+        not isinstance(alias, str) or target not in properties for alias, target in aliases.items()
+    ):
+        problems.append("aliases must map other names to declared arguments")
     if not callable(getattr(tool, "run", None)):
         problems.append("run(arguments) is missing")
     return problems
@@ -109,7 +115,9 @@ def describe_problems(tool, name: str) -> list[str]:
 def run_tool(tool, arguments: dict[str, Any]) -> ToolResult:
     """Validate arguments, run within the tool's time limit, and bound the result."""
     name = tool.name
-    arguments = coerce_arguments(tool.parameters, arguments)
+    if not isinstance(arguments, dict):
+        raise ToolError(name, "invalid_arguments", "arguments must be an object")
+    arguments = coerce_arguments(tool.parameters, _apply_aliases(tool, arguments))
     problems = validate_arguments(tool.parameters, arguments)
     if problems:
         raise ToolError(name, "invalid_arguments", "; ".join(problems))
@@ -135,6 +143,15 @@ def run_tool(tool, arguments: dict[str, Any]) -> ToolResult:
         speak=None if result.speak is None else result.speak[:MAX_SPEAK_CHARS],
         data=result.data,
     )
+
+
+def _apply_aliases(tool, arguments: dict[str, Any]) -> dict[str, Any]:
+    aliases = getattr(tool, "aliases", None) or {}
+    renamed = dict(arguments)
+    for alias, target in aliases.items():
+        if alias in renamed and target not in renamed:
+            renamed[target] = renamed.pop(alias)
+    return renamed
 
 
 @dataclass(slots=True, frozen=True)
@@ -186,18 +203,29 @@ class ToolRegistry:
         return run_tool(tool, arguments)
 
     def instruction_text(self) -> str | None:
+        """What the model is told about the tools it can call.
+
+        Kept short on purpose: this text starts every prompt, and Gemma's
+        512-token sliding attention window only lets the cached prompt be reused
+        while the prompt and answer fit inside it.
+        """
         tools = self.model_tools
         if not tools:
             return None
         lines = [
             "You may make at most one tool call before answering the user.",
             "Use a tool only when it is needed to answer accurately.",
+            "Answer general knowledge questions from what you know, without a tool.",
+            "Never say you set, changed or cancelled something unless a tool did it.",
             "",
             "Available tools:",
         ]
         for tool in tools:
+            example = argument_example(tool.parameters)
+            optional = [name for name in example if name not in tool.parameters.get("required", [])]
+            note = f" ({', '.join(optional)} optional)" if optional else ""
             lines.append(f"- name: {tool.name}")
-            lines.append(f"- arguments: {json.dumps(argument_example(tool.parameters))}")
+            lines.append(f"- arguments: {json.dumps(example)}{note}")
             lines.append(f"- use when {tool.description}")
         lines += [
             "",
@@ -212,13 +240,17 @@ class ToolRegistry:
 
 
 def argument_example(schema: dict[str, Any]) -> dict[str, str]:
-    """A compact example for the model, e.g. {"query": "<short search query>"}."""
+    """Example arguments for the model: {"duration": "10 minutes"}.
+
+    Taken from "such as ..." in each description, else the description itself in
+    angle brackets; choices are listed as "a|b".
+    """
     example = {}
     for name, spec in schema.get("properties", {}).items():
         if "enum" in spec:
-            hint = " | ".join(map(str, spec["enum"]))
-        else:
-            hint = spec.get("description") or spec["type"]
-        optional = "" if name in schema.get("required", []) else ", optional"
-        example[name] = f"<{hint}{optional}>"
+            example[name] = "|".join(map(str, spec["enum"]))
+            continue
+        description = spec.get("description") or spec["type"]
+        _, found, sample = description.partition("such as ")
+        example[name] = sample.strip() if found else f"<{description}>"
     return example

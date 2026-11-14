@@ -282,6 +282,7 @@ The main config sections are:
 - `[tools]`: enabled tools, in order, and the folder for your own tools
 - `[admin]`: source-editing permission (disabled by default)
 - `[runtime]`: turn, endpoint detection, and model startup time limits
+- `[timers]`: where timers and reminders are kept, how often an unanswered one repeats, the snooze length and the alert tone
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
@@ -684,11 +685,45 @@ arguments and a `run` method. A tool can work in two ways, or both:
 Arguments are checked against the schema before a tool runs. A tool that fails,
 times out or does not exist is reported to the model, which answers without it
 instead of the turn failing. The built-in tools are `assistant_identity`,
-`local_time`, `search_knowledge` and `system_info`.
+`local_time`, `set_timer`, `set_reminder`, `set_alarm`, `check_timers`,
+`cancel_timer`, `search_knowledge` and `system_info`.
 
 Configs from before tools were unified keep working: `[model_tools].enabled`
 is still read and added to `[tools].enabled`, and `knowledge_retrieval` means
 `search_knowledge`. Saving the tool list from the console writes the new form.
+
+### Timers, reminders and alarms
+
+Ask for them the way you would ask a person:
+
+- "Set a 10 minute pasta timer", "timer for an hour and a half"
+- "Remind me to call Mom at 5:30", "remind me in 20 minutes to take the bread out",
+  "remind me tomorrow morning that the bins go out"
+- "Wake me up at 7", "set an alarm for 6:30 tomorrow"
+- "How much time is left?", "what reminders do I have?", "is my pasta done?"
+- "Cancel the pasta timer", "cancel all my reminders", "never mind the alarm"
+
+Common phrasings like these are answered instantly, without the model. Anything
+else reaches the model, which can call the timer and reminder tools. An alarm
+without "am" or "pm" means the morning when it is for waking up or for another
+day.
+
+When one is due, the assistant plays a short tone and says it, between turns and
+never over you. It repeats every 30 seconds until you answer, up to four more
+times. While it is going off, "stop", "okay" or "thanks" stop it and "snooze" or
+"snooze for 10 minutes" puts it off, with no wake word needed; anything else you
+ask the assistant also counts as having heard it. Nothing else is answered
+without the wake word.
+
+Timers and reminders are kept in `state/timers.json` (private and ignored by
+Git), so they survive a restart. If the assistant was off when one was due, it
+is announced, with how late it is, when the assistant starts again. The
+console's Home page lists them with a countdown and can add, stop and cancel
+them.
+
+If your private config lists `[tools].enabled`, add `set_timer`, `set_reminder`,
+`set_alarm`, `check_timers` and `cancel_timer` to it, before `search_knowledge`
+(or switch them on in the console's Tools page), to ask for them by voice.
 
 ## Bedrock Integration
 
@@ -734,6 +769,7 @@ The current repo is a strong foundation for a home assistant or office assistant
 ├── evals/                      # Synthetic evaluation corpus and measured baselines
 ├── knowledge/                  # User-editable Markdown knowledge base
 ├── scripts/                    # Release checks
+├── state/                      # Timers and reminders (private, created when first used)
 ├── tools/                      # Your own tools (README and an example are tracked)
 ├── src/
 │   └── arietta_voice/

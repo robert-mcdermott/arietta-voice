@@ -816,3 +816,146 @@ def test_streamed_voice_only_commits_fully_delivered_answers(runtime, monkeypatc
     assert runtime.turn_cancellations == (1 if outcome == "cancel" else 0)
     if outcome == "complete":
         assert runtime.session.history[-1].content == "First sentence."
+
+
+# Timers and reminders --------------------------------------------------------
+
+
+def ring(runtime, label="eggs"):
+    """A timer that is going off now."""
+    from arietta_voice.timers import TimerStore
+
+    store = TimerStore(runtime.config.timers.path)
+    alert = store.add_timer(60, label)
+    store.mutate(lambda alerts, now: [setattr(a, "due_at", now - 1) for a in alerts])
+    due = runtime.alerts.due()
+    assert [a.id for a in due] == [alert.id]
+    return store, due
+
+
+def test_due_alert_is_announced_and_rings(runtime, monkeypatch, capsys):
+    monkeypatch.setattr(runtime_module.sys.stdout, "isatty", lambda: True)
+    store, due = ring(runtime)
+    result = runtime.announce_alerts(due, Mock(), Mock())
+    assert result.buffered_chunks == []
+    assert "Your eggs timer is done." in capsys.readouterr().out
+    assert runtime.last_assistant_text == "Your eggs timer is done."
+    assert [(a.status, a.rings) for a in store.active()] == [("ringing", 1)]
+    assert runtime.alerts.due() == []  # Repeats only after repeat_s.
+    events = runtime.config.logging.events_file.read_text()
+    assert '"event": "alert"' in events and "eggs" not in events
+    assert runtime.state == AssistantState.WAITING_FOR_WAKE
+    assert runtime._turn_token is None and runtime.turn_stage == "idle"
+
+
+def test_listen_loop_announces_due_alerts_while_quiet(runtime, monkeypatch):
+    ring(runtime)
+    calls = []
+
+    class Done(Exception):
+        pass
+
+    def announce(alerts, microphone, keys):
+        calls.append([a.label for a in alerts])
+        raise Done
+
+    monkeypatch.setattr(runtime, "announce_alerts", announce)
+    mic = Mock(dropped_chunks=0, input_overflows=0)
+    mic.get.return_value = None
+    with pytest.raises(Done):
+        runtime._listen(mic, Mock())
+    assert calls == [["eggs"]]
+
+
+def test_stop_needs_no_wake_word_while_an_alert_rings(runtime):
+    store, due = ring(runtime)
+    runtime.announce_alerts(due, Mock(), Mock())
+    runtime.worker.transcript = "Okay, stop."
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert store.active() == []
+    assert store.finished()[0].outcome == "dismissed"
+    assert runtime.last_assistant_text == "Okay."
+    assert not runtime.session.active
+    assert runtime.state == AssistantState.WAITING_FOR_WAKE
+    # With nothing ringing, the same words are ignored without the wake word.
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert runtime.last_assistant_text == "Okay."
+    assert '"event": "wake_miss"' in runtime.config.logging.events_file.read_text()
+
+
+def test_snooze_in_a_conversation(runtime):
+    runtime.config.wake_word.enabled = False
+    runtime._open_session(None)
+    store, due = ring(runtime)
+    runtime.announce_alerts(due, Mock(), Mock())
+    before = time.time()
+    runtime.worker.transcript = "Snooze for ten minutes."
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    (alert,) = store.active()
+    assert alert.status == "pending" and alert.rings == 0
+    assert before + 590 < alert.due_at < time.time() + 610
+    assert runtime.last_assistant_text == "Okay, I'll remind you again in 10 minutes."
+    assert runtime.session.history == []  # Answering an alert is not a conversation turn.
+
+
+def test_any_request_while_ringing_means_it_was_heard(runtime):
+    runtime.config.wake_word.enabled = False
+    runtime._open_session(None)
+    store, due = ring(runtime)
+    runtime.announce_alerts(due, Mock(), Mock())
+    runtime.worker.transcript = "What should I cook next?"
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert store.active() == []
+    assert store.finished()[0].outcome == "acknowledged"
+    assert [turn.content for turn in runtime.session.history] == [
+        "What should I cook next?",
+        "Answer",
+    ]
+
+
+def test_a_key_press_during_an_alert_stops_it(runtime, monkeypatch):
+    store, due = ring(runtime)
+
+    def pressed(*args, **kwargs):
+        runtime._turn_token.cancel()
+        return []
+
+    monkeypatch.setattr(runtime, "_deliver_response", pressed)
+    runtime.announce_alerts(due, Mock(), Mock())
+    assert store.finished()[0].outcome == "dismissed"
+
+
+def test_a_failed_announcement_does_not_stop_listening(runtime, monkeypatch):
+    store, due = ring(runtime)
+    monkeypatch.setattr(runtime, "_deliver_response", Mock(side_effect=RuntimeError("no speech")))
+    mic = Mock()
+    result = runtime.announce_alerts(due, mic, Mock())
+    assert result.buffered_chunks == []
+    mic.drain.assert_called_once()
+    assert '"event": "alert_failed"' in runtime.config.logging.events_file.read_text()
+    assert [a.status for a in store.active()] == ["ringing"]  # It repeats later.
+
+
+@pytest.mark.parametrize("tone", [True, False])
+def test_alert_speech_starts_with_the_tone(runtime, monkeypatch, tone):
+    import asyncio
+
+    runtime.config.timers.alert_tone = tone
+    speech = np.ones(100, dtype=np.float32)
+
+    async def tts(text):
+        yield None, None
+        yield speech, 24000
+
+    monkeypatch.setattr(runtime, "_tts_stream", tts)
+
+    async def collect():
+        return [frame async for frame in runtime._alert_stream("Your timer is done.")]
+
+    frames = asyncio.run(collect())
+    assert frames[0] == (None, None)
+    assert frames[-1][0] is speech
+    if tone:
+        assert len(frames) == 3 and frames[1][1] == 24000 and len(frames[1][0]) > 24000
+    else:
+        assert len(frames) == 2

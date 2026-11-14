@@ -719,6 +719,17 @@ Check:
 - its trigger matches your request (use Test with a sample request)
 - the voice runtime was restarted after the change
 
+### "My timer never went off"
+
+Check:
+
+- the voice runtime is running: the console sets timers, but only the runtime says them
+- the console's Home page lists the timer; a notice there says when the timer tools are off
+- if your private config lists `[tools].enabled`, it includes `set_timer`,
+  `set_reminder`, `set_alarm`, `check_timers` and `cancel_timer`, before
+  `search_knowledge`
+- the Mac was awake: anything due while it slept is announced, with how late it is, when it wakes
+
 ### "The assistant does not wake reliably"
 
 Remember:

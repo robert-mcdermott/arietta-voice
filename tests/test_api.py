@@ -755,3 +755,51 @@ def test_cancel_active_chat_suppresses_late_result_and_preserves_new_turn(tmp_pa
     assert service.chat(ChatRequest(message="New", request_id="new")).response == "New"
     assert not service.cancel_chat("old")
     assert service.chat_turns == 1
+
+
+def test_timer_endpoints_list_add_stop_and_cancel(tmp_path: Path) -> None:
+    from arietta_voice.timers import AlertScheduler, TimerStore
+
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    assert client.get("/api/timers").status_code == 401
+    empty = client.get("/api/timers", auth=AUTH).json()
+    assert empty["active"] == [] and empty["finished"] == []
+    assert empty["runtime_running"] is False
+    assert empty["tools_enabled"] == []  # This config predates the timer tools.
+
+    added = client.post(
+        "/api/timers", auth=AUTH, json={"kind": "timer", "duration": "ten minutes", "label": "tea"}
+    ).json()
+    assert added["added"]["name"] == "tea timer"
+    assert added["added"]["duration_s"] == 600
+    reminder = client.post(
+        "/api/timers",
+        auth=AUTH,
+        json={"kind": "reminder", "when": "in 2 hours", "label": "to call my sister"},
+    ).json()
+    assert reminder["added"]["name"] == "to call your sister"
+    assert [alert["kind"] for alert in reminder["active"]] == ["timer", "reminder"]
+    assert (tmp_path / "state" / "timers.json").exists()
+
+    for body, message in (
+        ({"kind": "timer", "duration": "a while"}, "Say how long"),
+        ({"kind": "reminder", "when": "someday", "label": "x"}, "Say when"),
+        ({"kind": "timer", "duration": "48 hours"}, "24 hours"),
+    ):
+        response = client.post("/api/timers", auth=AUTH, json=body)
+        assert response.status_code == 400 and message in response.json()["detail"]
+
+    store = TimerStore(service.config.timers.path)
+    store.mutate(lambda alerts, now: [setattr(alerts[0], "due_at", now - 1)])
+    alerts = AlertScheduler(store)
+    alerts.rang(alerts.due())
+    assert client.get("/api/timers", auth=AUTH).json()["active"][0]["status"] == "ringing"
+    stopped = client.post("/api/timers/stop", auth=AUTH).json()
+    assert stopped["stopped"] == [added["added"]["id"]]
+    assert stopped["finished"][0]["outcome"] == "dismissed"
+
+    reminder_id = reminder["added"]["id"]
+    cancelled = client.post(f"/api/timers/{reminder_id}/cancel", auth=AUTH).json()
+    assert cancelled["active"] == []
+    assert client.post(f"/api/timers/{reminder_id}/cancel", auth=AUTH).status_code == 404
+    assert client.post("/api/timers/..%2Fx/cancel", auth=AUTH).status_code in (404, 422)

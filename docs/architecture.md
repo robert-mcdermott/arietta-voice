@@ -281,6 +281,42 @@ sequenceDiagram
     end
 ```
 
+### 6.5 Timers, reminders and alarms
+
+Timers, reminders and alarms are built-in tools (`set_timer`, `set_reminder`,
+`set_alarm`, `check_timers`, `cancel_timer`) over one store, `TimerStore`, in
+`arietta_voice/timers.py`. Three processes use it: tools run in the inference
+worker, the voice runtime announces what is due, and the console lists, adds and
+cancels. The store is a small JSON file (`timers.path`, `state/timers.json` by
+default). Every change takes an exclusive `flock` on a sidecar lock file and
+replaces the file atomically with owner-only permissions, so a worker stopped
+mid-write cannot leave it half written. An unreadable file is moved aside and a
+fresh one started; malformed entries are dropped on read.
+
+Each alert is `pending` until due, then `ringing`, then `done` with an outcome
+(dismissed, acknowledged, snoozed back to pending, cancelled or unanswered).
+Finished alerts are kept for a day for the console.
+
+`AlertScheduler` is the runtime's view of the store. The listening loop asks it
+for due alerts on every pass, which costs one `stat` unless the file changed,
+and only when no speech is being captured, so an alert never talks over the
+user and waits for a turn in progress to finish. Due alerts are spoken through
+the normal answer path, led by a short tone, with barge-in as for any answer.
+A ringing alert repeats every `timers.repeat_s` until answered, at most
+`timers.max_repeats` more times. The scheduler also remembers when it last
+rang each alert, so a store that cannot be written does not make an alert ring
+on every pass.
+
+While an alert rings, "stop" and "snooze" are handled by the runtime itself,
+before the model and without the wake word; any other turn counts as having
+heard it. With the wake word on, nothing else is answered without it.
+
+`arietta_voice/timephrases.py` reads durations and times of day as speech
+recognition writes them, in digits or words ("ten minutes", "an hour and a half",
+"five thirty pm", "tomorrow at 9"), and says them back. A phrase is accepted only
+when it is understood completely, which lets the reminder tool find where the
+time phrase starts in "remind me to put the kids in bed at 8".
+
 ## 7. Knowledge Architecture
 
 Knowledge is authored as markdown under `knowledge/`.
@@ -407,6 +443,7 @@ The runtime is driven by a typed `AppConfig` object that contains:
 - logging settings
 - knowledge settings
 - enabled tools and the user tools directory
+- where timers and reminders are kept, and how alerts repeat
 
 This makes the boundary between runtime modules explicit and keeps config handling out of the main control loop.
 

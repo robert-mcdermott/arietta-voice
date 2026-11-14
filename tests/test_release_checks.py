@@ -48,6 +48,7 @@ def test_public_starter_files_are_allowed(repository):
         "config/MEMORY.md",
         "logs/events.jsonl",
         "logs/recording.wav",
+        "state/timers.json",
         ".knowledge_index/vectors.npy",
         ".env",
         ".aws/credentials",

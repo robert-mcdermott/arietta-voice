@@ -1299,6 +1299,110 @@ details.fold[open] > summary {
   margin-top: 6px;
 }
 
+/* ---------- Timers ---------- */
+
+.timer-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timer-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.timer-item:last-child {
+  border-bottom: 0;
+}
+
+.timer-item strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.timer-sub {
+  margin-top: 3px;
+}
+
+.timer-item.ringing strong {
+  color: var(--bad);
+}
+
+.timer-count {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.timer-list.compact .timer-item {
+  padding: 7px 0;
+}
+
+.timer-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.timer-form input {
+  flex: 1 1 160px;
+  width: auto;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.segmented .seg {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.segmented .seg.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+@media (max-width: 560px) {
+  .timer-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .timer-item .timer-count {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .timer-item .btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
 /* ---------- Tools ---------- */
 
 .tool-list {

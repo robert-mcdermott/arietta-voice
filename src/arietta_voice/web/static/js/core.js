@@ -151,6 +151,12 @@ export function describeEvent(item) {
       return item.interrupted ? "Speech interrupted" : "Finished speaking";
     case "tool_call":
       return `Used tool ${item.tool || ""}`.trim();
+    case "alert":
+      return item.repeat ? "Alert repeated" : `${item.count > 1 ? "Alerts" : "Alert"} announced`;
+    case "alert_answered":
+      return item.action === "snooze" ? "Alert snoozed" : "Alert stopped";
+    case "alert_failed":
+      return "Alert could not be announced";
     case "smart_turn_score":
       return "Checked whether the speaker finished";
     case "turn_failed":
