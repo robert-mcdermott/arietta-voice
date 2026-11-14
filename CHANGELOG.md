@@ -5,6 +5,11 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.2.0rc5 — 2026-11-14
+
+Fifth release candidate for 0.2.0: opt-in web search that says where the
+answer came from. The final 0.2.0 still waits on the 30-minute audible soak.
+
 ### Added
 
 - Web search with the source said aloud (`[web_search]`, also in the console's
