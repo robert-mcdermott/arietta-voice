@@ -18,6 +18,11 @@ version policy and the release procedure.
   Run `uv sync` after updating. The environment is about 0.4 GB larger.
 - `moonshine-voice` stays below 0.0.55 because 0.1.x changed its API and model
   format; the reason is now recorded in `pyproject.toml`.
+- Silence around each synthesised clip is trimmed to 40 ms before and 100 ms
+  after (`audio.tts_trim_silence`, on by default). ONNX Kokoro is already close
+  to these margins. MLX Kokoro pads every clip with about 0.3 s before and 0.4 s
+  after, which delayed the first word and left pauses of about 0.7 s between
+  clauses.
 - Faster turn-taking. The end of a turn is now also checked after 250 ms of
   silence (`audio.endpoint_early_ms`), and work on the answer starts at once
   when Smart Turn is at least 70% confident. The assistant keeps listening

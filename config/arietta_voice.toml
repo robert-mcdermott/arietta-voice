@@ -47,6 +47,10 @@ tts_enabled = true
 tts_backend = "onnx"
 # For MLX: explicit local Kokoro directory; relative paths resolve beside this config.
 mlx_kokoro_model = ""
+# Cut the silence each synthesised clip starts and ends with to 40 ms and 100 ms.
+# MLX pads clips with about 0.3 s before and 0.4 s after, which delays the first
+# word and leaves long pauses between clauses.
+tts_trim_silence = true
 smart_turn_enabled = true
 aec_enabled = true
 chime_enabled = true

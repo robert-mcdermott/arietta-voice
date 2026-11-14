@@ -326,6 +326,46 @@ the same sixth turn (2 of 12). In each case the cached answer was a correct
 reply and the uncached one was not better, but the cause was not established;
 set `models.reuse_prompt_prefix = false` to compare.
 
+### Speech engine and silence trimming
+
+ONNX Kokoro's first chunk is model inference on the CPU, about 445 ms even for
+"Two plus two" and 577 ms for "Two plus two equals four." (warm, five repeats
+each). Neither onnxruntime's CoreML provider (it accepts under half of the
+graph's nodes) nor more CPU threads made a meaningful difference, so a shorter
+first chunk cannot remove much. MLX Kokoro, in the isolated trial environment,
+returns the same sentence in about 183 ms, but every clip begins with 285 to
+400 ms of silence and ends with 400 to 480 ms; ONNX uses 25 to 40 ms and 75 to
+175 ms. That padding is why October's comparison found only a 3.4% gain to the
+first audible sample.
+
+`audio.tts_trim_silence` (now on by default) cuts each clip to 40 ms before and
+100 ms after its sound. Speech end to first signal-bearing write, with
+`--model-tools`, 30 warm turns each, run back to back:
+
+| Engine | Untrimmed p50 | Trimmed p50 | Untrimmed p95 | Trimmed p95 |
+| --- | ---: | ---: | ---: | ---: |
+| ONNX (default) | 1,717 | 1,767 | 3,569 | 3,594 |
+| MLX trial | 1,563 | 1,335 | 2,601 | 2,379 |
+
+Trimming makes no real difference to ONNX; the 50 ms gap is within run-to-run
+variation. For MLX the first write and first signal now coincide (1,353 ms
+untrimmed first write, 210 ms before any signal). All four runs passed every
+gate.
+
+A 100-turn muted MLX run with trimming had a median of 1,342 ms and a p95 of
+2,469 ms, with 20 resumed turns and no failures or worker restarts. Active MLX
+memory was 5.31 GiB after the first turn and 5.32 GiB after the last; the
+allocator peak was 6.94 GiB. It failed the zero-underflow gate on one turn: the
+first warm turn, a two-sentence answer, where one 62 ms blocking write let the
+device run dry mid-sentence. The other 99 turns were clean. No ONNX run today
+had an underflow, and October's live MLX soak failed on underflows under load,
+so this needs a live soak before MLX could become the default.
+
+Making MLX the default also changes dependencies: mlx-audio 0.5.8 requires
+transformers 5.14 or newer (the main lock has 5.5.4, which the chat model's
+processor and the knowledge embeddings also use), plus misaki, spaCy and an
+English spaCy model installed from a GitHub release.
+
 ### Limits
 
 Thirty turns per run, one run per condition, synthetic speech and a software

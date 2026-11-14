@@ -93,6 +93,7 @@ Measured so far (30 warm turns, muted output; see
 | --- | ---: | ---: |
 | No tools on offer | 2.48 s | 1.71 s |
 | A model tool on offer (the default setup) | 3.09 s | 1.72 s |
+| A model tool on offer, MLX Kokoro trial with trimmed silence | — | 1.34 s |
 
 Done:
 
@@ -106,17 +107,30 @@ Done:
   on a confident answer. The turn stays provisional until the normal silence
   window has passed and is discarded if the speaker carries on.
 
-Remaining, in order. A turn now spends about 300 ms deciding the speaker has
-finished, 200 ms transcribing, 500 ms generating and 565 ms on the first speech
-chunk:
+- Silence around each synthesised clip is trimmed. It matters only for MLX
+  Kokoro, which pads every clip with about 0.3 s before and 0.4 s after.
 
-1. **First speech chunk.** It is now the largest stage, so the Kokoro question
-   reopens under the one-day rule: MLX Kokoro, or synthesising a shorter first
-   chunk.
-2. **Stream transcription.** Promote the Moonshine streaming path so the
-   transcript is ready when the turn ends. The current recogniser also carries
-   state between calls: identical audio once came back with a stray leading
-   word, depending on what it had transcribed before.
+Remaining, in order. With ONNX Kokoro a turn spends about 300 ms deciding the
+speaker has finished, 200 ms transcribing, 500 ms generating and 565 ms on the
+first speech chunk. ONNX needs about 450 ms even for three words, so a shorter
+first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
+
+1. **Decide on MLX Kokoro as the default speech engine.** With trimming it
+   answers in 1.34 s against 1.72 s, but it needs transformers 5.14 or newer
+   (the lock has 5.5.4) plus mlx-audio, misaki, spaCy and an English spaCy
+   model, and one 100-turn muted run had an output underflow. Gate it on a live
+   soak.
+2. **Stream transcription and lift the Moonshine cap.** Move `moonshine-voice`
+   from the capped 0.0.54 to the latest release (0.1.6 as of November 2026)
+   and switch to its streaming path, so the transcript is ready when the turn
+   ends. 0.1.x changes the API and model format, and in October its batch
+   decoding was slower than 0.0.54's, so the upgrade lands with the streaming
+   adapter rather than before it. The promotion gates are in
+   [the Moonshine experiment](docs/archive/experiments/MOONSHINE_EXPERIMENT.md#promotion-gates).
+   This step is done only when the cap is gone from `pyproject.toml`. The
+   current recogniser also carries state between calls: identical audio once
+   came back with a stray leading word, depending on what it had transcribed
+   before.
 3. **Keep the prompt cache across a discarded attempt.** A resumed turn
    currently reprocesses its whole prompt.
 4. **Native tool calling** where the provider supports it (shared with

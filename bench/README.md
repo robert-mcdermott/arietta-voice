@@ -33,7 +33,7 @@ uv run --locked pytest bench/archive/tests
 
 | Experiment | Decision |
 | --- | --- |
-| Kokoro ONNX vs MLX (`kokoro_*.py`, `onnx_environment.py`) | ONNX stays the default; MLX stays opt-in. Reopen only if the latency benchmark shows TTS is the largest remaining stage. |
+| Kokoro ONNX vs MLX (`kokoro_*.py`, `onnx_environment.py`) | Reopened in November 2026: MLX's small end-to-end gain came from about 0.3 s of silence it puts before every clip. With that trimmed, MLX answers about 0.4 s sooner (see the latency report). ONNX stays the default pending a dependency decision and a live soak. |
 | Moonshine streaming (`moonshine_experiment.py`) | No accuracy gain in batch use; streaming promotion is scheduled in the roadmap's latency milestone. |
 | Output underflow probe (`output_underflow_probe.py`) | Forced-gap underflows fixed; the trigger for the remaining MLX-path underflows is unproven. |
 
