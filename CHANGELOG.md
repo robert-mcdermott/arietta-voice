@@ -7,6 +7,13 @@ version policy and the release procedure.
 
 ### Changed
 
+- Faster turn-taking. The end of a turn is now also checked after 250 ms of
+  silence (`audio.endpoint_early_ms`), and work on the answer starts at once
+  when Smart Turn is at least 70% confident. The assistant keeps listening
+  until `audio.silence_ms` has passed; if you carry on speaking it discards
+  that attempt and continues with the whole utterance, logging `turn_resumed`.
+  The thinking chime now starts only once that window has passed. Set
+  `audio.endpoint_early_ms = 0` for the previous behaviour.
 - Faster first response. With model tools enabled, a direct answer is now
   spoken as it is generated instead of after a complete, separate planning
   generation; only a response that starts as a JSON tool request is held back.
@@ -51,11 +58,6 @@ version policy and the release procedure.
   plus transcription time. It carries no conversation text. The latest values
   are also in the runtime status under `reliability.last_turn_timing`.
 - `bench/latency_baseline.py --model-tools` measures the tool-planning path.
-- Optional early end-of-turn check, off by default. With
-  `audio.endpoint_early_ms` above 0, Smart Turn is also asked after that much
-  silence and the assistant answers at once when it is at least
-  `audio.endpoint_early_threshold` confident. It saves about 0.4 s per turn but
-  can end a turn at a pause between two sentences.
 
 - Isolated continuous live/load soak with paced synthetic input, real microphone
   capture/AEC and streamed speaker output, live checks before/after continuous load,
