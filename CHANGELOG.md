@@ -5,6 +5,12 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.2.0rc6 — 2026-11-14
+
+Sixth release candidate for 0.2.0: console improvements, a Persona page and a
+live status on Home. No dependency changes. The final 0.2.0 still waits on the
+30-minute audible soak.
+
 ### Added
 
 - A **Persona** page in the console: edit the persona the assistant is given
