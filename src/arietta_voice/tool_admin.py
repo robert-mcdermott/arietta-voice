@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from arietta_voice.config import standard_tools
 from arietta_voice.private_config import update_private_section
 from arietta_voice.tools.base import ToolContext, ToolError
 from arietta_voice.tools.registry import (
@@ -181,10 +182,14 @@ class ToolAdmin:
                 raise ValueError(f"Tool {name!r} cannot be enabled: {record['error']}")
             enabled.append(name)
         path = self._config_path()
-        update_private_section(path, "tools", {"enabled": enabled})
+        # Recording which standard tools are off lets tools added by a later
+        # release switch on by themselves instead of looking switched off.
+        disabled = [name for name in standard_tools(path) if name not in enabled]
+        update_private_section(path, "tools", {"enabled": enabled, "disabled": disabled})
         # The old separate list is folded into [tools]; clear it so it cannot re-add tools.
         update_private_section(path, "model_tools", {"enabled": []})
         self.config.tools.enabled = tuple(enabled)
+        self.config.tools.disabled = tuple(disabled)
         self.config.model_tools.enabled = ()
         return self.inventory()
 

@@ -1,8 +1,10 @@
 # Your tools
 
-Each `.py` file here is one tool. Enable a tool by adding its file name, without
-`.py`, to `[tools].enabled` in `config/arietta_voice.local.toml`, or switch it on
-from the console's Tools page. Restart the voice runtime afterwards.
+Each `.py` file here is one tool. Switch a tool on from the console's Tools page,
+or add its file name, without `.py`, to `[tools].enabled` in
+`config/arietta_voice.local.toml`. That setting is the whole list, in order, so
+copy the standard list from `config/arietta_voice.toml` and add yours before
+`search_knowledge`. Restart the voice runtime afterwards.
 
 Only this README and `example_dice.py` are tracked by Git; your own tools stay
 local. The folder can be moved with `[tools].directory`.

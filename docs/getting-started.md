@@ -358,12 +358,18 @@ def create_tool(context):
 ```
 
 Enable it by adding its name to `[tools].enabled` in your private config, before
-`search_knowledge`:
+`search_knowledge`. In the private config this is the whole list, in order:
 
 ```toml
 [tools]
-enabled = ["assistant_identity", "local_time", "office_lights", "search_knowledge", "system_info"]
+enabled = ["assistant_identity", "local_time", "set_timer", "set_reminder",
+           "set_alarm", "check_timers", "cancel_timer", "calculate", "date_math",
+           "office_lights", "search_knowledge", "system_info"]
 ```
+
+Standard tools that a later release adds switch on by themselves. To keep a
+standard tool off, list it in `[tools].disabled`, such as
+`disabled = ["system_info"]`.
 
 Or open the console's Tools page, switch it on, move it above
 `search_knowledge` and choose Save. Restart the voice runtime afterwards.
@@ -725,9 +731,9 @@ Check:
 
 - the voice runtime is running: the console sets timers, but only the runtime says them
 - the console's Home page lists the timer; a notice there says when the timer tools are off
-- if your private config lists `[tools].enabled`, it includes `set_timer`,
-  `set_reminder`, `set_alarm`, `check_timers` and `cancel_timer`, before
-  `search_knowledge`
+- your private config does not list `set_timer`, `set_reminder`, `set_alarm`,
+  `check_timers` or `cancel_timer` in `[tools].disabled` (the console's Tools
+  page shows whether they are on)
 - the Mac was awake: anything due while it slept is announced, with how late it is, when it wakes
 
 ### "The assistant does not wake reliably"

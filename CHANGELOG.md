@@ -15,6 +15,17 @@ version policy and the release procedure.
 
 - The README's console screenshot shows the current design.
 
+### Fixed
+
+- New built-in tools now switch on after an upgrade even when the private
+  config has its own tool list. Before, `config-init` and the console's Tools
+  page saved the whole list, so tools added by later releases stayed off until
+  switched on by hand. The private config now also records
+  `[tools].disabled`, the standard tools you switched off; a standard tool in
+  neither list is added just before the next standard tool in yours. Lists
+  saved by earlier versions are read against the release they came from, so
+  tools you switched off stay off.
+
 ## 0.2.0rc2 — 2026-11-14
 
 Second release candidate for 0.2.0: adds the calculator, date questions,

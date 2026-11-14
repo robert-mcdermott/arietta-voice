@@ -138,6 +138,11 @@ enabled = [
   "search_knowledge",
   "system_info",
 ]
+# In your private config, [tools].enabled is the whole list, in order, and
+# [tools].disabled lists the standard tools you switched off:
+#   disabled = ["system_info"]
+# A standard tool in neither list is switched on, so tools added by an upgrade
+# arrive by themselves. The console's Tools page writes both lists for you.
 # Your own tools: one Python file per tool. See tools/README.md.
 directory = "../tools"
 

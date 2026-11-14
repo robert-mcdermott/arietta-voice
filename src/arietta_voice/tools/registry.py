@@ -19,6 +19,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from arietta_voice.config import LEGACY_TOOL_NAMES, canonical_tool_names
 from arietta_voice.tools.base import ToolContext, ToolError, ToolResult
 from arietta_voice.tools.schema import check_schema, coerce_arguments, validate_arguments
 
@@ -28,18 +29,12 @@ TOOL_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 MAX_CONTENT_CHARS = 4000
 MAX_SPEAK_CHARS = 1000
 MAX_TIMEOUT_S = 120.0
-# Names from before the two tool systems were merged.
-LEGACY_NAMES = {"knowledge_retrieval": "search_knowledge"}
+LEGACY_NAMES = LEGACY_TOOL_NAMES
 
 
 def enabled_tool_names(config) -> list[str]:
     """Enabled tools in order, folding in the old [model_tools] list and names."""
-    names: list[str] = []
-    for raw in (*config.tools.enabled, *config.model_tools.enabled):
-        name = LEGACY_NAMES.get(raw.strip(), raw.strip())
-        if name and name not in names:
-            names.append(name)
-    return names
+    return canonical_tool_names((*config.tools.enabled, *config.model_tools.enabled))
 
 
 def builtin_names() -> list[str]:
