@@ -130,7 +130,11 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    It adds misaki (which declares support only below Python 3.13, although uv
    installs it and it works), spaCy and an English spaCy model. One earlier
    100-turn muted run had an output underflow. Gate it on a live soak.
-2. **Stream transcription during speech.** Moonshine's streaming mode leaves
+2. **Stream transcription during speech.** Built as an experimental setting,
+   off by default (`[audio].streaming_stt`): in the muted benchmark the
+   transcription after speech fell from 160 ms to 85 ms at the median and first
+   audio from 1.63 s to 1.54 s, with the same transcripts. Still to do before it
+   becomes the default: the live checks below. Moonshine's streaming mode leaves
    about 70 ms of work after the turn ends instead of about 170 ms. Getting
    that needs a way to feed audio to the inference worker while the user is
    speaking without blocking the listening loop, since each streaming update

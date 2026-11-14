@@ -385,6 +385,8 @@ class UtteranceBuffer:
         self.max_samples = max_samples
         self.chunks: list[np.ndarray] = []
         self.samples = 0
+        # Counts clears, so a reader can tell a new utterance from the same one grown.
+        self.generation = 0
 
     def append(self, chunk: np.ndarray) -> bool:
         if self.samples + len(chunk) > self.max_samples:
@@ -396,6 +398,7 @@ class UtteranceBuffer:
     def clear(self) -> None:
         self.chunks.clear()
         self.samples = 0
+        self.generation += 1
 
     def audio(self) -> np.ndarray:
         return np.concatenate(self.chunks) if self.chunks else np.zeros(0, dtype=np.float32)

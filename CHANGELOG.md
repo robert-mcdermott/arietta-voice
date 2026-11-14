@@ -5,6 +5,18 @@ version policy and the release procedure.
 
 ## Unreleased
 
+### Added
+
+- Experimental: transcribe while you are still speaking
+  (`[audio].streaming_stt`, off by default; also in Settings → Voice). Audio is
+  handed to Moonshine every half second as it is captured, so when you stop
+  only the last part is left: in the muted benchmark the transcription after
+  speech fell from 160 ms to 85 ms at the median and first audio from 1.63 s to
+  1.54 s, with the same transcripts. Anything unexpected falls back to
+  transcribing the whole request. It needs a live check with your microphone
+  before it can become the default.
+- `bench/latency_baseline.py --streaming-stt`.
+
 ## 0.2.0rc6 — 2026-11-14
 
 Sixth release candidate for 0.2.0: console improvements, a Persona page and a

@@ -189,6 +189,9 @@ class AudioConfig:
     tts_trim_silence: bool = True
     mlx_kokoro_model: str = ""
     smart_turn_enabled: bool = True
+    # Experimental: transcribe while the user is still speaking, so less is left
+    # to do when they stop (about 0.15 s sooner). Falls back to the usual way.
+    streaming_stt: bool = False
     aec_enabled: bool = True
     chime_enabled: bool = True
     voice: str = "af_heart"
@@ -523,6 +526,7 @@ def load_config(path: Path | None = None) -> AppConfig:
                 else ""
             ),
             smart_turn_enabled=bool(audio.get("smart_turn_enabled", base.audio.smart_turn_enabled)),
+            streaming_stt=bool(audio.get("streaming_stt", base.audio.streaming_stt)),
             aec_enabled=bool(audio.get("aec_enabled", base.audio.aec_enabled)),
             chime_enabled=bool(audio.get("chime_enabled", base.audio.chime_enabled)),
             voice=str(audio.get("voice", base.audio.voice)),

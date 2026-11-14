@@ -52,6 +52,9 @@ mlx_kokoro_model = ""
 # word and leaves long pauses between clauses.
 tts_trim_silence = true
 smart_turn_enabled = true
+# Experimental: transcribe while you are still speaking, so the transcript is ready
+# about 0.1 s sooner. Falls back to transcribing the whole request if anything is off.
+streaming_stt = false
 aec_enabled = true
 chime_enabled = true
 voice = "af_heart"

@@ -18,6 +18,7 @@ class InferenceEngine:
         self._tts = None
         self._tts_pending = None
         self._chat = None
+        self._stt_stream = None  # An utterance being transcribed while spoken.
         self._memory = self._memory_store = self._memory_proposal = None
         self._loop = asyncio.new_event_loop()
 
@@ -27,6 +28,14 @@ class InferenceEngine:
 
             self._service = ConversationService(self.config)
         return self._service
+
+    def _cancel_stt_stream(self) -> None:
+        stream, self._stt_stream = self._stt_stream, None
+        if stream is not None:
+            try:
+                stream.cancel()
+            except Exception:  # Already broken; nothing more to free.
+                pass
 
     def stt(self):
         if self._stt is None:
@@ -83,7 +92,36 @@ class InferenceEngine:
                 self.speaker().ensure_loaded()
             return None
         if operation == "transcribe":
+            self._cancel_stt_stream()  # Never two transcriptions on one model at once.
             return self.stt().transcribe(payload, self.config.audio.sample_rate)
+        # Transcribing while the user speaks. These report failure in their result
+        # instead of raising, since a raised error restarts the worker and
+        # reloads every model; the caller then transcribes the usual way.
+        if operation == "stt_stream_start":
+            from arietta_voice.stt import StreamingTranscription
+
+            self._cancel_stt_stream()
+            try:
+                self._stt_stream = StreamingTranscription(self.stt(), self.config.audio.sample_rate)
+            except Exception:
+                return False
+            return True
+        if operation == "stt_stream_add":
+            if self._stt_stream is None:
+                return False
+            self._stt_stream.add(payload)
+            return True
+        if operation == "stt_stream_finish":
+            stream, self._stt_stream = self._stt_stream, None
+            if stream is None:
+                return None
+            try:
+                return stream.finish(payload)
+            except Exception:
+                return None
+        if operation == "stt_stream_cancel":
+            self._cancel_stt_stream()
+            return None
         if operation == "endpoint":
             return self.endpoint().probability(payload)
         if operation in {"chat", "chat_start"}:
