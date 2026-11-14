@@ -8,7 +8,7 @@ from arietta_voice.timephrases import (
     format_duration,
     parse_duration,
 )
-from arietta_voice.timers import TimerLimitError, timer_name
+from arietta_voice.timers import TimerLimitError, apology, timer_name
 from arietta_voice.tools.base import BaseTool, ToolContext, ToolResult
 from arietta_voice.tools.builtin._timers import clean_label, store_for, timer_request
 
@@ -49,7 +49,9 @@ class SetTimerTool(BaseTool):
         try:
             alert = self.store.add_timer(seconds, clean_label(arguments.get("label", "")))
         except TimerLimitError as error:
-            return ToolResult(content=f"No timer was set: {error}.", speak=f"Sorry, {error}.")
+            return ToolResult(
+                content=f"No timer was set: {error}.", speak=f"Sorry, {apology(error)}."
+            )
         length = format_duration(alert.duration_s)
         ends = format_clock(datetime.fromtimestamp(alert.due_at).astimezone())
         if alert.label:

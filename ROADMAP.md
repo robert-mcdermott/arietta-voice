@@ -169,8 +169,9 @@ acoustically at least once.
    survives restarts, spoken alerts between turns that repeat until answered,
    "stop" and "snooze" without the wake word, and a console card. Arithmetic
    and unit conversion are done (`calculate`; the 4-bit Gemma had said
-   17 × 23 is 749). Still to do: weather, web search with spoken source
-   attribution, and date arithmetic ("how many days until Christmas").
+   17 × 23 is 749), and so are date questions (`date_math`: "how many days
+   until Christmas?"). Still to do: weather and web search with spoken source
+   attribution.
 5. **Home control** through Home Assistant: read-only status first, then
    explicitly authorized actions.
 6. **Model routing.** Keep the small local model for fast turns and tool

@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timedelta
 
 from arietta_voice.timephrases import describe_when, parse_when
-from arietta_voice.timers import TimerLimitError
+from arietta_voice.timers import TimerLimitError, apology
 from arietta_voice.tools.base import BaseTool, ToolContext, ToolResult
 from arietta_voice.tools.builtin._timers import alarm_request, store_for
 
@@ -73,7 +73,9 @@ class SetAlarmTool(BaseTool):
         try:
             alert = self.store.add_alarm(due, label)
         except TimerLimitError as error:
-            return ToolResult(content=f"No alarm was set: {error}.", speak=f"Sorry, {error}.")
+            return ToolResult(
+                content=f"No alarm was set: {error}.", speak=f"Sorry, {apology(error)}."
+            )
         timing = describe_when(due, now)
         if label == "time to wake up":
             speak = f"Okay, I'll wake you {timing}."

@@ -15,6 +15,19 @@ version policy and the release procedure.
   Expressions are evaluated from a parsed syntax tree of numbers and operators
   only, with limits on size. Enabled by default; add it to a private
   `[tools].enabled` list to use it there.
+- A `date_math` tool for days until, since and between dates, the day of the
+  week a date falls on, and the date after some days or weeks: "how many days
+  until Christmas?", "what day of the week is July 4th?", "what's the date in
+  three weeks?". It reads holidays (including Easter, Thanksgiving, Mother's
+  Day and Labor Day), month-and-day dates in digits or words, `12/25`, ISO dates
+  and weekdays. Enabled by default.
+
+### Changed
+
+- A reminder set a day or more ahead with a delay ("in three weeks") that would
+  fall at night now goes off at 9 AM that day instead.
+- Timer and reminder apologies read naturally ("Sorry, timers can run from 1
+  second to 24 hours; for longer, ask for a reminder.").
 
 ## 0.2.0rc1 — 2026-11-14
 
