@@ -5,6 +5,16 @@ version policy and the release procedure.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.2.0rc2 — 2026-11-14
+
+Second release candidate for 0.2.0: adds the calculator, date questions,
+optional weather, a spoken filler for slow tools, streaming console chat and
+editable settings, and fixes the problems an independent review found in the
+first candidate's new code (see Fixed). The final 0.2.0 still waits on the
+30-minute audible soak.
+
 ### Added
 
 - A `calculate` tool for arithmetic, percentages, powers, roots and unit
