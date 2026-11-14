@@ -268,7 +268,10 @@ tool call; its result is added as context and the model answers.
 Either way, a tool that is unknown, gets invalid arguments, fails or times out
 is reported to the model, which answers without it. A tool with
 `speaks_for_itself` (the timer tools) answers with its own `speak` instead of a
-second generation, which is faster and cannot misstate what the tool did. The
+second generation, which is faster and cannot misstate what the tool did. Tools
+run in the background; one still working after 0.8 seconds gets a spoken "One
+moment." (once per turn), which the speech pipeline says while the tool
+finishes and which is not part of the recorded answer. The
 model's first response is streamed, so a direct answer is spoken as it is
 generated.
 

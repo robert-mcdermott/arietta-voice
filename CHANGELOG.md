@@ -29,6 +29,10 @@ version policy and the release procedure.
   it sends the place name and its coordinates to open-meteo.com, and caches
   answers for ten minutes. New `[weather]` settings: `location` and `units`.
 
+- When a tool is still working after 0.8 seconds (the weather service, say), the
+  assistant says "One moment." while it waits, once per turn. The filler is
+  spoken only; it is not part of the answer shown in the console.
+
 ### Changed
 
 - A reminder set a day or more ahead with a delay ("in three weeks") that would
