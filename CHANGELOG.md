@@ -41,6 +41,9 @@ version policy and the release procedure.
 
 ### Fixed
 
+- Asking the same thing twice in a row no longer reprocesses the whole prompt:
+  the repeat reuses the cached prompt and starts speaking in about 0.4 s
+  instead of 2.5 s or more.
 - A number sent where a tool expects text is passed on exactly
   (`2065551234`, not `2.06555e+09`).
 - New built-in tools now switch on after an upgrade even when the private

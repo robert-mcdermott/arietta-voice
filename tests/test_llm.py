@@ -82,7 +82,18 @@ def _fake_mlx(monkeypatch, chunks, calls):
     from types import SimpleNamespace
 
     class PromptCacheState:
-        pass
+        # As in mlx-vlm: how many leading tokens match the last prompt and answer.
+        token_ids = None
+
+        def find_prefix_length(self, new_ids):
+            if self.token_ids is None:
+                return 0
+            shared = 0
+            for cached, new in zip(self.token_ids, new_ids, strict=False):
+                if cached != new:
+                    break
+                shared += 1
+            return shared
 
     def stream_generate(model, processor, prompt, **options):
         calls.append(options)
@@ -198,3 +209,19 @@ def test_local_stream_declares_tools_through_the_chat_template(monkeypatch):
     list(model.stream([{"role": "user", "content": "Hi"}]))
     assert "tools" not in model._processor.apply_chat_template.call_args.kwargs
     assert model.native_tool_calls is True
+
+
+def test_a_repeated_prompt_still_reuses_the_cache(monkeypatch):
+    # mlx-vlm reuses a prefix only when the new prompt is longer than it; an
+    # exact repeat must keep one token back so it is not processed from scratch.
+    _fake_mlx(monkeypatch, ["Answer."], [])
+    from arietta_voice.llm import _repeat_safe_prefix_state
+
+    state = _repeat_safe_prefix_state()
+    assert state.find_prefix_length([1, 2, 3]) == 0  # Nothing cached yet.
+    state.token_ids = [1, 2, 3, 4, 5, 6]  # The last prompt, then its answer.
+    assert state.find_prefix_length([1, 2, 3, 4]) == 3  # The same prompt again.
+    assert state.find_prefix_length([1, 2, 3, 4, 5, 6]) == 5
+    assert state.find_prefix_length([1, 2, 9, 9]) == 2  # Diverges: unchanged.
+    assert state.find_prefix_length([1, 2, 3, 4, 5, 6, 7, 8]) == 6  # Longer: unchanged.
+    assert state.find_prefix_length([]) == 0

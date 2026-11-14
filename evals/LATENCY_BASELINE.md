@@ -466,3 +466,26 @@ timing boundary. Nothing here measures the acoustic path, interruption, a live
 microphone, or answer quality. The raw per-turn reports from these runs were not
 kept; only the figures above were recorded. The 1.0 s target is not met.
 
+
+## November 14, 2026: repeated prompts
+
+mlx-vlm reuses the cached prefix only when a new prompt is longer than the part
+it shares with the last prompt and answer. A question asked again word for word
+shares all of it, so it was processed from scratch. Holding back the last token
+(`_repeat_safe_prefix_state` in `llm.py`) keeps it on the reuse path.
+
+Measured on the M4/32 GB Mac with the default local stack, the 11 built-in
+tools and a test MCP server's 3 tools declared (a 983-token prompt), asking each
+question twice:
+
+| | Repeat: prompt tokens reused | Repeat: first words |
+| --- | ---: | ---: |
+| Before | 0 of 983 | 2.4–2.7 s |
+| After | 982 of 983 | 0.43 s |
+
+First questions were unchanged at about 0.42 s, with 970 tokens reused. At
+temperature 0 a repeated prompt gave exactly the answer of an uncached run.
+Separately, reuse after a *different* prompt still changes the wording of some
+greedy answers (2 of 5 questions, with or without the repetition penalty),
+because the prompt is processed in two pieces instead of one; every answer was
+correct and fluent either way, and this was already the case before.
