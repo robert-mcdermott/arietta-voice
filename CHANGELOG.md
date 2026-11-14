@@ -5,6 +5,14 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.2.0rc3 — 2026-11-14
+
+Third release candidate for 0.2.0. It connects to MCP servers, with a spoken
+"Should I …?" before anything that changes something; answers ordinary
+questions instead of declining them, after fixing a prompt-reuse bug that
+garbled what the model read; and keeps new built-in tools switched on after an
+upgrade. The final 0.2.0 still waits on the 30-minute audible soak.
+
 ### Added
 
 - `bench/answer_quality.py`: how often the chat model declines or gets an
@@ -40,6 +48,10 @@ version policy and the release procedure.
 
 ### Changed
 
+- The default persona (`config/SOUL.md`) tells the model to answer general
+  knowledge and everyday questions from what it knows.
+- New dependency: the MCP Python SDK (`mcp` 2.3.0, which brings `jsonschema`).
+  Updated: FastAPI 0.163.0 and smart-open 9.0.4.
 - The README's console screenshot shows the current design.
 
 ### Fixed
