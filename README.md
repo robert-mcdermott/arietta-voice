@@ -130,13 +130,14 @@ HTTP Basic credentials are not encrypted by HTTP itself. The API rejects
 untrusted Host headers and cross-origin browser mutations, and marks responses
 non-cacheable. These controls do not provide TLS or a multi-user permission model.
 
-The console has seven sections: **Home** (live assistant status and runtime
-controls), **Chat**, **Knowledge**, **Tools**, **Activity** (the event log),
-**System** (health checks, audio and process detail) and **Settings** (the
-configuration in effect). It follows your system light or dark preference.
+The console has seven sections: **Home** (live assistant status, runtime
+controls, timers, reminders and alarms, the last turn's timing and the current
+exchange), **Chat** (answers stream as they are written), **Knowledge**,
+**Tools**, **Activity** (the event log), **System** (health checks, audio and
+process detail) and **Settings** (common settings as forms, plus everything in
+effect). It follows your system light or dark preference.
 
-**Screenshot of the earlier console design (to be replaced):**
-![arietta console](assets/arietta_console.png)
+![The console's Home page: the assistant listening, a pasta timer counting down, an alarm and a reminder, the last turn's timing and recent activity](assets/arietta_console.png)
 
 
 The voice runtime and web console can run as separate processes. For example,
