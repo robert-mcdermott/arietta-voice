@@ -144,3 +144,47 @@ def test_reminders_are_read_back_to_the_user():
     )
     assert second_person("I am picking up Sam") == "you are picking up Sam"
     assert second_person("email me the summary") == "email you the summary"
+
+
+# Daylight saving ends in Los Angeles at 2 AM on November 1, 2026.
+BEFORE_DST_ENDS = datetime(2026, 10, 31, 20, 0, tzinfo=ZONE)
+
+
+@pytest.fixture
+def pacific(monkeypatch):
+    import time
+
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_clock_times_after_a_daylight_saving_change_keep_their_hour(pacific):
+    from datetime import timezone
+
+    # Production passes datetime.now().astimezone(), which has a fixed offset.
+    fixed = BEFORE_DST_ENDS.astimezone(timezone(timedelta(hours=-7)))
+    for now in (BEFORE_DST_ENDS, fixed):
+        tomorrow = parse_when("tomorrow at 9 am", now).due
+        assert (tomorrow.hour, tomorrow.utcoffset()) == (9, timedelta(hours=-8))
+        monday = parse_when("on monday at 7 am", now).due
+        assert (monday.day, monday.hour) == (2, 7)
+        iso = parse_when("2026-11-02T09:00:00", now).due
+        assert iso.hour == 9 and iso.utcoffset() == timedelta(hours=-8)
+
+
+def test_a_delay_across_the_change_counts_real_time(pacific):
+    late = datetime(2026, 11, 1, 1, 50, tzinfo=ZONE, fold=0)  # 1:50 AM daylight time
+    due = parse_when("in 20 minutes", late).due
+    from datetime import timezone
+
+    # Same-zone subtraction is wall-clock arithmetic in Python; compare in UTC.
+    assert due.astimezone(timezone.utc) - late.astimezone(timezone.utc) == timedelta(minutes=20)
+    assert (due.hour, due.minute, due.utcoffset()) == (1, 10, timedelta(hours=-8))
+
+
+@pytest.mark.parametrize("text", ["at 24 am", "at 13 pm", "at 17:30 pm", "at 0 pm"])
+def test_impossible_hours_are_refused(text):
+    assert parse_when(text, NOW) is None

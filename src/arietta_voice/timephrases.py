@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import date as Date
+from datetime import datetime, time, timedelta, timezone
 
 ONES = {
     "zero": 0,
@@ -306,7 +307,9 @@ def _time_at(words: list[str], i: int, *, after_at: bool) -> tuple[tuple, int] |
         if hour > 24 or minute >= 60:
             return None
         meridiem, j = _meridiem(words, i + 1)
-        return (hour, minute, meridiem), j
+        if meridiem and not 1 <= hour <= 12:
+            return None  # "17:30 pm"
+        return (hour % 24, minute, meridiem), j
     if NUMBER.fullmatch(word) and "." not in word and len(word) in (3, 4):
         hour, minute = int(word[:-2]), int(word[-2:])
         meridiem, j = _meridiem(words, i + 1)
@@ -325,6 +328,28 @@ def _time_at(words: list[str], i: int, *, after_at: bool) -> tuple[tuple, int] |
     if not (after_at or spoken_clock):
         return None
     return (hour, minute, meridiem), k
+
+
+def local_datetime(day: Date, clock: time, like: datetime) -> datetime:
+    """``day`` at ``clock`` in ``like``'s time zone, with that day's own UTC offset.
+
+    ``datetime.now().astimezone()`` has today's fixed offset, so combining a later
+    date with it would be an hour out across a daylight-saving change. A fixed
+    offset is taken to mean this machine's local time.
+    """
+    zone = like.tzinfo
+    if zone is None or isinstance(zone, timezone):
+        return datetime.combine(day, clock).astimezone()
+    return datetime.combine(day, clock, tzinfo=zone)
+
+
+def local_after(now: datetime, seconds: float) -> datetime:
+    """The local time ``seconds`` after ``now``, counted in real (UTC) time."""
+    moment = now.astimezone(timezone.utc) + timedelta(seconds=seconds)
+    zone = now.tzinfo
+    if zone is None or isinstance(zone, timezone):
+        return moment.astimezone()
+    return moment.astimezone(zone)
 
 
 @dataclass(slots=True, frozen=True)
@@ -348,7 +373,8 @@ def parse_when(text: str, now: datetime) -> When | None:
     except ValueError:
         pass
     else:
-        parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=now.tzinfo)
+        if parsed.tzinfo is None:
+            parsed = local_datetime(parsed.date(), parsed.time(), now)
         return When(parsed, relative=False) if parsed > now else None
     words = [token.group() for token in _tokens(normalize(raw))]
     duration = clock = weekday = period = None
@@ -428,7 +454,7 @@ def parse_when(text: str, now: datetime) -> When | None:
             return None
         if duration <= 0:
             return None
-        return When(now + timedelta(seconds=duration), relative=True)
+        return When(local_after(now, duration), relative=True)
     if clock is None and day_offset is None and weekday is None and period is None:
         return None
 
@@ -447,6 +473,8 @@ def parse_when(text: str, now: datetime) -> When | None:
         candidates = [(hour, minute)]
     else:
         hour, minute, meridiem = clock
+        if meridiem and not 1 <= hour <= 12:
+            return None  # "13 pm", "0 am"
         if meridiem == "pm" and hour < 12:
             candidates = [(hour + 12, minute)]
         elif meridiem == "am":
@@ -464,16 +492,18 @@ def parse_when(text: str, now: datetime) -> When | None:
             # The next time the clock shows this hour, morning or evening.
             candidates = [(hour % 12, minute), (hour % 12 + 12, minute)]
 
-    tz = now.tzinfo
-    options = sorted(datetime.combine(date, time(h, m), tzinfo=tz) for h, m in candidates)
+    if any(not (0 <= h < 24 and 0 <= m < 60) for h, m in candidates):
+        return None  # "24 am", "13 pm"
+    options = sorted(local_datetime(date, time(h, m), now) for h, m in candidates)
     for option in options:
         if option > now:
             return When(option, relative=False)
+    first = options[0]
     if weekday is not None and not day_offset:
-        return When(options[0] + timedelta(days=7), relative=False)
+        return When(local_datetime(first.date() + timedelta(days=7), first.time(), now), False)
     if explicit_day:
         return None  # "today at 9 am" after nine.
-    return When(options[0] + timedelta(days=1), relative=False)
+    return When(local_datetime(first.date() + timedelta(days=1), first.time(), now), False)
 
 
 # Saying them ---------------------------------------------------------------

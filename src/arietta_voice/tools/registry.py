@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -21,6 +22,7 @@ from typing import Any
 from arietta_voice.tools.base import ToolContext, ToolError, ToolResult
 from arietta_voice.tools.schema import check_schema, coerce_arguments, validate_arguments
 
+logger = logging.getLogger("arietta_voice.tools")
 BUILTIN_PACKAGE = "arietta_voice.tools.builtin"
 TOOL_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 MAX_CONTENT_CHARS = 4000
@@ -189,7 +191,12 @@ class ToolRegistry:
         """Run the first tool, in configured order, whose trigger matches."""
         for name, tool in self.tools.items():
             match = getattr(tool, "match", None)
-            arguments = match(text) if callable(match) else None
+            try:
+                arguments = match(text) if callable(match) else None
+            except Exception as exc:
+                # A matcher that trips on odd input must not fail the turn.
+                logger.warning("Tool %s could not read the request (%s)", name, type(exc).__name__)
+                continue
             if arguments is None:
                 continue
             try:

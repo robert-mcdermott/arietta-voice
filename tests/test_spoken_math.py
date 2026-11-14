@@ -79,6 +79,12 @@ def test_other_requests_are_not_arithmetic(text):
         ("x + 1", "can work out"),
         ("1 +", "can work out"),
         ("1" * 201, "too long"),
+        ("0.001 ** -999", "too big"),
+        ("0 ** -1", "divide by zero"),
+        ("sqrt((-8) ** 0.5)", "real answer"),
+        ("((-8) ** 0.5) ** 2", "real answer"),
+        ("(-8) ** 0.5 % 2", "real answer"),
+        ("round(1e308 * 10)", "too big"),
     ],
 )
 def test_only_arithmetic_is_ever_evaluated(expression, message):

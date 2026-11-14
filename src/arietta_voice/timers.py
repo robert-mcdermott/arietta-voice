@@ -98,6 +98,8 @@ class Alert:
             and alert.kind in KINDS
             and alert.status in (PENDING, RINGING, DONE)
             and number(alert.due_at)
+            # A time that can be said: from 2001 to 2286.
+            and 1e9 < alert.due_at < 1e10
             and number(alert.created_at)
             and isinstance(alert.label, str)
             and isinstance(alert.form, str)
@@ -388,6 +390,7 @@ class AlertScheduler:
         # Also remembered here, so a store that cannot be written does not
         # make an alert ring on every pass of the listening loop.
         self._last_rang: dict[str, float] = {}
+        self._unwritable: set[str] = set()
 
     def _refresh(self) -> list[Alert]:
         signature = self.store.signature()
@@ -405,6 +408,8 @@ class AlertScheduler:
         now = self.clock()
         due, expired = [], []
         for alert in self._refresh():
+            if alert.id in self._unwritable:
+                continue
             if alert.status == PENDING and alert.due_at <= now and not self._quiet(alert, now):
                 due.append(alert)
             elif alert.status == RINGING and now - (alert.rang_at or 0) >= self.repeat_s:
@@ -434,8 +439,17 @@ class AlertScheduler:
             for alert in stored:
                 if alert.id in ids and alert.active:
                     alert.status, alert.rings, alert.rang_at = RINGING, alert.rings + 1, when
+            return True
 
-        self._change(change)
+        if self._change(change) is None:
+            # Not recorded as rung, so it would look due again every repeat
+            # forever. Say it once in this process instead.
+            self._unwritable.update(ids)
+
+    def dismiss_ids(self, ids: list[str], outcome: str) -> list[Alert]:
+        """Finish these alerts whatever their state; never rings them again here."""
+        self._unwritable.update(ids)
+        return self._finish(ids, outcome)
 
     def dismiss(self, outcome: str = "dismissed") -> list[Alert]:
         """Stop everything that is ringing."""
@@ -486,15 +500,23 @@ class AlertScheduler:
 
 # What people say while an alert is going off --------------------------------
 
-STOP = re.compile(
-    r"(?:(?:ok(?:ay)?|alright|all right|yes|yeah|yep)\s*)*"
-    r"(?:stop|stop it|stop that|dismiss|dismiss it|cancel|cancel it|quiet|be quiet|enough|"
-    r"that's enough|shut up|silence|turn it off|turn that off|got it|i got it|i heard you|"
-    r"heard you|thanks?|thank you|i'm up|i am up|ok(?:ay)?|alright|done|"
+_PREFIX = r"(?:(?:ok(?:ay)?|alright|all right|yes|yeah|yep)\s*)*"
+_SUFFIX = r"(?:\s*(?:now|please|thanks|thank you))*"
+# Clear dismissals, accepted without the wake word while an alert rings.
+_DISMISS = (
+    r"stop|stop it|stop that|dismiss|dismiss it|cancel|cancel it|quiet|be quiet|enough|"
+    r"that's enough|shut up|silence|turn it off|turn that off|"
     r"(?:stop|dismiss|cancel|silence|turn off|end) (?:the |my |that |this )?"
-    r"(?:\w+ )?(?:timer|timers|alarm|alert|reminder)s?(?: off)?)"
-    r"(?:\s*(?:now|please|thanks|thank you))*"
+    r"(?P<label>\w+ )?(?:timer|timers|alarm|alert|reminder)s?(?: off)?"
 )
+# Acknowledgements also said to other people (or by a television): accepted only
+# in a conversation with the assistant, never as a no-wake-word dismissal.
+_ACKNOWLEDGE = (
+    r"got it|i got it|i heard you|heard you|thanks?|thank you|i'm up|i am up|ok(?:ay)?|"
+    r"alright|done"
+)
+STRICT_STOP = re.compile(_PREFIX + f"(?:{_DISMISS})" + _SUFFIX)
+STOP = re.compile(_PREFIX + f"(?:{_DISMISS}|{_ACKNOWLEDGE})" + _SUFFIX)
 SNOOZE = re.compile(
     r"(?:(?:ok(?:ay)?|alright|yes|yeah)\s*)*(?:please\s+)?"
     r"(?:snooze(?: it| that| the (?:timer|alarm|reminder))?(?: for)?(?P<a>.*)|"
@@ -509,8 +531,16 @@ def _command_text(text: str) -> str:
     return re.sub(r"[^a-z0-9:' ]+", " ", text).strip()
 
 
-def is_stop_command(text: str) -> bool:
-    return bool(STOP.fullmatch(" ".join(_command_text(text).split())))
+def is_stop_command(text: str, *, strict: bool = False) -> bool:
+    """Whether this stops a ringing alert; ``strict`` accepts clear dismissals only."""
+    return bool((STRICT_STOP if strict else STOP).fullmatch(" ".join(_command_text(text).split())))
+
+
+def stop_label(text: str) -> str | None:
+    """The alert a stop command names ("stop the pasta timer" -> "pasta"), if any."""
+    found = STOP.fullmatch(" ".join(_command_text(text).split()))
+    label = found.group("label") if found else None
+    return label.strip() if label else None
 
 
 def snooze_request(text: str) -> float | None:

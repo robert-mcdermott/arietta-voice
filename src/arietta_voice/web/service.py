@@ -551,6 +551,7 @@ class AriettaApiService:
         deadline = time.monotonic() + self.config.runtime.turn_timeout_s
         payload = request.model_dump(exclude={"request_id"})
         payload.update(enabled_tools=tuple(enabled_tool_names(self.config)))
+        stream = ChatStream(self, request, request_id, token, deadline)
         try:
             self.worker.call(
                 "chat_start",
@@ -559,44 +560,36 @@ class AriettaApiService:
                 cancellation=token,
             )
         except BaseException:
-            self._finish_stream(request_id, token)
+            stream.close()
             raise
-        return self._stream_events(request, request_id, token, deadline)
+        return stream
 
-    def _stream_events(self, request, request_id, token, deadline):
-        try:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise WorkerTimeout("Turn exceeded its time limit")
-                event = self.worker.call("chat_next", timeout_s=remaining, cancellation=token)
-                if not isinstance(event, dict) or event.get("kind") not in ("clause", "done"):
-                    raise ValueError("Invalid conversation event")
-                if event["kind"] == "clause":
-                    yield {"kind": "clause", "text": event["text"]}
-                    continue
-                with self._chat_lock:
-                    token.check()
-                result = ChatResult(**event["result"])
-                self.last_error = None
-                if result.source == "model":
-                    self._worker_model_pid = self.worker.pid
-                self._record_chat(
-                    request.message,
-                    result.response,
-                    source=result.source,
-                    used_tool=result.used_tool,
-                    model_tool=result.model_tool,
-                )
-                yield {"kind": "done", "result": asdict(result)}
-                return
-        finally:
-            try:
-                if self.worker.pid is not None:
-                    self.worker.call("chat_close", timeout_s=2)
-            except Exception:
-                pass  # A failed worker is replaced on the next call.
-            self._finish_stream(request_id, token)
+    def _stream_events(self, request, token, deadline):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise WorkerTimeout("Turn exceeded its time limit")
+            event = self.worker.call("chat_next", timeout_s=remaining, cancellation=token)
+            if not isinstance(event, dict) or event.get("kind") not in ("clause", "done"):
+                raise ValueError("Invalid conversation event")
+            if event["kind"] == "clause":
+                yield {"kind": "clause", "text": event["text"]}
+                continue
+            with self._chat_lock:
+                token.check()
+            result = ChatResult(**event["result"])
+            self.last_error = None
+            if result.source == "model":
+                self._worker_model_pid = self.worker.pid
+            self._record_chat(
+                request.message,
+                result.response,
+                source=result.source,
+                used_tool=result.used_tool,
+                model_tool=result.model_tool,
+            )
+            yield {"kind": "done", "result": asdict(result)}
+            return
 
     def _finish_stream(self, request_id, token) -> None:
         with self._chat_lock:
@@ -676,6 +669,43 @@ class AriettaApiService:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+class ChatStream:
+    """A console chat turn's events; closing it, early or late, always frees the turn.
+
+    The HTTP layer closes it from a background task as well as after the last
+    event, because a client that disconnects before the first event means the
+    event generator never starts, and an unstarted generator's cleanup never
+    runs. ``close`` is safe to call more than once.
+    """
+
+    def __init__(self, service, request, request_id, token, deadline) -> None:
+        self.service, self.request_id, self.token = service, request_id, token
+        self._events = service._stream_events(request, token, deadline)
+        self._closed = False
+        self._lock = threading.Lock()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._events)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        try:
+            self._events.close()
+        finally:
+            try:
+                if self.service.worker.pid is not None:
+                    self.service.worker.call("chat_close", timeout_s=2)
+            except Exception:
+                pass  # A failed worker is replaced on the next call.
+            self.service._finish_stream(self.request_id, self.token)
 
 
 def _alert_payload(alert, now: float) -> dict[str, Any]:

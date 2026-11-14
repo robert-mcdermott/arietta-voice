@@ -23,6 +23,7 @@ NATIVE_TOOL_RULES = (
     "Never say you set, changed or cancelled something unless a tool did it."
 )
 GAVE_UP = "Sorry, I couldn't finish that."
+MIXED_UP = "Sorry, I got mixed up there. Could you ask that again?"
 # Said once per turn when a tool is still working after this long, so a slow
 # tool (the weather service, say) is not met with silence.
 FILLER = "One moment."
@@ -236,7 +237,11 @@ class ConversationService:
                 return
             calls = parse_native_tool_calls(call_text)
             if calls is None:
-                raise ValueError("Invalid tool call")
+                # A garbled call: say so rather than fail the turn, which would
+                # restart the worker and reload every model.
+                yield ModelEvent("text", MIXED_UP)
+                yield ModelEvent("done")
+                return
             if step == MAX_TOOL_STEPS:
                 break
             call = calls[0]  # One at a time; the model can ask again for more.

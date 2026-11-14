@@ -253,7 +253,16 @@ def evaluate(expression: str) -> float:
         tree = ast.parse(text, mode="eval")
     except SyntaxError as exc:
         raise MathError("That isn't an expression I can work out") from exc
-    value = _walk(tree.body)
+    try:
+        value = _walk(tree.body)
+    except MathError:
+        raise
+    except ZeroDivisionError as exc:
+        raise MathError("You can't divide by zero") from exc
+    except OverflowError as exc:
+        raise MathError("That number is too big to say") from exc
+    except (TypeError, ValueError) as exc:
+        raise MathError("That doesn't have a real answer") from exc
     if isinstance(value, complex) or math.isnan(value) or math.isinf(value):
         raise MathError("That doesn't have a real answer")
     if abs(value) > MAX_MAGNITUDE:
@@ -274,7 +283,10 @@ def _walk(node):
                 abs(left) > 1 and abs(right) * math.log10(abs(left)) > 100
             ):
                 raise MathError("That number is too big to say")
-            return float(left) ** right
+            result = float(left) ** right
+            if isinstance(result, complex):
+                raise MathError("That doesn't have a real answer")
+            return result
         handler = OPERATORS.get(type(node.op))
         if handler is None:
             raise MathError("That isn't an expression I can work out")
@@ -298,6 +310,8 @@ def _walk(node):
 
 def say_number(value: float) -> str:
     """ "391", "14.29", "0.333", "1,250,000"."""
+    if not math.isfinite(value) or abs(value) >= 1e15:
+        return f"{value:.3g}"
     if math.isclose(value, round(value), rel_tol=0, abs_tol=1e-9) and abs(value) < 1e15:
         return f"{int(round(value)):,}"
     magnitude = abs(value)

@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from arietta_voice.admin_auth import load_admin_credentials
@@ -439,8 +440,13 @@ def create_app(
             finally:
                 events.close()
 
+        # The background task frees the turn even if the client left before the
+        # first event, when sse() never starts and its cleanup never runs.
         return StreamingResponse(
-            sse(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
+            sse(),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
+            background=BackgroundTask(events.close),
         )
 
     @app.post("/api/chat")

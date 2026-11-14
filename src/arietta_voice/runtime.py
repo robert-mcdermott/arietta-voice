@@ -46,6 +46,7 @@ from arietta_voice.timers import (
     is_stop_command,
     snooze_reply,
     snooze_request,
+    stop_label,
 )
 from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turn_detection import SileroVoiceActivityDetector
@@ -370,7 +371,13 @@ class AriettaVoiceRuntime:
         Barge-in works as it does for answers: speech over the alert is kept
         and becomes the next turn, which is how "stop" or "snooze" interrupts.
         """
-        text = announcement(alerts, time.time())
+        try:
+            text = announcement(alerts, time.time())
+        except (OverflowError, OSError, ValueError) as exc:
+            # An entry that cannot be said must not stop the listening loop.
+            self.event_logger.log("alert_failed", error_type=type(exc).__name__)
+            self.alerts.dismiss_ids([alert.id for alert in alerts], "unreadable")
+            return UtteranceResult(buffered_chunks=[])
         self.alerts.rang(alerts)
         self.alerts_announced += 1
         self.event_logger.log(
@@ -424,11 +431,21 @@ class AriettaVoiceRuntime:
             capture_phase(microphone, "listening")
             self._publish_status(force=True)
 
-    def _alert_reply(self, transcript: str) -> str | None:
-        """While an alert is ringing, "stop" and "snooze" are answered here."""
-        if not transcript or not self.alerts.ringing():
+    def _alert_reply(self, transcript: str, *, strict: bool = False) -> str | None:
+        """While an alert is ringing, "stop" and "snooze" are answered here.
+
+        ``strict`` (no wake word heard) accepts only clear dismissals, so
+        "okay" or "thanks" said to someone else, or by a television, does not
+        silence an alarm. A command naming a different alert ("cancel the
+        dentist reminder") is left for the tools.
+        """
+        ringing = self.alerts.ringing()
+        if not transcript or not ringing:
             return None
-        if is_stop_command(transcript):
+        named = stop_label(transcript)
+        if named and not any(named in alert.label.lower() for alert in ringing):
+            return None
+        if is_stop_command(transcript, strict=strict):
             self.alerts.dismiss("dismissed")
             self.event_logger.log("alert_answered", action="stop")
             return "Okay."
@@ -720,7 +737,7 @@ class AriettaVoiceRuntime:
                 return UtteranceResult(buffered_chunks=[])
             # While an alert rings, "stop" or "snooze" needs no wake word.
             # Nothing else is answered without one.
-            reply = self._alert_reply(transcript)
+            reply = self._alert_reply(transcript, strict=True)
             if reply is not None:
                 self._log_transcript(transcript, stt_latency_ms)
                 self.last_user_transcript = transcript

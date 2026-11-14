@@ -296,6 +296,13 @@ BETWEEN = re.compile(
 
 def answer(text: str, today: date) -> str | None:
     """A spoken answer to a date question, or None if it is not one."""
+    try:
+        return _answer(text, today)
+    except (OverflowError, ValueError):
+        return None  # "the date in 3,000,000 days" is past the calendar's end.
+
+
+def _answer(text: str, today: date) -> str | None:
     spoken = normalize(_iso_as_words(text)).strip(" ?.!")
     found = BETWEEN.match(spoken)
     if found:

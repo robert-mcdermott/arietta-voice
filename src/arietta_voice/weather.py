@@ -8,12 +8,13 @@ repeat requests.
 
 from __future__ import annotations
 
+import http.client
 import json
 import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -91,6 +92,13 @@ class Forecast:
     wind: float
     days: list[Day]
     units: str  # "imperial" or "metric"
+    utc_offset_s: int | None = None  # the place's offset; its days are its own dates
+
+    def today(self) -> date | None:
+        """The date where the place is, or None if the service did not say."""
+        if self.utc_offset_s is None:
+            return None
+        return (datetime.now(timezone.utc) + timedelta(seconds=self.utc_offset_s)).date()
 
     def on(self, day: date) -> Day | None:
         return next((item for item in self.days if item.day == day), None)
@@ -101,7 +109,7 @@ def _fetch_json(url: str, timeout: float) -> dict:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.load(response)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, http.client.HTTPException) as exc:
         raise WeatherError(type(exc).__name__) from exc
 
 
@@ -141,13 +149,16 @@ class WeatherClient:
         found = None
         if results:
             best = results[0]
-            found = Place(
-                name=str(best.get("name", name)),
-                latitude=float(best["latitude"]),
-                longitude=float(best["longitude"]),
-                region=str(best.get("admin1", "")),
-                country=str(best.get("country", "")),
-            )
+            try:
+                found = Place(
+                    name=str(best.get("name", name)),
+                    latitude=float(best["latitude"]),
+                    longitude=float(best["longitude"]),
+                    region=str(best.get("admin1", "")),
+                    country=str(best.get("country", "")),
+                )
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise WeatherError("Unexpected place") from exc
         self._places[key] = found
         return found
 
@@ -195,6 +206,11 @@ class WeatherClient:
                 wind=float(current["wind_speed_10m"]),
                 days=days,
                 units=units,
+                utc_offset_s=(
+                    int(data["utc_offset_seconds"])
+                    if isinstance(data.get("utc_offset_seconds"), (int, float))
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError, IndexError) as exc:
             raise WeatherError("Unexpected forecast") from exc

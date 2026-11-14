@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
-from arietta_voice.timephrases import describe_when, format_duration, parse_when
+from arietta_voice.timephrases import (
+    describe_when,
+    format_duration,
+    local_datetime,
+    parse_when,
+)
 from arietta_voice.timers import TimerLimitError, apology, reminder_parts
 from arietta_voice.tools.base import BaseTool, ToolContext, ToolResult
 from arietta_voice.tools.builtin._timers import reminder_request, store_for
@@ -66,7 +71,7 @@ class SetReminderTool(BaseTool):
         due = when.due
         if when.relative and due - now >= timedelta(days=1) and not 7 <= due.hour < 22:
             # "In three weeks" at 2 in the morning means that day, at a waking hour.
-            due = due.replace(hour=9, minute=0, second=0, microsecond=0)
+            due = local_datetime(due.date(), time(9), now)
         try:
             alert = self.store.add_reminder(body, due, form)
         except TimerLimitError as error:
