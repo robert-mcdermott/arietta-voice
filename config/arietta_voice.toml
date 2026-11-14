@@ -35,11 +35,12 @@ reconnect_delay_s = 1.0
 sample_rate = 16000
 chunk_samples = 512
 silence_ms = 700
-# Optional faster turn-taking. With Smart Turn on and endpoint_early_ms above 0
-# (try 250), the end of a turn is also checked after that much silence, and the
-# assistant answers at once when the model is at least this confident. It saves
-# about 0.4 s, but a pause between two sentences can end the turn after the first.
-endpoint_early_ms = 0.0
+# With Smart Turn on, the end of a turn is also checked after endpoint_early_ms of
+# silence, and work on the answer starts at once when the model is at least this
+# confident. The assistant keeps listening until silence_ms has passed and starts
+# over with the whole utterance if you carry on. Set endpoint_early_ms = 0 to wait
+# for silence_ms every time.
+endpoint_early_ms = 250.0
 endpoint_early_threshold = 0.7
 tts_enabled = true
 # Experimental alternative: "mlx", only in the isolated trial environment.

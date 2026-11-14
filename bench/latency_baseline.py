@@ -113,8 +113,9 @@ def summarize_turns(rows):
 class ReplayMicrophone:
     """Paced array input to the unmodified listening loop, no physical mic.
 
-    During output there is no competing speech. drain/get_nowait intentionally
-    return no queued input; this benchmark does not evaluate capture or barge-in.
+    During output there is no competing speech. drain returns nothing and
+    get_nowait serves only a provisional turn's resume watch; this benchmark does
+    not evaluate capture or barge-in.
     """
 
     dropped_chunks = input_overflows = 0
@@ -163,7 +164,16 @@ class ReplayMicrophone:
         return chunk
 
     def get_nowait(self):
-        raise queue.Empty
+        # Only a turn that is still provisional after an early end-of-turn
+        # decision reads input while it works; give it the audio already due.
+        watch = getattr(self.runtime, "_resume_watch", None)
+        if watch is None or not watch.active or self.started is None:
+            raise queue.Empty
+        width = self.runtime.config.audio.chunk_samples
+        due = self.started + (self.offset + width) / self.runtime.config.audio.sample_rate
+        if self.clock() < due:
+            raise queue.Empty
+        return self.get()
 
     def drain(self):
         pass
@@ -208,6 +218,7 @@ def finish_row(row, finished, failed):
         "output_underflows": row.get("output_underflows", 0),
         "endpoint_calls": sum(c[0] == "endpoint" for c in row["calls"]),
         "endpoint_rejections": row.get("endpoint_rejections", 0),
+        "resumes": row.get("resumes", 0),
         "max_replay_lag_ms": row.get("max_replay_lag_ms", 0),
     }
     if valid:
@@ -439,6 +450,13 @@ def run_child(
             row["processing"] = time.monotonic()
             row["input_samples"] = len(pcm)
             result = original_process(pcm, mic, keys, **options)
+            if result.resumed:
+                # The speaker carried on: measure the attempt that completes.
+                row["resumes"] = row.get("resumes", 0) + 1
+                row["calls"] = []
+                for key in ("tts_ready", "first_tts_chunk_ms", "transcript_matches_fixture"):
+                    row.pop(key, None)
+                return result
             record = finish_row(row, time.monotonic(), runtime.last_error is not None)
             if resource_metrics:
                 record["model_resources"] = original_call("resource_snapshot", timeout_s=5)

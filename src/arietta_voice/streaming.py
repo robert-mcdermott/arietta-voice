@@ -15,6 +15,9 @@ from arietta_voice.turns import (
 )
 from arietta_voice.worker import WorkerFailure
 
+# Longest wait for one in-flight inference call when a turn is discarded.
+DISCARD_WAIT_S = 5.0
+
 
 async def speech_stream(
     text=None,
@@ -27,6 +30,7 @@ async def speech_stream(
     request=None,
     on_result=None,
     playback_events=False,
+    discard=None,
 ):
     """Prefetch at most eight PCM frames with one serialized inference producer.
 
@@ -35,6 +39,9 @@ async def speech_stream(
     prefetch without cancelling a successful turn's later memory update.
     With playback_events, (None, None) polls and (exception, None) failures let
     the player stop the device before calling aclose() and joining the producer.
+    A set ``discard`` event abandons the turn gently: the producer finishes its
+    current inference call and stops, because cancelling a call mid-flight
+    terminates the worker and its loaded models.
     """
     stop = CancellationToken()
     cancellation.subscribe(stop.cancel)
@@ -54,13 +61,18 @@ async def speech_stream(
             texts.put(text)
             texts.finish()
 
+        def run(operation, payload=None):
+            if discard is not None and discard.is_set():
+                raise ChannelClosed("Turn discarded")
+            return infer(operation, payload, cancellation=stop)
+
         def produce():
             try:
                 if request is not None:
-                    infer("chat_start", request, cancellation=stop)
+                    run("chat_start", request)
                 while True:
                     if request is not None:
-                        event = infer("chat_next", cancellation=stop)
+                        event = run("chat_next")
                         if event["kind"] == "done":
                             if on_result is not None:
                                 on_result(event["result"])
@@ -72,9 +84,9 @@ async def speech_stream(
                         sentence = texts.get()
                     except ChannelClosed:
                         break
-                    infer("tts_start", sentence, cancellation=stop)
+                    run("tts_start", sentence)
                     while True:
-                        frame = infer("tts_next", cancellation=stop)
+                        frame = run("tts_next")
                         if frame is None:
                             break
                         samples, rate = frame
@@ -124,6 +136,12 @@ async def speech_stream(
             yield exc, None
         raise
     finally:
+        if discard is not None and discard.is_set() and producer is not None:
+            # Unblock a producer waiting on a full queue, then let its current
+            # inference call return before anything is cancelled.
+            texts.finish()
+            audio.finish()
+            producer.join(timeout=DISCARD_WAIT_S)
         stop.cancel()
         if producer is not None:
             producer.join(timeout=2)

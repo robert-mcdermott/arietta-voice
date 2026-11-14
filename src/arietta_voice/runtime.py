@@ -35,6 +35,7 @@ from arietta_voice.logging_utils import EventLogger
 from arietta_voice.memory_jobs import MemoryJobs
 from arietta_voice.models import AssistantState, ConversationTurn, SessionContext, UtteranceResult
 from arietta_voice.prompts import sanitize_for_speech
+from arietta_voice.resume import ResumeWatch, TurnResumed
 from arietta_voice.runtime_status import RuntimeStatusPublisher
 from arietta_voice.streaming import speech_stream
 from arietta_voice.turn_detection import SileroVoiceActivityDetector
@@ -87,6 +88,8 @@ class AriettaVoiceRuntime:
         self.last_turn_duration_ms: int | None = None
         self.last_turn_timing: dict | None = None
         self._turn_marks: dict = {}
+        self._resume_watch: ResumeWatch | None = None
+        self.turn_resumes = 0
         self.chime_player = ChimePlayer(config.audio.chime_enabled)
         self.wake_detector = build_wake_word_detector(config.wake_word)
         self.session = SessionContext()
@@ -239,7 +242,10 @@ class AriettaVoiceRuntime:
     def _inference_wait(self):
         if self._turn_thread_ident is None or threading.get_ident() == self._turn_thread_ident:
             self._check_audio_health()
-            if self.turn_stage == "transcribe" and self._turn_microphone is not None:
+            watch = self._resume_watch
+            if watch is not None and watch.active and self._turn_microphone is not None:
+                watch.poll(self._turn_microphone)
+            elif self.turn_stage == "transcribe" and self._turn_microphone is not None:
                 discard_capture(self._turn_microphone, "transcribing")
         self._publish_status()
         if (
@@ -293,6 +299,7 @@ class AriettaVoiceRuntime:
 
     def _respond(self, user_text: str) -> str:
         result = self._infer("chat", self._chat_request(user_text))
+        self._check_resumed()
         self._log_tool_result(result)
         return result["response"]
 
@@ -314,6 +321,7 @@ class AriettaVoiceRuntime:
             deadline=self._turn_deadline,
             on_wait=self._playback_wait,
             playback_events=True,
+            discard=self._discard_event(),
         )
         try:
             async for frame in stream:
@@ -375,11 +383,37 @@ class AriettaVoiceRuntime:
             use_aec=self.config.audio.aec_enabled,
             barge_in_threshold_chunks=self.config.audio.barge_in_threshold_chunks,
             playback_level_callback=self._update_display_speech,
+            resume_watch=self._resume_watch,
         )
         self._log_playback(playback)
         self._update_display_speech(0.0, False)
+        self._check_resumed()
         self.set_state(next_state)
         return list(playback.buffered_chunks)
+
+    def _watch_for_resume(self, marks: dict) -> ResumeWatch | None:
+        """An early end-of-turn decision stays provisional for the usual silence window."""
+        if not marks.get("early_endpoint") or marks.get("speech_end_at") is None:
+            return None
+        return ResumeWatch(
+            self.vad, window_end=marks["speech_end_at"] + self.config.audio.silence_ms / 1000
+        )
+
+    def _discard_event(self):
+        return None if self._resume_watch is None else self._resume_watch.discard
+
+    def _check_resumed(self) -> None:
+        if self._resume_watch is not None and self._resume_watch.resumed:
+            raise TurnResumed()
+
+    def _start_thinking_chime(self) -> None:
+        # The microphone would hear the chime, so it waits until the turn is no
+        # longer provisional. Speech usually starts before then anyway.
+        watch = self._resume_watch
+        if watch is not None and watch.active:
+            watch.on_expire = self.chime_player.start
+        else:
+            self.chime_player.start()
 
     def _log_turn_timing(self) -> None:
         """Record where a spoken turn's time went, measured from the end of speech."""
@@ -431,6 +465,7 @@ class AriettaVoiceRuntime:
             playback_events=True,
             request=self._chat_request(transcript),
             on_result=result.update,
+            discard=self._discard_event(),
         )
         buffered = self._deliver_response(
             "",
@@ -479,7 +514,7 @@ class AriettaVoiceRuntime:
     ) -> UtteranceResult:
         self._touch_session()
         self.set_state(AssistantState.THINKING)
-        self.chime_player.start()
+        self._start_thinking_chime()
         self.last_user_transcript = transcript
 
         end_session_requested = False
@@ -558,6 +593,7 @@ class AriettaVoiceRuntime:
         transcript = self._infer("transcribe", audio).strip()
         stt_latency_ms = int((time.monotonic() - started_at) * 1000)
         self._turn_marks["stt_ms"] = stt_latency_ms
+        self._check_resumed()  # Before the transcript is logged or acted on.
 
         if not self.session.active and self.config.wake_word.enabled:
             if not transcript:
@@ -596,6 +632,7 @@ class AriettaVoiceRuntime:
         timing: dict | None = None,
     ) -> UtteranceResult:
         self._turn_marks = dict(timing or {})
+        self._resume_watch = self._watch_for_resume(self._turn_marks)
         self._turn_token = CancellationToken()
         self._turn_keys = keypress_monitor
         self._turn_thread_ident = threading.get_ident()
@@ -612,6 +649,21 @@ class AriettaVoiceRuntime:
         except DEVICE_ERRORS:
             self.cancel_turn()
             raise
+        except TurnResumed:
+            # The speaker carried on: drop this attempt and hand the captured
+            # audio back so the same utterance continues. Nothing is drained.
+            watch = self._resume_watch
+            self.chime_player.stop()
+            self.turn_resumes += 1
+            self.event_logger.log("turn_resumed", stage=self.turn_stage)
+            self._update_display_speech(0, False)
+            self._touch_session()
+            self.set_state(
+                AssistantState.LISTENING
+                if self.session.active or not self.config.wake_word.enabled
+                else AssistantState.WAITING_FOR_WAKE
+            )
+            return UtteranceResult(buffered_chunks=list(watch.chunks), resumed=True)
         except WorkerCancelled:
             self.chime_player.stop()
             microphone.drain()
@@ -633,6 +685,7 @@ class AriettaVoiceRuntime:
                 self.event_logger.log("turn_cancelled")
             self._turn_token = self._turn_keys = self._turn_thread_ident = None
             self._turn_microphone = None
+            self._resume_watch = None
             capture_phase(microphone, "listening")
             self.last_turn_duration_ms = round((time.monotonic() - self.turn_started_at) * 1000)
             self._log_turn_timing()
@@ -694,6 +747,7 @@ class AriettaVoiceRuntime:
             "turn_timeout_s": self.config.runtime.turn_timeout_s,
             "stage_timeout_s": stage_limit,
             "turn_failures": self.turn_failures,
+            "turn_resumes": self.turn_resumes,
             "turn_cancellations": self.turn_cancellations,
             "turn_timeouts": self.turn_timeouts,
             "utterances_discarded": self.utterances_discarded,
@@ -853,9 +907,9 @@ class AriettaVoiceRuntime:
             pre_roll.samples = np.zeros(0, dtype=np.float32)
             pre_roll.end = 0
 
-        # Optional: also ask Smart Turn after a short pause and keep the long
-        # silence window as the fallback. Off by default because a pause between
-        # sentences can then end the turn after the first one.
+        # Also ask Smart Turn after a short pause and keep the long silence window
+        # as the fallback. A confident early answer starts a provisional turn that
+        # is discarded if the speaker carries on (see resume.py).
         early_limit = 0
         if self.config.audio.smart_turn_enabled and self.config.audio.endpoint_early_ms > 0:
             early_limit = max(
@@ -969,6 +1023,22 @@ class AriettaVoiceRuntime:
                         "early_endpoint": early,
                     },
                 )
+                if result.resumed:
+                    # Same utterance: add what was heard while the discarded
+                    # attempt ran, and keep listening for its real end.
+                    for buffered in result.buffered_chunks:
+                        if not buffer.append(buffered):
+                            self.utterances_discarded += 1
+                            self.event_logger.log(
+                                "utterance_limit", max_seconds=self.config.audio.max_utterance_s
+                            )
+                            buffer.clear()
+                            discard_until_quiet = True
+                            self.vad.reset()
+                            break
+                    silent_chunks = 0
+                    last_speech_at = time.monotonic()
+                    continue
                 if not result.buffered_chunks:
                     microphone.drain()
                 buffer.clear()

@@ -1,4 +1,5 @@
 import logging
+import time
 from unittest.mock import Mock
 
 import numpy as np
@@ -568,6 +569,134 @@ def test_first_playback_of_a_turn_marks_first_audio(runtime):
     runtime._log_playback(PlaybackResult(interrupted=False, started_at=5.0))
     runtime._log_playback(PlaybackResult(interrupted=False, started_at=9.0))
     assert runtime._turn_marks["first_audio_at"] == 5.0
+
+
+def _provisional_turn(runtime, microphone, *, on_stage):
+    """Run one early-decision turn; on_stage(operation) may add speech mid-call."""
+    runtime.vad.probability.side_effect = lambda chunk: float(chunk[0] > 0)
+    runtime.event_logger = Mock()
+    operations = []
+
+    def call(operation, payload=None, **options):
+        operations.append(operation)
+        on_stage(operation)
+        if options.get("on_wait") is not None:
+            options["on_wait"]()  # The runtime polls while it waits on inference.
+        if operation == "transcribe":
+            return "Why does ice float"
+        if operation == "chat":
+            return {"response": "Answer", "source": "model"}
+
+    runtime.worker.call = call
+    now = time.monotonic()
+    result = runtime.process_utterance(
+        np.ones(512, dtype=np.float32),
+        microphone,
+        Mock(pressed=Mock(return_value=False)),
+        timing={"speech_end_at": now, "decided_at": now, "early_endpoint": True},
+    )
+    return result, operations
+
+
+def _logged(runtime, event):
+    return [call for call in runtime.event_logger.log.call_args_list if call.args[0] == event]
+
+
+@pytest.mark.parametrize("stage", ["transcribe", "chat"])
+def test_speech_during_a_provisional_turn_discards_it_and_keeps_the_audio(runtime, stage):
+    from tests.test_resume import QueuedMicrophone
+
+    runtime.session.active = True
+    runtime.config.audio.silence_ms = 60_000  # Keep the turn provisional throughout.
+    microphone = QueuedMicrophone([0])
+
+    def on_stage(operation):
+        if operation == stage:
+            microphone.push(1, 1, 0)
+
+    result, operations = _provisional_turn(runtime, microphone, on_stage=on_stage)
+    assert result.resumed and not result.end_session_requested
+    assert [chunk[0] for chunk in result.buffered_chunks] == [0, 1, 1]
+    assert microphone.pending == [0]  # Left for the listening loop, never drained.
+    microphone.drain.assert_not_called()
+    runtime.vad.reset.assert_not_called()
+    assert operations == (["transcribe"] if stage == "transcribe" else ["transcribe", "chat"])
+    if stage == "transcribe":
+        assert not _logged(runtime, "user_transcript")  # Discarded before being logged.
+    assert len(_logged(runtime, "turn_resumed")) == 1
+    assert not _logged(runtime, "turn_cancelled") and not _logged(runtime, "turn_failed")
+    assert (runtime.turn_resumes, runtime.turn_cancellations, runtime.turn_failures) == (1, 0, 0)
+    assert runtime.session.history == [] and runtime._resume_watch is None
+    assert runtime.state.value == "listening"
+    assert runtime.reliability_snapshot()["turn_resumes"] == 1
+    runtime.chime_player.start.assert_not_called()
+
+
+def test_quiet_provisional_turn_completes_and_starts_the_chime_after_the_window(runtime):
+    from tests.test_resume import QueuedMicrophone
+
+    runtime.session.active = True
+    runtime.config.audio.silence_ms = 0  # The window is already over at the first poll.
+    microphone = QueuedMicrophone([0, 0])
+    result, operations = _provisional_turn(runtime, microphone, on_stage=lambda operation: None)
+    assert not result.resumed
+    assert operations == ["transcribe", "chat"]
+    assert len(runtime.session.history) == 2
+    assert runtime.turn_resumes == 0
+    runtime.chime_player.start.assert_called_once()
+
+
+def test_only_early_decisions_are_provisional(runtime):
+    runtime.config.audio.silence_ms = 700
+    assert runtime._watch_for_resume({}) is None
+    assert runtime._watch_for_resume({"early_endpoint": False, "speech_end_at": 5.0}) is None
+    assert runtime._watch_for_resume({"early_endpoint": True}) is None
+    watch = runtime._watch_for_resume({"early_endpoint": True, "speech_end_at": 5.0})
+    assert watch.active and watch.window_end == pytest.approx(5.7)
+
+    runtime._resume_watch = None
+    assert runtime._discard_event() is None
+    runtime._start_thinking_chime()
+    runtime.chime_player.start.assert_called_once()  # Nothing provisional: chime at once.
+
+
+def test_resumed_turn_continues_the_same_utterance_in_the_listening_loop(runtime):
+    from arietta_voice.models import UtteranceResult
+
+    _early_endpoint_runtime(runtime, [0.9, 0.9])
+    heard_meanwhile = [np.full(512, value, dtype=np.float32) for value in (0, 1, 1)]
+    runtime.process_utterance = Mock(
+        side_effect=[
+            UtteranceResult(buffered_chunks=heard_meanwhile, resumed=True),
+            UtteranceResult(buffered_chunks=[]),
+        ]
+    )
+    microphone = ScriptedMicrophone([1, 0, 0, 1, 0, 0])
+    microphone.drain = Mock()
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(microphone, Mock())
+    first, second = runtime.process_utterance.call_args_list
+    assert len(first.args[0]) == 3 * 512
+    # First attempt, what was heard while it ran, then the rest of the sentence.
+    np.testing.assert_array_equal(second.args[0][::512], [1, 0, 0, 0, 1, 1, 1, 0, 0])
+    assert second.kwargs["timing"]["early_endpoint"] is True
+    assert microphone.drain.call_count == 1  # Only after the completed turn.
+    assert runtime.vad.reset.call_count == 1
+
+
+def test_resumed_audio_beyond_the_utterance_limit_is_discarded_not_spliced(runtime):
+    from arietta_voice.models import UtteranceResult
+
+    _early_endpoint_runtime(runtime, [0.9])
+    runtime.config.audio.max_utterance_s = 4 * 512 / 16000
+    too_much = [np.ones(512, dtype=np.float32)] * 2
+    runtime.process_utterance = Mock(
+        return_value=UtteranceResult(buffered_chunks=too_much, resumed=True)
+    )
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1, 0, 0, 1]), Mock())
+    assert runtime.process_utterance.call_count == 1
+    assert runtime.utterances_discarded == 1
 
 
 def test_startup_failure_stops_worker_and_publishes_final_status(runtime):

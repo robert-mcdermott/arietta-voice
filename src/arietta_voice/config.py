@@ -96,7 +96,7 @@ class AudioConfig:
     sample_rate: int = 16000
     chunk_samples: int = 512
     silence_ms: int = 700
-    endpoint_early_ms: float = 0.0
+    endpoint_early_ms: float = 250.0
     endpoint_early_threshold: float = 0.7
     tts_enabled: bool = True
     tts_backend: str = "onnx"
