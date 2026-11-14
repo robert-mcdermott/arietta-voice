@@ -166,3 +166,23 @@ alert_tone = true
 # which needs no account or key.
 location = ""
 units = "imperial"
+
+[mcp]
+# MCP (Model Context Protocol) servers give the assistant more tools: a calendar,
+# notes, a smart home. Add them on the console's Connections page, or list them
+# in servers_file in the format other MCP apps use, so a server's README snippet
+# can be pasted in:
+#   {"mcpServers": {"home": {"type": "http", "url": "http://homeassistant.local:8123/api/mcp",
+#                            "headers": {"Authorization": "Bearer ..."}}}}
+# Each server may also set "confirm": before a tool that changes something runs,
+# the assistant asks out loud, and only a clear yes goes ahead. "ask" (the
+# default) asks every time unless you answered "always" for that action;
+# "first_use" asks once per action; "never" trusts the server. Tools a server
+# marks as read-only never ask.
+enabled = true
+# Private: it can hold tokens. Not tracked by Git.
+servers_file = "mcp.local.json"
+# Actions you said "always" to, or allowed on first use.
+approvals_file = "../state/tool_approvals.json"
+connect_timeout_s = 30.0
+call_timeout_s = 30.0

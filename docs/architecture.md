@@ -343,6 +343,37 @@ recognition writes them, in digits or words ("ten minutes", "an hour and a half"
 when it is understood completely, which lets the reminder tool find where the
 time phrase starts in "remind me to put the kids in bed at 8".
 
+### 6.6 MCP servers and confirmations
+
+`arietta_voice/mcp_servers/` connects to the servers in `config/mcp.local.json`
+(`servers.py` reads and writes the common `{"mcpServers": ...}` format). The
+`McpHub` (`hub.py`) runs one background event loop in the inference worker,
+with a task per server that connects over stdio, Streamable HTTP or SSE using
+the official MCP Python SDK, lists the tools, pings every 30 seconds and
+reconnects with a growing delay when the connection drops. It checks the file's
+size and modification time on every turn and connects, disconnects or updates
+servers to match, so console edits need no restart. Warmup starts the
+connections, and the first turn waits up to three seconds for servers still
+starting.
+
+Each server tool becomes an `McpTool` (`tools.py`) next to the built-in tools:
+named `<server>_<tool>` in lowercase words, described in the server's own
+words, with its JSON Schema (titles removed) declared natively to the model and
+checked with `jsonschema` before a call. Results are passed to the model marked
+as data, and a short plain result is kept as the answer to say if the model
+then says nothing.
+
+A tool that changes something (an MCP tool not marked `readOnlyHint`, or a
+local tool with `consequential = True`) is held instead of run. The model
+words a one-sentence question from the held call; if it writes anything else,
+a plain question is used. `ConversationService` keeps the held call for 60
+seconds. On the next message, `confirmations.confirmation_reply` accepts only a
+clear "yes", "no" or "always"; a yes runs exactly the held call, once, and the
+model answers from its result. Anything else drops the call. The registry's
+`needs_confirmation` applies the tool's policy (`ask`, `first_use`, `never`)
+and remembered approvals in `state/tool_approvals.json`, and a tool that asks
+never runs from a trigger.
+
 ## 7. Knowledge Architecture
 
 Knowledge is authored as markdown under `knowledge/`.

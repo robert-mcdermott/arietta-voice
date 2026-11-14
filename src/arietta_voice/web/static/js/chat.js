@@ -27,6 +27,16 @@ function messageMeta(message) {
     : "";
 }
 
+// The assistant asked before an action: answer it as you would by voice.
+function answerButtons(message) {
+  if (message.role !== "assistant" || !message.meta?.confirmation) return "";
+  return `<div class="msg-answers row">
+      <button type="button" class="btn small primary" data-chat-answer="Yes">Yes</button>
+      <button type="button" class="btn small" data-chat-answer="Always">Always</button>
+      <button type="button" class="btn small quiet" data-chat-answer="No">No</button>
+    </div>`;
+}
+
 function render() {
   const log = $("#chat-log");
   if (!chat.history.length && !chat.pending) {
@@ -34,14 +44,16 @@ function render() {
       Type a message to test answers, knowledge and tools without using the microphone.</div>`;
     return;
   }
+  const last = chat.history[chat.history.length - 1];
   const messages = chat.history
     .filter((message) => message.content)
     .map(
       (message) => `<div class="msg ${message.role === "user" ? "user" : "assistant"}">
-        <div class="msg-body">${escapeHtml(message.content)}</div>${messageMeta(message)}</div>`,
+        <div class="msg-body">${escapeHtml(message.content)}</div>${messageMeta(message)}${
+          message === last && !chat.pending ? answerButtons(message) : ""
+        }</div>`,
     )
     .join("");
-  const last = chat.history[chat.history.length - 1];
   const waiting = chat.pending && !(last?.role === "assistant" && last.content);
   const typing = waiting
     ? `<div class="msg assistant"><div class="msg-body"><span class="typing" aria-label="Thinking"><span></span><span></span><span></span></span></div></div>`
@@ -108,6 +120,7 @@ async function send() {
       source: result.source,
       used_tool: result.used_tool,
       model_tool: result.model_tool,
+      confirmation: result.confirmation,
       seconds: (performance.now() - started) / 1000,
       first: reply.firstAt ? (reply.firstAt - started) / 1000 : null,
     };
@@ -156,6 +169,12 @@ export function initChat() {
   $("#chat-clear").addEventListener("click", () => {
     chat.history = [];
     render();
+  });
+  $("#chat-log").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-chat-answer]");
+    if (!button || chat.pending) return;
+    $("#chat-message").value = button.dataset.chatAnswer;
+    guard(send)();
   });
   $("#chat-message").addEventListener("input", autosize);
   $("#chat-message").addEventListener("keydown", (event) => {

@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.136.0",
     "kokoro-onnx>=0.4",
     "livekit>=1.1.5",
+    "mcp>=2.3.0",
     "mlx-vlm>=0.4.4",
     "moonshine-voice>=0.1.6",
     "numpy>=2.4.4",

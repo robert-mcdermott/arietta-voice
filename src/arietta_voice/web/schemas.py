@@ -69,3 +69,37 @@ class SettingsUpdateRequest(BaseModel):
     """Changes by section and key, such as {"timers": {"repeat_s": 45}}."""
 
     changes: dict[str, dict[str, Any]] = Field(default_factory=dict, max_length=20)
+
+
+class McpServerRequest(BaseModel):
+    """One MCP server, as the console's form sends it."""
+
+    name: str = Field(min_length=1, max_length=40)
+    # The name it was saved under, when renaming.
+    original_name: str | None = Field(default=None, max_length=40)
+    transport: Literal["stdio", "http", "sse"]
+    command: str = Field(default="", max_length=1000)
+    args: list[str] = Field(default_factory=list, max_length=100)
+    env: dict[str, str] = Field(default_factory=dict, max_length=100)
+    cwd: str = Field(default="", max_length=1000)
+    url: str = Field(default="", max_length=2000)
+    headers: dict[str, str] = Field(default_factory=dict, max_length=50)
+    enabled: bool = True
+    confirm: Literal["ask", "first_use", "never"] = "ask"
+    disabled_tools: list[str] = Field(default_factory=list, max_length=200)
+
+    def entry(self) -> dict[str, Any]:
+        """The server as an entry in the servers file."""
+        if self.transport == "stdio":
+            entry: dict[str, Any] = {"command": self.command, "args": self.args, "env": self.env}
+            if self.cwd:
+                entry["cwd"] = self.cwd
+        else:
+            entry = {"type": self.transport, "url": self.url, "headers": self.headers}
+        entry.update(enabled=self.enabled, confirm=self.confirm, disabledTools=self.disabled_tools)
+        return entry
+
+
+class McpImportRequest(BaseModel):
+    # A snippet in the common {"mcpServers": {...}} format, as in a server's README.
+    text: str = Field(min_length=2, max_length=100_000)

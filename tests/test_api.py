@@ -906,3 +906,113 @@ def test_a_chat_stream_closed_before_its_first_event_frees_the_turn(tmp_path):
     stream.close()  # Safe twice, as the route closes it from two places.
     assert service._active_chat is None and state["closed"]
     assert next(iter(service.chat_stream(ChatRequest(message="Again"))))["kind"] == "clause"
+
+
+# ----- MCP servers (Connections) -----
+
+MCP_SERVER = Path(__file__).parent / "fixtures" / "mcp_lights_server.py"
+
+
+def test_mcp_url_servers_can_be_added_and_secrets_stay_hidden(tmp_path: Path) -> None:
+    import json
+
+    config_path = _write_api_config(tmp_path)
+    client = _client(config_path)
+    empty = client.get("/api/mcp", auth=AUTH).json()
+    assert empty["servers"] == [] and empty["programs_allowed"] is False
+    body = {
+        "name": "home",
+        "transport": "http",
+        "url": "http://homeassistant.local:8123/api/mcp",
+        "headers": {"Authorization": "Bearer synthetic-secret"},
+    }
+    saved = client.post("/api/mcp/servers", auth=AUTH, json=body)
+    assert saved.status_code == 200
+    (server,) = saved.json()["servers"]
+    assert server["headers"] == {"Authorization": "••••••"}
+    assert "synthetic-secret" not in saved.text
+    # Sending the mask back keeps the secret; the file holds the real value.
+    again = {**server, "original_name": "home", "confirm": "first_use"}
+    assert client.post("/api/mcp/servers", auth=AUTH, json=again).status_code == 200
+    file = json.loads((tmp_path / "config" / "mcp.local.json").read_text())
+    entry = file["mcpServers"]["home"]
+    assert entry["headers"] == {"Authorization": "Bearer synthetic-secret"}
+    assert entry["confirm"] == "first_use"
+    duplicate = client.post("/api/mcp/servers", auth=AUTH, json=body)
+    assert duplicate.status_code == 409
+    bad = client.post("/api/mcp/servers", auth=AUTH, json={**body, "name": "x", "url": "ftp://a"})
+    assert bad.status_code == 400
+    assert client.delete("/api/mcp/servers/home", auth=AUTH).json()["servers"] == []
+    assert client.delete("/api/mcp/servers/home", auth=AUTH).status_code == 404
+
+
+def test_program_servers_need_source_editing(tmp_path: Path) -> None:
+    import sys
+
+    config_path, client, service = _editable_client(tmp_path)
+    service.config.admin.allow_source_editing = False
+    body = {
+        "name": "lights",
+        "transport": "stdio",
+        "command": sys.executable,
+        "args": [str(MCP_SERVER)],
+    }
+    refused = client.post("/api/mcp/servers", auth=AUTH, json=body)
+    assert refused.status_code == 403 and "allow_source_editing" in refused.json()["detail"]
+    snippet = '{"mcpServers": {"lights": {"command": "npx", "args": ["x"]}}}'
+    assert client.post("/api/mcp/import", auth=AUTH, json={"text": snippet}).status_code == 403
+
+    service.config.admin.allow_source_editing = True
+    assert client.post("/api/mcp/servers", auth=AUTH, json=body).status_code == 200
+    tested = client.post("/api/mcp/servers/lights/test", auth=AUTH).json()
+    assert tested["ok"], tested["error"]
+    kinds = {tool["name"]: tool["read_only"] for tool in tested["tools"]}
+    assert kinds["set_light"] is False and kinds["light_status"] is True
+    # Turning a tool or the server off changes nothing that runs, so it is allowed.
+    service.config.admin.allow_source_editing = False
+    server = client.get("/api/mcp", auth=AUTH).json()["servers"][0]
+    assert server["last_test"]["ok"]
+    off = {**server, "original_name": "lights", "enabled": False, "disabled_tools": ["HassNotice"]}
+    assert client.post("/api/mcp/servers", auth=AUTH, json=off).status_code == 200
+    changed = {**off, "args": ["--other"]}
+    assert client.post("/api/mcp/servers", auth=AUTH, json=changed).status_code == 403
+
+
+def test_a_readme_snippet_is_imported(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+    snippet = '{"mcpServers": {"calendar": {"url": "https://calendar.example.test/mcp"}}}'
+    result = client.post("/api/mcp/import", auth=AUTH, json={"text": snippet}).json()
+    assert result["added"] == ["calendar"] and result["skipped"] == []
+    again = client.post("/api/mcp/import", auth=AUTH, json={"text": snippet}).json()
+    assert again["added"] == [] and again["skipped"] == ["calendar"]
+    bare = client.post("/api/mcp/import", auth=AUTH, json={"text": '{"url": "https://a.test/mcp"}'})
+    assert bare.status_code == 400 and "with its name" in bare.json()["detail"]
+    assert client.post("/api/mcp/import", auth=AUTH, json={"text": "{nope"}).status_code == 400
+
+
+def test_remembered_answers_can_be_forgotten(tmp_path: Path) -> None:
+    from arietta_voice.tools.approvals import Approvals
+
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    snippet = '{"mcpServers": {"home": {"url": "https://home.example.test/mcp"}}}'
+    client.post("/api/mcp/import", auth=AUTH, json={"text": snippet})
+    approvals = Approvals(service.config.mcp.approvals_file)
+    approvals.add("mcp:home:HassTurnOff")
+    approvals.add("tool:other")
+    assert client.get("/api/mcp", auth=AUTH).json()["servers"][0]["remembered"] == ["HassTurnOff"]
+    after = client.post("/api/mcp/servers/home/forget", auth=AUTH).json()
+    assert after["servers"][0]["remembered"] == []
+    assert approvals.all() == ["tool:other"]
+
+
+def test_a_broken_servers_file_is_not_overwritten(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client = _client(config_path)
+    path = tmp_path / "config" / "mcp.local.json"
+    path.write_text('{"mcpServers": {"bad name!": {"command": "x"}}}')
+    payload = client.get("/api/mcp", auth=AUTH).json()
+    assert payload["problems"]
+    body = {"name": "home", "transport": "http", "url": "https://home.example.test/mcp"}
+    assert client.post("/api/mcp/servers", auth=AUTH, json=body).status_code == 400
+    assert "bad name!" in path.read_text()

@@ -68,8 +68,10 @@ class BaseTool:
     # do not ask the model again: faster, and it cannot misstate what happened.
     speaks_for_itself: ClassVar[bool] = False
     # Changes something outside the assistant (a light, a message, a purchase).
-    # The agent loop asks before running these.
+    # The assistant asks before running these; ``confirm`` says when: "ask"
+    # (every time, unless you answer "always"), "first_use" or "never".
     consequential: ClassVar[bool] = False
+    confirm: ClassVar[str] = "ask"
 
     def __init__(self, context: ToolContext | None = None) -> None:
         self.context = context

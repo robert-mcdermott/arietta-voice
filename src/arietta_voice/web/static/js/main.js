@@ -2,6 +2,7 @@
 
 import { activityOnFirstPage, initActivity, loadActivity } from "./activity.js";
 import { chatPending, initChat, showChat } from "./chat.js";
+import { connectionsDirty, initConnections, loadConnections } from "./connections.js";
 import { $, $$, guard, setError } from "./core.js";
 import { loadContentLoggingFlag, loadOverview, pollRuntime, runtimeAction } from "./home.js";
 import { initKnowledge, knowledgeDirty, knowledgeEditing, loadKnowledgeFiles } from "./knowledge.js";
@@ -14,6 +15,7 @@ const VIEWS = {
   chat: ["Chat", "Type to your assistant. Uses the same answers, knowledge and tools as voice."],
   knowledge: ["Knowledge", "Notes your assistant can draw on when it answers."],
   tools: ["Tools", "What your assistant can do beyond answering from its model."],
+  connections: ["Connections", "MCP servers that give your assistant more tools."],
   activity: ["Activity", "A record of what the assistant heard, did and said."],
   system: ["System", "Health, audio and process detail for troubleshooting."],
   settings: ["Settings", "Change how your assistant sounds and behaves."],
@@ -34,6 +36,7 @@ async function loadView(view) {
   if (view === "chat") showChat();
   if (view === "knowledge") await loadKnowledgeFiles();
   if (view === "tools") await loadTools();
+  if (view === "connections") await loadConnections();
   if (view === "activity") await loadActivity({ reset: true });
   if (view === "system") await loadDiagnostics();
   if (view === "settings") await loadSettings();
@@ -89,6 +92,7 @@ function init() {
   initChat();
   initKnowledge();
   initTools();
+  initConnections();
   initTimers();
   initSettings(() => runtimeAction("restart"));
   initActivity();
@@ -118,7 +122,13 @@ function init() {
   });
 
   window.addEventListener("beforeunload", (event) => {
-    if (toolSourceDirty() || knowledgeDirty() || chatPending() || settingsDirty()) {
+    if (
+      toolSourceDirty() ||
+      knowledgeDirty() ||
+      chatPending() ||
+      settingsDirty() ||
+      connectionsDirty()
+    ) {
       event.preventDefault();
       event.returnValue = "";
     }

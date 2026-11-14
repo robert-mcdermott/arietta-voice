@@ -304,6 +304,20 @@ class TimersConfig:
 
 
 @dataclass(slots=True)
+class McpConfig:
+    # Connect to the MCP servers listed in servers_file.
+    enabled: bool = True
+    # The servers, in the JSON format other MCP clients use ({"mcpServers": ...}).
+    # Private: it can hold tokens. Not tracked by Git.
+    servers_file: Path = Path("config/mcp.local.json")
+    # Actions you said "always" to (or allowed on first use), so they no longer ask.
+    approvals_file: Path = Path("state/tool_approvals.json")
+    # How long a server may take to start and answer, and to run one tool.
+    connect_timeout_s: float = 30.0
+    call_timeout_s: float = 30.0
+
+
+@dataclass(slots=True)
 class WeatherConfig:
     # Your town or city ("Seattle", "Portland, Maine"). The weather tool is
     # available only once this is set; it sends the place name and its
@@ -329,6 +343,7 @@ class AppConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     timers: TimersConfig = field(default_factory=TimersConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
+    mcp: McpConfig = field(default_factory=McpConfig)
 
 
 def default_config(project_root: Path | None = None) -> AppConfig:
@@ -357,6 +372,10 @@ def default_config(project_root: Path | None = None) -> AppConfig:
         tools=ToolsConfig(directory=root / "tools"),
         model_tools=ModelToolsConfig(),
         timers=TimersConfig(path=root / "state" / "timers.json"),
+        mcp=McpConfig(
+            servers_file=config_dir / "mcp.local.json",
+            approvals_file=root / "state" / "tool_approvals.json",
+        ),
     )
 
 
@@ -401,6 +420,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     runtime = raw.get("runtime", {})
     timers = raw.get("timers", {})
     weather = raw.get("weather", {})
+    mcp = raw.get("mcp", {})
 
     # Your saved list keeps its order; standard tools it has not considered are added.
     chosen = private_tools.get("enabled")
@@ -566,6 +586,15 @@ def load_config(path: Path | None = None) -> AppConfig:
             location=str(weather.get("location", base.weather.location)).strip(),
             units=str(weather.get("units", base.weather.units)).strip().lower(),
         ),
+        mcp=McpConfig(
+            enabled=bool(mcp.get("enabled", base.mcp.enabled)),
+            servers_file=_resolve_path(base_dir, mcp.get("servers_file", base.mcp.servers_file)),
+            approvals_file=_resolve_path(
+                base_dir, mcp.get("approvals_file", base.mcp.approvals_file)
+            ),
+            connect_timeout_s=float(mcp.get("connect_timeout_s", base.mcp.connect_timeout_s)),
+            call_timeout_s=float(mcp.get("call_timeout_s", base.mcp.call_timeout_s)),
+        ),
     )
     return validate_config(config)
 
@@ -709,6 +738,8 @@ def validate_config(config: AppConfig) -> AppConfig:
         "weather.units must be 'imperial' or 'metric'",
     )
     require(len(config.weather.location) <= 120, "weather.location must be at most 120 characters")
+    number("mcp.connect_timeout_s", config.mcp.connect_timeout_s, 1, 300)
+    number("mcp.call_timeout_s", config.mcp.call_timeout_s, 1, 110)
     return config
 
 

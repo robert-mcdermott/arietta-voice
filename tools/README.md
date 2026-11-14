@@ -52,7 +52,10 @@ def create_tool(context):
 - **`aliases`** maps other names the model might use for an argument to the real
   one, such as `{"note": "text"}`. Small models often guess a near miss.
 - **`consequential = True`** marks a tool that changes something in the world.
-  The planned agent loop will ask before running these.
+  The assistant asks out loud before running it ("Should I …?") and goes ahead
+  only on a clear yes; such a tool never runs from a trigger. **`confirm`** says
+  when to ask: `"ask"` (default) every time unless the owner answers "always",
+  `"first_use"` once, or `"never"`.
 
 Supported argument types are string, integer, number and boolean, with `enum`,
 `minimum`, `maximum` and `maxLength`. Arguments are checked against the schema

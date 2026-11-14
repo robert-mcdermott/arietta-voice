@@ -73,6 +73,7 @@ class InferenceEngine:
 
             self.stt().ensure_loaded()
             service = self.service()
+            service.warm_tools()  # MCP servers connect while the models load.
             service._llm = build_chat_model(self.config.models)
             service._llm.ensure_loaded()
             service.knowledge.preload()

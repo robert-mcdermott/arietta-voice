@@ -20,6 +20,8 @@ from arietta_voice.web.schemas import (
     ChatRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
+    McpImportRequest,
+    McpServerRequest,
     SettingsUpdateRequest,
     TimerCreateRequest,
     ToolCreateRequest,
@@ -200,6 +202,46 @@ def create_app(
         q: str | None = Query(default=None),
     ) -> dict[str, Any]:
         return svc().read_events(limit=limit, offset=offset, event=event, query=q)
+
+    def mcp_errors(action):
+        try:
+            return action()
+        except PermissionError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.get("/api/mcp")
+    def api_mcp(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().mcp_servers()
+
+    @app.post("/api/mcp/servers")
+    def api_mcp_save(
+        payload: McpServerRequest, _user: str = Depends(require_admin)
+    ) -> dict[str, Any]:
+        return mcp_errors(lambda: svc().save_mcp_server(payload))
+
+    @app.delete("/api/mcp/servers/{name}")
+    def api_mcp_delete(name: str, _user: str = Depends(require_admin)) -> dict[str, Any]:
+        return mcp_errors(lambda: svc().delete_mcp_server(name))
+
+    @app.post("/api/mcp/servers/{name}/test")
+    def api_mcp_test(name: str, _user: str = Depends(require_admin)) -> dict[str, Any]:
+        return mcp_errors(lambda: svc().test_mcp_server(name))
+
+    @app.post("/api/mcp/servers/{name}/forget")
+    def api_mcp_forget(name: str, _user: str = Depends(require_admin)) -> dict[str, Any]:
+        return mcp_errors(lambda: svc().forget_mcp_approvals(name))
+
+    @app.post("/api/mcp/import")
+    def api_mcp_import(
+        payload: McpImportRequest, _user: str = Depends(require_admin)
+    ) -> dict[str, Any]:
+        return mcp_errors(lambda: svc().import_mcp_servers(payload.text))
 
     @app.get("/api/tools")
     def api_tools(_user: str = Depends(require_admin)) -> dict[str, Any]:
@@ -461,6 +503,7 @@ def create_app(
             "source": result.source,
             "used_tool": result.used_tool,
             "model_tool": result.model_tool,
+            "confirmation": result.confirmation,
         }
 
     @app.get("/api/openapi.json")

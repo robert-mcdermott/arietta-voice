@@ -7,6 +7,27 @@ version policy and the release procedure.
 
 ### Added
 
+- MCP servers as a source of tools. The assistant connects to the servers in
+  `config/mcp.local.json` (the `{"mcpServers": ...}` format other MCP apps use)
+  over stdio, Streamable HTTP or SSE with the official MCP Python SDK
+  (`mcp` 2.3), keeps the connections alive, reconnects when one drops and
+  picks up changes to the file without a restart. Server tools are offered to
+  the model next to the built-in ones, with their own argument schemas, and
+  their results are passed on as data, never as instructions.
+- A **Connections** page in the console to add, edit, test and remove MCP
+  servers, paste a server's README snippet, switch individual tools off, and
+  choose when each server asks before acting. Tokens in environment variables
+  and headers are never shown again. Adding or changing a server that runs a
+  program needs `[admin].allow_source_editing = true`.
+- Spoken confirmation before actions. A tool that changes something (an MCP
+  tool not marked read-only, or a local tool with `consequential = True`) is
+  held, and the assistant asks "Should I …?" in its own words. A clear "yes"
+  within a minute runs exactly that call, once; "no" cancels; "always" runs it
+  and stops asking about that action; anything else drops it and is answered
+  as a new request. Each server asks every time (the default), once per action,
+  or never. Console chat shows Yes, Always and No buttons for the same question.
+- `[mcp]` settings: `enabled`, `servers_file`, `approvals_file`,
+  `connect_timeout_s` and `call_timeout_s`.
 - Static checks of the console's JavaScript in the test suite: every imported
   name is exported, every element looked up by id exists in the page, and each
   module parses (with Node, which the CI runners have).
