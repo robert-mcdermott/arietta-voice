@@ -167,9 +167,10 @@ acoustically at least once.
 4. **Built-in skills.** Timers, reminders and alarms are done: instant answers
    for the usual phrasings, model calls for the rest, a shared store that
    survives restarts, spoken alerts between turns that repeat until answered,
-   "stop" and "snooze" without the wake word, and a console card. Still to do:
-   weather, web search with spoken source attribution, and unit/date
-   arithmetic (the 4-bit Gemma said 17 × 23 is 749).
+   "stop" and "snooze" without the wake word, and a console card. Arithmetic
+   and unit conversion are done (`calculate`; the 4-bit Gemma had said
+   17 × 23 is 749). Still to do: weather, web search with spoken source
+   attribution, and date arithmetic ("how many days until Christmas").
 5. **Home control** through Home Assistant: read-only status first, then
    explicitly authorized actions.
 6. **Model routing.** Keep the small local model for fast turns and tool
