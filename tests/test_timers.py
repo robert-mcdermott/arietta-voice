@@ -39,6 +39,18 @@ class Clock:
         return self.now
 
 
+@pytest.fixture(autouse=True)
+def pacific_time(monkeypatch):
+    """Spoken times use the machine's time zone; pin it to match ZONE."""
+    import time
+
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
 @pytest.fixture
 def clock():
     return Clock()
