@@ -115,9 +115,7 @@ class GemmaChatModel:
         options = {}
         if reuse_prefix:
             if self._prefix_cache is None:
-                from mlx_vlm.generate import PromptCacheState
-
-                self._prefix_cache = PromptCacheState()
+                self._prefix_cache = _repeat_safe_prefix_state()
             options["prompt_cache_state"] = self._prefix_cache
             # Used when nothing can be reused; mlx-vlm swaps in the kept cache
             # when the prompt shares a prefix with the last one.
@@ -174,6 +172,25 @@ class GemmaChatModel:
             KVCache() if isinstance(cache, RotatingKVCache) else cache
             for cache in make_prompt_cache(self._model.language_model)
         ]
+
+
+def _repeat_safe_prefix_state():
+    """mlx-vlm's prompt cache state, made to reuse a prompt that repeats the last one.
+
+    mlx-vlm reuses the cached prefix only when the new prompt is longer than the
+    part it shares with the last one. A prompt asked again word for word is all
+    shared, so it was processed from scratch: about 4 seconds before the first
+    word with the full tool list, against about half a second. Holding back the
+    last token keeps the repeat on the reuse path: everything but that token
+    comes from the cache.
+    """
+    from mlx_vlm.generate import PromptCacheState
+
+    class RepeatSafePromptCacheState(PromptCacheState):
+        def find_prefix_length(self, new_ids: list) -> int:
+            return min(super().find_prefix_length(new_ids), max(len(new_ids) - 1, 0))
+
+    return RepeatSafePromptCacheState()
 
 
 class BedrockChatModel:
