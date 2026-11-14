@@ -33,6 +33,10 @@ version policy and the release procedure.
   assistant says "One moment." while it waits, once per turn. The filler is
   spoken only; it is not part of the answer shown in the console.
 
+- The console's Chat page shows answers as they are generated, clause by clause,
+  with the time to the first words, through a new `POST /api/chat/stream`
+  endpoint (server-sent events). `POST /api/chat` is unchanged.
+
 ### Changed
 
 - A reminder set a day or more ahead with a delay ("in three weeks") that would

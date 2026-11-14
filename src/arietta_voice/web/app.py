@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi import Path as ApiPath
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -388,36 +389,52 @@ def create_app(
     ) -> dict:
         return {"cancelled": svc().cancel_chat(request_id)}
 
+    def chat_failure(exc: Exception, route: str) -> tuple[int, str]:
+        service_obj = svc()
+        service_obj.last_error = type(exc).__name__
+        service_obj.event_logger.log("api_error", route=route, error_type=service_obj.last_error)
+        if isinstance(exc, WorkerBusy):
+            return 503, "Inference is busy. Wait for the current request to finish."
+        if isinstance(exc, WorkerCancelled):
+            return 409, "Turn cancelled. Any external action already completed is not undone."
+        if isinstance(exc, WorkerTimeout):
+            return (
+                504,
+                "The turn timed out and was stopped. No automatic retry was made; check any "
+                "external action before repeating it.",
+            )
+        return 502, "The model or tool failed. The next request will use a fresh worker."
+
+    @app.post("/api/chat/stream")
+    def api_chat_stream(payload: ChatRequest, _user: str = Depends(require_admin)):
+        """The answer as server-sent events: ``clause`` events, then ``done`` or ``error``."""
+        try:
+            events = svc().chat_stream(payload)
+        except Exception as exc:
+            code, detail = chat_failure(exc, "/api/chat/stream")
+            raise HTTPException(status_code=code, detail=detail) from exc
+
+        def sse():
+            try:
+                for event in events:
+                    yield f"data: {json.dumps(event)}\n\n"
+            except Exception as exc:
+                code, detail = chat_failure(exc, "/api/chat/stream")
+                yield f"data: {json.dumps({'kind': 'error', 'status': code, 'detail': detail})}\n\n"
+            finally:
+                events.close()
+
+        return StreamingResponse(
+            sse(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
+        )
+
     @app.post("/api/chat")
     def api_chat(payload: ChatRequest, _user: str = Depends(require_admin)) -> dict[str, Any]:
         try:
             result = svc().chat(payload)
         except Exception as exc:
-            service_obj = svc()
-            service_obj.last_error = type(exc).__name__
-            service_obj.event_logger.log(
-                "api_error", route="/api/chat", error_type=service_obj.last_error
-            )
-            code, detail = (
-                502,
-                "The model or tool failed. The next request will use a fresh worker.",
-            )
-            if isinstance(exc, WorkerBusy):
-                code, detail = 503, "Inference is busy. Wait for the current request to finish."
-            elif isinstance(exc, WorkerCancelled):
-                code, detail = (
-                    409,
-                    "Turn cancelled. Any external action already completed is not undone.",
-                )
-            elif isinstance(exc, WorkerTimeout):
-                code, detail = (
-                    504,
-                    "The turn timed out and was stopped. No automatic retry was made; check any external action before repeating it.",
-                )
-            raise HTTPException(
-                status_code=code,
-                detail=detail,
-            ) from exc
+            code, detail = chat_failure(exc, "/api/chat")
+            raise HTTPException(status_code=code, detail=detail) from exc
         return {
             "response": result.response,
             "source": result.source,

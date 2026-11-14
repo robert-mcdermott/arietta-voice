@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -803,3 +804,76 @@ def test_timer_endpoints_list_add_stop_and_cancel(tmp_path: Path) -> None:
     assert cancelled["active"] == []
     assert client.post(f"/api/timers/{reminder_id}/cancel", auth=AUTH).status_code == 404
     assert client.post("/api/timers/..%2Fx/cancel", auth=AUTH).status_code in (404, 422)
+
+
+def _streaming_client(tmp_path, *, fail_at=None):
+    """A client whose worker streams the in-process conversation, like the real one."""
+    from unittest.mock import Mock
+
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    state = {}
+
+    def call(operation, payload=None, **kwargs):
+        token = kwargs.get("cancellation")
+        if token is not None:
+            token.check()
+        if operation == "chat_start":
+            payload = dict(payload)
+            payload.pop("enabled_tools")
+            service._conversation._generate_override = lambda *a, **kw: "Synthetic answer. Two."
+            state["stream"] = service._conversation.stream(**payload)
+            state["steps"] = 0
+            return None
+        if operation == "chat_next":
+            state["steps"] += 1
+            if fail_at == state["steps"]:
+                raise RuntimeError("synthetic failure")
+            return next(state["stream"])
+        if operation == "chat_close":
+            state["closed"] = True
+            return None
+        raise AssertionError(operation)
+
+    service.worker = Mock(call=call, pid=123, restarts=0, operation=None)
+    return client, service, state
+
+
+def _events(response):
+    return [
+        json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")
+    ]
+
+
+def test_chat_streams_clauses_then_the_result(tmp_path):
+    client, service, state = _streaming_client(tmp_path)
+    response = client.post("/api/chat/stream", auth=AUTH, json={"message": "Hello there"})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _events(response)
+    assert [e["kind"] for e in events] == ["clause", "clause", "done"]
+    assert [e["text"] for e in events[:2]] == ["Synthetic answer.", "Two."]
+    assert events[-1]["result"]["response"] == "Synthetic answer. Two."
+    assert state["closed"] and service._active_chat is None
+    assert service.chat_turns == 1
+
+
+def test_chat_stream_requires_auth_and_reports_failures(tmp_path):
+    client, service, _ = _streaming_client(tmp_path, fail_at=2)
+    assert client.post("/api/chat/stream", json={"message": "Hi"}).status_code == 401
+    events = _events(client.post("/api/chat/stream", auth=AUTH, json={"message": "Hi"}))
+    assert events[-1] == {
+        "kind": "error",
+        "status": 502,
+        "detail": "The model or tool failed. The next request will use a fresh worker.",
+    }
+    assert service._active_chat is None  # The next turn can start.
+    assert _events(client.post("/api/chat/stream", auth=AUTH, json={"message": "Hi"}))
+
+
+def test_chat_stream_refuses_a_second_turn_while_one_runs(tmp_path):
+    from arietta_voice.turns import CancellationToken
+
+    client, service, _ = _streaming_client(tmp_path)
+    service._active_chat = ("other", CancellationToken())
+    response = client.post("/api/chat/stream", auth=AUTH, json={"message": "Hi"})
+    assert response.status_code == 503

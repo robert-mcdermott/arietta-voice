@@ -236,12 +236,12 @@ Done:
 - **Chat** is a conversation view with per-answer tool and timing detail.
 - **Activity** describes events in plain language; **Settings** shows the
   effective configuration by section instead of a JSON dump.
+- Chat answers stream clause by clause (server-sent events), and Home has a
+  per-turn latency bar from the Milestone 1 stage timings.
 
 Still to do:
 
-- Push updates over server-sent events instead of polling.
-- Stream chat responses token by token.
-- A per-turn latency timeline on Home (needs the Milestone 1 stage timings).
+- Push status updates over server-sent events instead of polling.
 - Browser smoke tests in CI.
 
 **C2 — with Milestones 2–3**

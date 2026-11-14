@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ from arietta_voice.worker import (
     InferenceWorker,
     WorkerBusy,
     WorkerCancelled,
+    WorkerTimeout,
 )
 
 # Retain the existing API field names while reporting the application version.
@@ -509,6 +511,78 @@ class AriettaApiService:
                 if self._active_chat is not None and self._active_chat[1] is token:
                     self._retired_chat_ids.append(request_id)
                     self._active_chat = None
+
+    def chat_stream(self, request: ChatRequest):
+        """Start a chat turn and return an iterator of its events as they happen.
+
+        Starting happens now, so a busy worker or a reused request ID fails
+        before anything is streamed. The iterator yields ``clause`` events as
+        the answer is spoken by voice, then one ``done`` event with the result.
+        Closing it early stops the turn.
+        """
+        token = CancellationToken()
+        request_id = request.request_id or uuid.uuid4().hex
+        with self._chat_lock:
+            if request_id in self._retired_chat_ids:
+                raise WorkerCancelled("Request ID already cancelled or completed; use a fresh ID")
+            if self._active_chat is not None:
+                raise WorkerBusy("Inference is busy")
+            self._active_chat = (request_id, token)
+        deadline = time.monotonic() + self.config.runtime.turn_timeout_s
+        payload = request.model_dump(exclude={"request_id"})
+        payload.update(enabled_tools=tuple(enabled_tool_names(self.config)))
+        try:
+            self.worker.call(
+                "chat_start",
+                payload,
+                timeout_s=self.config.runtime.turn_timeout_s,
+                cancellation=token,
+            )
+        except BaseException:
+            self._finish_stream(request_id, token)
+            raise
+        return self._stream_events(request, request_id, token, deadline)
+
+    def _stream_events(self, request, request_id, token, deadline):
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise WorkerTimeout("Turn exceeded its time limit")
+                event = self.worker.call("chat_next", timeout_s=remaining, cancellation=token)
+                if not isinstance(event, dict) or event.get("kind") not in ("clause", "done"):
+                    raise ValueError("Invalid conversation event")
+                if event["kind"] == "clause":
+                    yield {"kind": "clause", "text": event["text"]}
+                    continue
+                with self._chat_lock:
+                    token.check()
+                result = ChatResult(**event["result"])
+                self.last_error = None
+                if result.source == "model":
+                    self._worker_model_pid = self.worker.pid
+                self._record_chat(
+                    request.message,
+                    result.response,
+                    source=result.source,
+                    used_tool=result.used_tool,
+                    model_tool=result.model_tool,
+                )
+                yield {"kind": "done", "result": asdict(result)}
+                return
+        finally:
+            try:
+                if self.worker.pid is not None:
+                    self.worker.call("chat_close", timeout_s=2)
+            except Exception:
+                pass  # A failed worker is replaced on the next call.
+            self._finish_stream(request_id, token)
+
+    def _finish_stream(self, request_id, token) -> None:
+        with self._chat_lock:
+            if self._active_chat is not None and self._active_chat[1] is token:
+                self._retired_chat_ids.append(request_id)
+                self._active_chat = None
 
     def cancel_chat(self, request_id: str) -> bool:
         with self._chat_lock:
