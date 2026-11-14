@@ -5,7 +5,15 @@ version policy and the release procedure.
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- Static checks of the console's JavaScript in the test suite: every imported
+  name is exported, every element looked up by id exists in the page, and each
+  module parses (with Node, which the CI runners have).
+
+### Changed
+
+- The README's console screenshot shows the current design.
 
 ## 0.2.0rc2 — 2026-11-14
 
