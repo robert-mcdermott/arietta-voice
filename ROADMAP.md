@@ -243,7 +243,8 @@ Done:
 Still to do:
 
 - Push status updates over server-sent events instead of polling.
-- Browser smoke tests in CI.
+- Browser smoke tests in CI. (Static checks run now: imports match exports,
+  looked-up element ids exist in the page, and every module parses.)
 
 **C2 — with Milestones 2–3**
 
