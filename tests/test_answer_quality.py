@@ -27,6 +27,7 @@ def test_summary_counts():
         "facts": 2,
         "facts_right": 1,
         "median_first_s": 1.0,
+        "smarter_answers": 0,
     }
 
 

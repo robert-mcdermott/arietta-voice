@@ -504,6 +504,7 @@ def create_app(
             "used_tool": result.used_tool,
             "model_tool": result.model_tool,
             "confirmation": result.confirmation,
+            "smarter": result.smarter,
         }
 
     @app.get("/api/openapi.json")

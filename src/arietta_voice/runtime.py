@@ -327,6 +327,9 @@ class AriettaVoiceRuntime:
         # After "Should I …?" the answer must be final before it counts: a turn
         # started early may still turn out to be "yes, but only the kitchen".
         self._awaiting_answer = bool(result.get("confirmation"))
+        if result.get("smarter"):
+            # Which model answered, never what was said.
+            self.event_logger.log("smarter_model_answered", model=result["smarter"])
         tool = result.get("model_tool") or result.get("used_tool")
         if tool:
             self.event_logger.log(

@@ -192,8 +192,10 @@ acoustically at least once.
    ("I don't have that information") turned out not to be the model: knowledge
    notes and the persona told it to, and prompt reuse corrupted its input.
    With those fixed it declined 2 of 80 and got 48 of 48 facts right
-   ([answer quality](evals/ANSWER_QUALITY.md)). A larger model stays useful
-   for harder questions, and only as an explicit opt-in.
+   ([answer quality](evals/ANSWER_QUALITY.md)). Optional escalation is done:
+   `[smarter_model]`, off by default, hands a question to a bigger Ollama or
+   Bedrock model when the local one says it doesn't know, or every answer
+   that needs no tool; Ollama also works as the main provider on bigger Macs.
 7. Treat retrieved text and tool output as untrusted data, with
    prompt-injection fixtures in the evaluation corpus. Partly done: MCP results
    reach the model marked as data, the model is told never to follow

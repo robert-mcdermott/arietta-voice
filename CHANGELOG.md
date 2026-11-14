@@ -5,6 +5,21 @@ version policy and the release procedure.
 
 ## Unreleased
 
+### Added
+
+- An optional smarter model (`[smarter_model]`, also in the console's
+  Settings page). Off unless turned on with a model named; a fresh install
+  never uses one. With `when = "unsure"` it takes a question only when the
+  local model says it doesn't know ("Let me think about that."); with
+  `"always"` it gives every answer that needs no tool. Tool use and answers
+  from a tool's result stay local, and an unreachable model leaves the local
+  answer. Console chat shows "Answered by <model>"; the activity log records
+  which model answered, never the text.
+- An Ollama chat provider (`chat_provider = "ollama"`, `ollama_url`): a larger
+  model on a bigger Mac, or an Ollama cloud model, as the main model or the
+  smarter one.
+- `bench/answer_quality.py --smarter-model` measures with a smarter model on.
+
 ## 0.2.0rc3 — 2026-11-14
 
 Third release candidate for 0.2.0. It connects to MCP servers, with a spoken

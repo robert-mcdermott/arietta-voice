@@ -32,16 +32,12 @@ if not __package__:
 
 ROOT = Path(__file__).resolve().parents[1]
 QUESTIONS = ROOT / "evals" / "answer_questions.json"
-REFUSAL = re.compile(
-    r"\b(i don't have (that|any|specific|enough|information|the)|i do not have|i'm not sure|"
-    r"i am not sure|i don't know|i can't (say|answer|tell|help|find)|i cannot|no information|"
-    r"not able to|unable to|try searching|search for (it|that)|i'm unable|don't have access)",
-    re.IGNORECASE,
-)
 
 
 def is_refusal(answer: str) -> bool:
-    return bool(REFUSAL.search(answer.replace("’", "'")))
+    from arietta_voice.answers import declines
+
+    return declines(answer)
 
 
 def is_correct(answer: str, expected: str | None) -> bool | None:
@@ -60,6 +56,7 @@ def summarize(rows: list[dict]) -> dict:
         "facts": len(facts),
         "facts_right": sum(row["correct"] for row in facts),
         "median_first_s": round(statistics.median(firsts), 2) if firsts else None,
+        "smarter_answers": sum(1 for row in rows if row.get("smarter")),
     }
 
 
@@ -85,6 +82,11 @@ def main() -> int:
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--no-tools", action="store_true")
     parser.add_argument("--json", type=Path, help="write every answer here")
+    parser.add_argument(
+        "--smarter-model", help="also enable this smarter model, such as gemma4:31b-cloud"
+    )
+    parser.add_argument("--smarter-provider", default="ollama", choices=("ollama", "bedrock"))
+    parser.add_argument("--smarter-when", default="unsure", choices=("unsure", "always"))
     args = parser.parse_args()
 
     from arietta_voice.config import load_config
@@ -97,6 +99,11 @@ def main() -> int:
     else:
         config = load_config(args.config)
     config.mcp.enabled = False  # Measure the model, not whatever servers are connected.
+    if args.smarter_model:
+        config.smarter_model.enabled = True
+        config.smarter_model.model = args.smarter_model
+        config.smarter_model.provider = args.smarter_provider
+        config.smarter_model.when = args.smarter_when
     questions = json.loads(args.questions.read_text(encoding="utf-8"))
     service = ConversationService(config)
     list(service.stream(message="Hello", use_tools=not args.no_tools))  # Load and warm up.
@@ -118,6 +125,7 @@ def main() -> int:
                     "correct": is_correct(answer, item.get("a")),
                     "first_s": first,
                     "tool": result.get("model_tool") or result.get("used_tool"),
+                    "smarter": result.get("smarter"),
                 }
             )
     summary = summarize(rows)

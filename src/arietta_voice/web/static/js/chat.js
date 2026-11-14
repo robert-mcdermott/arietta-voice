@@ -20,6 +20,7 @@ function messageMeta(message) {
   if (message.meta.source === "tool") parts.push("Answered by an instant tool");
   if (message.meta.used_tool) parts.push(`Tool: ${message.meta.used_tool}`);
   if (message.meta.model_tool) parts.push(`Model tool: ${message.meta.model_tool}`);
+  if (message.meta.smarter) parts.push(`Answered by ${message.meta.smarter}`);
   if (message.meta.first != null) parts.push(`First words ${message.meta.first.toFixed(1)}s`);
   if (message.meta.seconds != null) parts.push(`${message.meta.seconds.toFixed(1)}s`);
   return parts.length
@@ -121,6 +122,7 @@ async function send() {
       used_tool: result.used_tool,
       model_tool: result.model_tool,
       confirmation: result.confirmation,
+      smarter: result.smarter,
       seconds: (performance.now() - started) / 1000,
       first: reply.firstAt ? (reply.firstAt - started) / 1000 : null,
     };

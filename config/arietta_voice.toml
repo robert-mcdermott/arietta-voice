@@ -76,8 +76,11 @@ endpoint_timeout_s = 5.0
 startup_timeout_s = 300.0
 
 [models]
+# "local" (Gemma on MLX, the default, sized for a 16 GB Mac mini), "ollama" (any
+# model Ollama serves, such as a larger one on a bigger Mac) or "bedrock".
 chat_provider = "local"
 chat_model = "mlx-community/gemma-4-E4B-it-4bit"
+ollama_url = "http://localhost:11434"
 bedrock_region = ""
 bedrock_profile = ""
 aws_access_key_id = ""
@@ -92,6 +95,21 @@ reuse_prompt_prefix = true
 native_tool_calls = true
 temperature = 0.7
 max_tokens = 220
+# Local model only: discourages repeating the last few words it wrote.
+repetition_penalty = 1.2
+
+[smarter_model]
+# An optional bigger model for questions the local one cannot answer well. Off
+# unless you turn it on and name a model. When it answers, it is given the
+# conversation so far, the persona and any knowledge notes attached, so they
+# leave this Mac if the model runs elsewhere (an Ollama ":cloud" model, or
+# Bedrock). A larger local Ollama model keeps everything on the Mac.
+enabled = false
+provider = "ollama"   # or "bedrock" (uses the AWS settings in [models])
+model = ""            # such as "gemma4:31b-cloud"
+# "unsure": only when the local model says it doesn't know (it says "Let me
+# think about that." first). "always": every answer that needs no tool.
+when = "unsure"
 
 [prompts]
 soul_path = "SOUL.md"

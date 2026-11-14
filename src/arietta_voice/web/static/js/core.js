@@ -182,6 +182,8 @@ export function describeEvent(item) {
       return item.interrupted ? "Speech interrupted" : "Finished speaking";
     case "tool_call":
       return `Used tool ${item.tool || ""}`.trim();
+    case "smarter_model_answered":
+      return `Answered by the smarter model ${item.model || ""}`.trim();
     case "alert":
       return item.repeat ? "Alert repeated" : `${item.count > 1 ? "Alerts" : "Alert"} announced`;
     case "alert_answered":

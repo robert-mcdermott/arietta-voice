@@ -222,6 +222,8 @@ class ModelConfig:
     max_tokens: int = 220
     # Discourages the local model from repeating the last few words it wrote.
     repetition_penalty: float = 1.2
+    # Where Ollama listens, for chat_provider = "ollama" or an Ollama smarter model.
+    ollama_url: str = "http://localhost:11434"
 
 
 @dataclass(slots=True)
@@ -306,6 +308,23 @@ class TimersConfig:
 
 
 @dataclass(slots=True)
+class SmarterModelConfig:
+    """An optional bigger model for questions the local one cannot answer well.
+
+    Off unless enabled here with a model named. What it is given (the
+    conversation so far, the persona and any notes attached) goes to wherever
+    that model runs: an Ollama cloud model or Bedrock means off this Mac.
+    """
+
+    enabled: bool = False
+    provider: str = "ollama"  # "ollama" or "bedrock"
+    model: str = ""  # Such as "gemma4:31b-cloud", or a larger local Ollama model.
+    # "unsure": only when the local model says it does not know. "always": every
+    # answer that needs no tool, for the best answers at the cost of speed.
+    when: str = "unsure"
+
+
+@dataclass(slots=True)
 class McpConfig:
     # Connect to the MCP servers listed in servers_file.
     enabled: bool = True
@@ -346,6 +365,7 @@ class AppConfig:
     timers: TimersConfig = field(default_factory=TimersConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
     mcp: McpConfig = field(default_factory=McpConfig)
+    smarter_model: SmarterModelConfig = field(default_factory=SmarterModelConfig)
 
 
 def default_config(project_root: Path | None = None) -> AppConfig:
@@ -423,6 +443,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     timers = raw.get("timers", {})
     weather = raw.get("weather", {})
     mcp = raw.get("mcp", {})
+    smarter = raw.get("smarter_model", {})
 
     # Your saved list keeps its order; standard tools it has not considered are added.
     chosen = private_tools.get("enabled")
@@ -530,6 +551,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             repetition_penalty=float(
                 models.get("repetition_penalty", base.models.repetition_penalty)
             ),
+            ollama_url=str(models.get("ollama_url", base.models.ollama_url)).strip().rstrip("/"),
         ),
         prompts=PromptConfig(
             soul_path=_resolve_path(base_dir, prompts.get("soul_path", base.prompts.soul_path)),
@@ -599,6 +621,12 @@ def load_config(path: Path | None = None) -> AppConfig:
             ),
             connect_timeout_s=float(mcp.get("connect_timeout_s", base.mcp.connect_timeout_s)),
             call_timeout_s=float(mcp.get("call_timeout_s", base.mcp.call_timeout_s)),
+        ),
+        smarter_model=SmarterModelConfig(
+            enabled=bool(smarter.get("enabled", base.smarter_model.enabled)),
+            provider=str(smarter.get("provider", base.smarter_model.provider)).strip().lower(),
+            model=str(smarter.get("model", base.smarter_model.model)).strip(),
+            when=str(smarter.get("when", base.smarter_model.when)).strip().lower(),
         ),
     )
     return validate_config(config)
@@ -712,8 +740,8 @@ def validate_config(config: AppConfig) -> AppConfig:
         )
         number("audio.tts_speed", config.audio.tts_speed, 0.5, 2.0)
     require(
-        config.models.chat_provider in {"local", "bedrock"},
-        "models.chat_provider must be 'local' or 'bedrock'",
+        config.models.chat_provider in {"local", "bedrock", "ollama"},
+        "models.chat_provider must be 'local', 'bedrock' or 'ollama'",
     )
     require(bool(config.models.chat_model.strip()), "models.chat_model must not be blank")
     require(bool(config.models.stt_language.strip()), "models.stt_language must not be blank")
@@ -744,6 +772,23 @@ def validate_config(config: AppConfig) -> AppConfig:
         "weather.units must be 'imperial' or 'metric'",
     )
     require(len(config.weather.location) <= 120, "weather.location must be at most 120 characters")
+    require(
+        config.models.ollama_url.startswith(("http://", "https://")),
+        "models.ollama_url must start with http:// or https://",
+    )
+    require(
+        config.smarter_model.provider in {"ollama", "bedrock"},
+        "smarter_model.provider must be 'ollama' or 'bedrock'",
+    )
+    require(
+        config.smarter_model.when in {"unsure", "always"},
+        "smarter_model.when must be 'unsure' or 'always'",
+    )
+    require(
+        not config.smarter_model.enabled or bool(config.smarter_model.model),
+        "smarter_model.model must name a model when smarter_model.enabled is true",
+    )
+    require(len(config.smarter_model.model) <= 200, "smarter_model.model is too long")
     number("mcp.connect_timeout_s", config.mcp.connect_timeout_s, 1, 300)
     number("mcp.call_timeout_s", config.mcp.call_timeout_s, 1, 110)
     # A tool that outlasts the turn would get the worker restarted, reloading

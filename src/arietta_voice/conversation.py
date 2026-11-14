@@ -6,8 +6,9 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from arietta_voice.answers import declines
 from arietta_voice.clauses import RESPONSE_CHARS, SpeechClauses
 from arietta_voice.confirmations import confirmation_reply
 from arietta_voice.knowledge import KnowledgeRetriever
@@ -35,6 +36,8 @@ MIXED_UP = "Sorry, I got mixed up there. Could you ask that again?"
 # tool (the weather service, say) is not met with silence.
 FILLER = "One moment."
 FILLER_AFTER_S = 0.8
+# Said when the local model did not know and the optional smarter model takes over.
+SMARTER_FILLER = "Let me think about that."
 # A tool that changes something asks first. The answer must come within this
 # long; after that a "yes" is just a word, and the action is not taken.
 CONFIRM_WINDOW_S = 60.0
@@ -62,6 +65,8 @@ class ChatResult:
     model_tool: str | None
     # Set when the answer is a question before an action: {"tool", "question"}.
     confirmation: dict | None = None
+    # The optional smarter model that gave this answer, if one did.
+    smarter: str | None = None
 
 
 @dataclass(slots=True)
@@ -94,6 +99,9 @@ class ConversationService:
         self._mcp_waited = False
         self._pending: PendingAction | None = None
         self._asked: dict | None = None  # This turn's confirmation question, if any.
+        self._smarter = None
+        self._smarter_key = None
+        self._smarter_used: str | None = None  # The smarter model that answered this turn.
 
     def _llm_generate(self, messages, *, max_tokens=None, temperature=None):
         if self._generate_override is not None:
@@ -158,6 +166,7 @@ class ConversationService:
         # A question asked last turn: a clear answer settles it, anything else drops
         # it. It counts only in the conversation that asked it, as its last words.
         pending, self._pending, self._asked = self._pending, None, None
+        self._smarter_used = None
         if (
             pending is not None
             and tools is not None
@@ -222,12 +231,19 @@ class ConversationService:
         if tools is not None and tools.model_tools and self._native_tools():
             called: list[str] = []
             yield from self._speech_events(
-                self._native_turn(tools, messages, called, max_tokens, temperature, filler),
+                self._with_smarter(
+                    self._native_turn(tools, messages, called, max_tokens, temperature, filler),
+                    messages,
+                    called,
+                    max_tokens,
+                    temperature,
+                ),
                 source="model",
                 used_tool=used_tool,
                 finalize=lambda: {
                     "model_tool": ", ".join(called) or None,
                     "confirmation": self._asked,
+                    **self._smarter_note(),
                 },
             )
             return
@@ -244,7 +260,11 @@ class ConversationService:
             if answer is not None:
                 # The model chose to answer directly: speak it as it arrives.
                 yield from self._speech_events(
-                    answer, source="model", used_tool=used_tool, model_tool=None
+                    self._with_smarter(answer, messages, [], max_tokens, temperature),
+                    source="model",
+                    used_tool=used_tool,
+                    model_tool=None,
+                    finalize=self._smarter_note,
                 )
                 return
             request = parse_model_tool_request(tool_text)
@@ -273,11 +293,15 @@ class ConversationService:
             if result is not None and result.content.strip():
                 content = f"Result from the {request.name} tool:\n{content}"
             messages = [*messages, {"role": "system", "content": content}]
+        answer = self._llm_stream(messages, max_tokens=max_tokens, temperature=temperature)
+        if model_tool is None:  # An answer from a tool's result stays with the local model.
+            answer = self._with_smarter(answer, messages, [], max_tokens, temperature)
         yield from self._speech_events(
-            self._llm_stream(messages, max_tokens=max_tokens, temperature=temperature),
+            answer,
             source="model",
             used_tool=used_tool,
             model_tool=model_tool,
+            finalize=self._smarter_note,
         )
 
     def warm_tools(self) -> None:
@@ -315,6 +339,98 @@ class ConversationService:
             )
             self._tools_key = key
         return self._tools
+
+    # ----- The optional smarter model -----
+
+    def _smarter_note(self) -> dict:
+        return {"smarter": self._smarter_used} if self._smarter_used else {}
+
+    def _smarter_model(self):
+        settings = self.config.smarter_model
+        if not settings.enabled or not settings.model:
+            return None
+        key = (settings.provider, settings.model, self.config.models.ollama_url)
+        if self._smarter is None or self._smarter_key != key:
+            self._smarter = build_chat_model(
+                replace(
+                    self.config.models, chat_provider=settings.provider, chat_model=settings.model
+                )
+            )
+            self._smarter_key = key
+        return self._smarter
+
+    def _with_smarter(self, events, messages, called, max_tokens, temperature):
+        """Hand the answer to the smarter model when it is configured to take it.
+
+        The local model's first sentence is held. With ``when = "always"`` the
+        smarter model answers instead; with ``"unsure"`` it does only when that
+        sentence declines ("I don't have that information"). An answer drawn
+        from a tool's result stays local. If the smarter model cannot be
+        reached, the local answer is used after all.
+        """
+        smarter = self._smarter_model()
+        if smarter is None:
+            yield from events
+            return
+        always = self.config.smarter_model.when == "always"
+        held: list = []
+        text = ""
+        for event in events:
+            if called or event.kind == "filler":
+                yield from held
+                held = []
+                yield event
+                if called:
+                    yield from events
+                    return
+                continue
+            held.append(event)
+            if event.kind == "text":
+                text += event.text
+                if len(text) < 80 and not re.search(r"[.!?]", text):
+                    continue  # Not a whole sentence yet.
+            if always or declines(text):
+                break
+            yield from held
+            yield from events
+            return
+        else:
+            if not (always or declines(text)):
+                yield from held
+                return
+        handed = yield from self._smarter_answer(smarter, messages, max_tokens, temperature, always)
+        if handed:
+            _close(events)
+            return
+        yield from held  # The smarter model failed: keep the local answer.
+        yield from events
+
+    def _smarter_answer(self, smarter, messages, max_tokens, temperature, always):
+        """Generator: the smarter model's answer; returns False if it could not start."""
+        name = self.config.smarter_model.model
+        if not always:
+            yield ModelEvent("filler", SMARTER_FILLER)
+        try:
+            stream = smarter.stream(
+                messages,
+                max_tokens=max_tokens or self.config.models.max_tokens,
+                temperature=self.config.models.temperature if temperature is None else temperature,
+            )
+            first = next(stream)
+        except Exception as error:  # Unreachable or failed: the local answer stands.
+            logger.warning("Smarter model %s failed (%s)", name, type(error).__name__)
+            return False
+        self._smarter_used = name
+        yield first
+        try:
+            for event in stream:
+                yield event
+        except Exception as error:
+            logger.warning("Smarter model %s stopped (%s)", name, type(error).__name__)
+            yield ModelEvent("done")
+        finally:
+            _close(stream)
+        return True
 
     # ----- Asking before actions -----
 

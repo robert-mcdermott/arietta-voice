@@ -64,3 +64,19 @@ nothing for text that is not arithmetic, so the model answers.
 
 Questions are easy and one at a time, with no conversation history; answers
 are judged by a pattern, not read for quality. Checked on the M4/32 GB Mac.
+
+## November 14, 2026: the optional smarter model
+
+`[smarter_model]` (off by default) hands a question to a bigger model. Measured
+on the owner's setup with `gemma4:31b-cloud` served by Ollama (two rounds, 80
+answers):
+
+| Mode | Declined | Facts right | Handed over | Median first words |
+| --- | ---: | ---: | ---: | ---: |
+| Off (local only) | 2 of 80 | 48 of 48 | 0 | 1.47 s |
+| `when = "unsure"` | 0 of 80 | 48 of 48 | 4 of 80 | 1.28 s |
+
+In "unsure" mode the cloud model took the four answers the local model began by
+declining (two of them the dinner question) and the rest stayed local, so
+speed was unchanged. With the local model now answering ordinary questions,
+the main value of a smarter model is harder questions than these.
