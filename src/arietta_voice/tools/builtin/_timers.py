@@ -19,7 +19,7 @@ LEAD_IN = (
 )
 QUESTION = re.compile(
     r"^(?:how|what|what's|which|when|is|are|do|does|did|any|have|has)\b|"
-    r"\b(?:left|remaining|cancel|stop|delete|remove|clear|pause)\b"
+    r"\b(?:left|remaining|cancel|stop|delete|remove|clear)\b"
 )
 SET_VERB = re.compile(r"\b(?:set|start|make|create|add|put|need|want|give|begin|run|launch)\b")
 ARTICLES = r"(?:a|an|the|my|another|new|one more)"

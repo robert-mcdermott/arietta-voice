@@ -282,3 +282,56 @@ def test_a_tool_s_own_answer_covers_a_silent_model(service_for, monkeypatch):
     service, _ = service_for(call("lookup", what="x"), "")
     clauses, _ = spoken(service)
     assert clauses == ["It is done."]
+
+
+class Slow(Lookup):
+    triggers = (r"slow lookup",)
+    delay = 0.2
+
+    def match(self, text):
+        return {"what": "x"} if "slow lookup" in text else None
+
+    def run(self, arguments):
+        import time
+
+        time.sleep(self.delay)
+        return ToolResult(content="It is 42.", speak="It is 42.")
+
+
+@pytest.fixture
+def slow(monkeypatch):
+    from arietta_voice import conversation
+
+    monkeypatch.setattr(conversation, "FILLER_AFTER_S", 0.05)
+    module = SimpleNamespace(create_tool=lambda context: Slow(context))
+    monkeypatch.setattr(tool_registry, "load_module", lambda config, name: (module, "user", None))
+    return Slow
+
+
+def test_a_slow_instant_answer_is_preceded_by_a_filler(service_for, slow):
+    from arietta_voice.conversation import FILLER
+
+    service, model = service_for()
+    clauses, result = spoken(service, "slow lookup please")
+    assert clauses == [FILLER, "It is 42."]
+    assert result["response"] == "It is 42."  # The filler is not part of the answer.
+    assert model.requests == []
+
+
+def test_a_slow_model_called_tool_gets_one_filler(service_for, slow, monkeypatch):
+    from arietta_voice.conversation import FILLER
+
+    service, _ = service_for(
+        call("lookup", what="a"), call("lookup", what="b"), "Both are 42.", native=True
+    )
+    monkeypatch.setattr(slow, "speaks_for_itself", False)
+    clauses, result = spoken(service, "Look two things up")
+    assert clauses == [FILLER, "Both are 42."]
+    assert result["response"] == "Both are 42."
+
+
+def test_a_quick_tool_gets_no_filler(service_for, slow, monkeypatch):
+    monkeypatch.setattr(slow, "delay", 0.0)
+    service, _ = service_for()
+    clauses, _ = spoken(service, "slow lookup please")
+    assert clauses == ["It is 42."]

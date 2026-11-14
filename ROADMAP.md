@@ -158,9 +158,9 @@ acoustically at least once.
 2. **Agent loop.** Native tool calls and up to three steps per turn are done
    (the local model uses Gemma 4's own tool-call format; Bedrock keeps the
    prompted JSON). In a real-model check every tool request was routed to the
-   right tool, including phrasings the prompted format missed. Still to do: a
-   spoken filler when a tool is slow, confirmation before consequential actions,
-   and native calls for Bedrock's Converse API.
+   right tool, including phrasings the prompted format missed. A slow tool
+   gets a spoken "One moment." after 0.8 seconds. Still to do: confirmation
+   before consequential actions, and native calls for Bedrock's Converse API.
 3. **MCP client.** Connect to Model Context Protocol servers so calendar,
    notes, home automation and similar integrations come from the existing
    ecosystem rather than hand-written adapters.
