@@ -5,6 +5,17 @@ version policy and the release procedure.
 
 ## Unreleased
 
+### Added
+
+- Web search with the source said aloud (`[web_search]`, also in the console's
+  Settings page). Off until turned on; then only the search words leave the
+  Mac. Wikipedia needs no account; Brave Search (API key) and your own SearXNG
+  server are the alternatives. A clear "look up ...", "search the web for ..."
+  or "google ..." always searches, and the model may search for news and
+  current facts; answers start like "According to Wikipedia, ...". Results are
+  cached for ten minutes. `web_search` joins the standard tool list, offered
+  only when turned on.
+
 ## 0.2.0rc4 — 2026-11-14
 
 Fourth release candidate for 0.2.0: an optional smarter model for questions the

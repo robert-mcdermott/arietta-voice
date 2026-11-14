@@ -66,6 +66,18 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
         ],
     ),
     (
+        "search",
+        "Web search (optional)",
+        [
+            Field("web_search", "enabled", "Search the web", "boolean",
+                  "Off by default. When on, the search words go to the provider below."),
+            Field("web_search", "provider", "Provider", "choice",
+                  "Wikipedia needs no account. Brave needs an API key in your private config; "
+                  "SearXNG needs your server's address.", choices=("wikipedia", "brave", "searxng")),
+            Field("web_search", "url", "SearXNG address", "text", max_length=200),
+        ],
+    ),
+    (
         "smarter",
         "Smarter model (optional)",
         [

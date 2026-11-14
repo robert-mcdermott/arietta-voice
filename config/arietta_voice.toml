@@ -98,6 +98,19 @@ max_tokens = 220
 # Local model only: discourages repeating the last few words it wrote.
 repetition_penalty = 1.2
 
+[web_search]
+# Look things up online when asked, or for news and current facts, and say
+# where the answer came from ("According to Wikipedia, ..."). Off unless turned
+# on; then only the search words leave this Mac, sent to the provider below.
+enabled = false
+# "wikipedia" (no account needed), "brave" (Brave Search: put api_key in your
+# private config) or "searxng" (your own SearXNG server: set url).
+provider = "wikipedia"
+api_key = ""
+url = ""
+language = "en"   # Wikipedia edition
+max_results = 3
+
 [smarter_model]
 # An optional bigger model for questions the local one cannot answer well. Off
 # unless you turn it on and name a model. When it answers, it is given the
@@ -153,6 +166,7 @@ enabled = [
   "cancel_timer",
   "calculate",
   "date_math",
+  "web_search",
   "search_knowledge",
   "system_info",
 ]

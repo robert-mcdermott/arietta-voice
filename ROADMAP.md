@@ -180,8 +180,10 @@ acoustically at least once.
    and unit conversion are done (`calculate`; the 4-bit Gemma had said
    17 × 23 is 749), and so are date questions (`date_math`: "how many days
    until Christmas?"), and weather is available as an opt-in tool (Open-Meteo,
-   checked against the live service on November 14). Still to do: web search
-   with spoken source attribution.
+   checked against the live service on November 14). Web search with spoken
+   source attribution is done and opt-in: Wikipedia (no account), Brave Search
+   or SearXNG; in a real-model check, 16 of 16 requests were handled as
+   expected, with answers such as "According to Wikipedia, ...".
 5. **Home control** through Home Assistant, now through its own MCP server
    (`/api/mcp`) rather than a custom adapter: read-only status first, then
    explicitly authorized actions.
