@@ -246,7 +246,8 @@ Still to do:
 
 **C2 — with Milestones 2–3**
 
-- **Settings** as forms with validation, replacing the JSON dump.
+- **Settings** as forms with validation — done for the common settings
+  (devices, models and paths are still file-only).
 - **Persona and memory** editors.
 - **Tools and integrations**: enable, configure and test tools and MCP servers.
 - **Conversations**: searchable history.

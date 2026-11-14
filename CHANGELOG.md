@@ -33,6 +33,13 @@ version policy and the release procedure.
   assistant says "One moment." while it waits, once per turn. The filler is
   spoken only; it is not part of the answer shown in the console.
 
+- The console's Settings page can change common settings: the assistant's name,
+  wake word and conversation timeout, voice and speaking speed, the thinking
+  chime, model temperature and answer length, native tool calls, timer alerts,
+  weather, memory, conversation logging and the knowledge search backend. Each
+  change is checked with the runtime's own validation and saved to the private
+  config (`GET`/`PUT /api/settings`); the page offers to restart the voice
+  runtime. Everything else still lives in the private config file.
 - The console's Chat page shows answers as they are generated, clause by clause,
   with the time to the first words, through a new `POST /api/chat/stream`
   endpoint (server-sent events). `POST /api/chat` is unchanged.

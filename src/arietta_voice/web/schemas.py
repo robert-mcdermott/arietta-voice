@@ -63,3 +63,9 @@ class TimerCreateRequest(BaseModel):
     duration: str = Field(default="", max_length=120)
     when: str = Field(default="", max_length=120)
     label: str = Field(default="", max_length=200)
+
+
+class SettingsUpdateRequest(BaseModel):
+    """Changes by section and key, such as {"timers": {"repeat_s": 45}}."""
+
+    changes: dict[str, dict[str, Any]] = Field(default_factory=dict, max_length=20)

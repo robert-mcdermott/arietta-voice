@@ -488,6 +488,7 @@ pre,
 }
 
 input[type="text"],
+input[type="number"],
 input:not([type]),
 textarea {
   width: 100%;
@@ -501,6 +502,10 @@ textarea {
 input::placeholder,
 textarea::placeholder {
   color: var(--muted);
+}
+
+input[type="number"] {
+  max-width: 160px;
 }
 
 input:focus,
@@ -1297,6 +1302,74 @@ details.fold[open] > summary {
 
 .result-card .row {
   margin-top: 6px;
+}
+
+/* ---------- Settings ---------- */
+
+.settings-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.settings-card .card-head {
+  margin-bottom: 4px;
+}
+
+.setting-list {
+  display: grid;
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.setting-row:last-child {
+  border-bottom: 0;
+}
+
+.setting-label {
+  padding-top: 7px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ink-2);
+}
+
+.setting-input .hint {
+  margin-top: 4px;
+}
+
+.setting-input .check {
+  min-height: 34px;
+}
+
+#settings-restart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#settings-restart[hidden] {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .setting-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .setting-label {
+    padding-top: 0;
+  }
 }
 
 /* ---------- Timers ---------- */

@@ -877,3 +877,19 @@ def test_chat_stream_refuses_a_second_turn_while_one_runs(tmp_path):
     service._active_chat = ("other", CancellationToken())
     response = client.post("/api/chat/stream", auth=AUTH, json={"message": "Hi"})
     assert response.status_code == 503
+
+
+def test_api_reads_and_saves_settings(tmp_path):
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    assert client.get("/api/settings").status_code == 401
+    payload = client.get("/api/settings", auth=AUTH).json()
+    assert [group["name"] for group in payload["groups"]][:2] == ["assistant", "voice"]
+    saved = client.put(
+        "/api/settings", auth=AUTH, json={"changes": {"timers": {"snooze_minutes": 9}}}
+    ).json()
+    assert saved["changed"] == ["timers.snooze_minutes"]
+    assert service.config.timers.snooze_minutes == 9
+    refused = client.put(
+        "/api/settings", auth=AUTH, json={"changes": {"timers": {"snooze_minutes": 0}}}
+    )
+    assert refused.status_code == 400 and "at least 1" in refused.json()["detail"]

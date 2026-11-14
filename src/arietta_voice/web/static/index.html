@@ -364,12 +364,20 @@
         <!-- Settings -->
         <section id="settings" class="view">
           <div class="notice">
-            <span>These are the settings in effect. To change them, edit <code>config/arietta_voice.local.toml</code> and restart. Secrets are never shown here.</span>
+            <span>Changes are saved to your private config, <code>config/arietta_voice.local.toml</code>. The voice runtime uses them after a restart. Devices, models, credentials and file paths are changed in that file directly.</span>
           </div>
-          <div id="settings-content" class="settings-grid"></div>
+          <div id="settings-restart" class="notice warn" role="status" hidden>
+            <span>Saved. Restart the voice runtime to use the new settings.</span>
+            <button class="btn small" id="settings-restart-runtime" type="button">Restart voice runtime</button>
+          </div>
+          <div id="settings-form" class="settings-forms"></div>
           <details class="fold">
-            <summary>Raw configuration (JSON)</summary>
-            <pre class="output" id="config-json"></pre>
+            <summary>Everything in effect</summary>
+            <div id="settings-content" class="settings-grid"></div>
+            <details class="fold">
+              <summary>Raw configuration (JSON)</summary>
+              <pre class="output" id="config-json"></pre>
+            </details>
           </details>
         </section>
       </div>
