@@ -7,6 +7,14 @@ version policy and the release procedure.
 
 ### Changed
 
+- Speech recognition upgraded from Moonshine 0.0.54 to 0.1.6, lifting the
+  last dependency cap. Each utterance is now transcribed in its own stream, so
+  earlier utterances can no longer add stray words (the old recogniser once
+  heard "Yeah How many sides does a triangle have?"). Transcription takes about
+  180 ms instead of 210 ms; median time to first audio in the latency benchmark
+  went from 1.62 s to 1.56 s. The new model (about 270 MB) downloads on first
+  run; the old one (about 430 MB) can be deleted from
+  `~/Library/Caches/moonshine_voice/download.moonshine.ai/model/medium-streaming-en/quantized`.
 - All dependencies upgraded to their latest releases (81 packages), including
   transformers 5.5.4 to 5.23.0, torch 2.11 to 2.15, mlx 0.31 to 0.32, mlx-vlm
   0.4.4 to 0.7.12, huggingface-hub 1.x to 2.4, onnxruntime 1.24 to 1.32,

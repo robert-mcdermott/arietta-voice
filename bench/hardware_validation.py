@@ -135,12 +135,18 @@ def collect_environment(config, root):
             ).name
         except Exception as exc:
             metadata["cached_revisions"][model] = type(exc).__name__
-    from moonshine_voice.download import find_model_info, get_components_for_model_info
-    from moonshine_voice.download_file import get_cache_dir
+    from moonshine_voice.download import (
+        find_model_info,
+        get_cache_dir,
+        get_components_for_model_info,
+    )
 
     stt = find_model_info(config.models.stt_language)
     stt_root = get_cache_dir() / stt["download_url"].removeprefix("https://")
-    metadata["models"]["stt_model"] = stt["model_name"]
+    # 0.1.x model info has no name; the download path identifies model and revision.
+    metadata["models"]["stt_model"] = stt["download_url"].removeprefix(
+        "https://download.moonshine.ai/model/"
+    )
     metadata["stt_asset_sha256"] = {}
     for component in get_components_for_model_info(stt):
         asset = stt_root / component
