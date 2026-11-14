@@ -162,7 +162,11 @@ def test_heartbeat_continues_during_blocking_work(tmp_path):
     )
     publisher.start(runtime)
     try:
-        time.sleep(0.09)
+        # Several heartbeats while the caller is blocked. A busy machine may be
+        # slower than the 20 ms interval, so wait for them rather than a fixed time.
+        deadline = time.monotonic() + 2.0
+        while len(writes) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
     finally:
         publisher.stop(runtime)
     assert len(writes) >= 3

@@ -58,6 +58,12 @@ class TimerLimitError(ValueError):
     """Too many alerts, or one that is too long, too short or badly described."""
 
 
+def apology(error: Exception) -> str:
+    """An error message to follow "Sorry, " in speech."""
+    text = str(error)
+    return text[:1].lower() + text[1:]
+
+
 @dataclass(slots=True)
 class Alert:
     id: str
@@ -297,7 +303,9 @@ class TimerStore:
 
     def add_timer(self, seconds: float, label: str = "") -> Alert:
         if not 1 <= seconds <= MAX_TIMER_S:
-            raise TimerLimitError("Timers can run from 1 second to 24 hours")
+            raise TimerLimitError(
+                "Timers can run from 1 second to 24 hours; for longer, ask for a reminder"
+            )
         return self._add("timer", seconds, label=label, duration_s=float(round(seconds)))
 
     def add_reminder(self, text: str, due: datetime, form: str = "") -> Alert:

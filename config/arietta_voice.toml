@@ -134,6 +134,7 @@ enabled = [
   "check_timers",
   "cancel_timer",
   "calculate",
+  "date_math",
   "search_knowledge",
   "system_info",
 ]

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from arietta_voice.timephrases import describe_when, format_duration, parse_when
-from arietta_voice.timers import TimerLimitError, reminder_parts
+from arietta_voice.timers import TimerLimitError, apology, reminder_parts
 from arietta_voice.tools.base import BaseTool, ToolContext, ToolResult
 from arietta_voice.tools.builtin._timers import reminder_request, store_for
 
@@ -63,18 +63,24 @@ class SetReminderTool(BaseTool):
                 content="No reminder was set because no time was given. Ask when.",
                 speak="When should I remind you?",
             )
+        due = when.due
+        if when.relative and due - now >= timedelta(days=1) and not 7 <= due.hour < 22:
+            # "In three weeks" at 2 in the morning means that day, at a waking hour.
+            due = due.replace(hour=9, minute=0, second=0, microsecond=0)
         try:
-            alert = self.store.add_reminder(body, when.due, form)
+            alert = self.store.add_reminder(body, due, form)
         except TimerLimitError as error:
-            return ToolResult(content=f"No reminder was set: {error}.", speak=f"Sorry, {error}.")
-        seconds = when.due.timestamp() - now.timestamp()
+            return ToolResult(
+                content=f"No reminder was set: {error}.", speak=f"Sorry, {apology(error)}."
+            )
+        seconds = due.timestamp() - now.timestamp()
         if when.relative and seconds < 6 * 3600:
             timing = f"in {format_duration(seconds)}"
         else:
-            timing = describe_when(when.due, now)
+            timing = describe_when(due, now)
         return ToolResult(
             speak=f"Okay, I'll remind you {form} {body} {timing}.",
-            content=f"Reminder set {describe_when(when.due, now)}: {form} {body}.",
+            content=f"Reminder set {describe_when(due, now)}: {form} {body}.",
             data={"id": alert.id, "due_at": alert.due_at},
         )
 
