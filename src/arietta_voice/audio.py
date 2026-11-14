@@ -555,6 +555,7 @@ class PlaybackResult:
     capture_discard_reasons: dict[str, int] = field(default_factory=dict)
     output_timing: dict = field(default_factory=dict)
     started_at: float | None = None  # monotonic time the output stream opened
+    resumed: bool = False  # the speaker continued before any audio was played
 
 
 class _PlaybackTiming:
@@ -660,13 +661,15 @@ def play_tts_stream(
     aec_delay_ms: float = 0,
     output_device=None,
     health_check=None,
+    resume_watch=None,
 ) -> PlaybackResult:
     from contextlib import ExitStack
 
     from arietta_voice.worker import WorkerTimeout
 
     capture_phase(microphone, "awaiting_output")
-    discard_capture(microphone, "before_output")
+    if resume_watch is None or not resume_watch.active:
+        discard_capture(microphone, "before_output")
     aec_process = make_aec_processor(sample_rate) if use_aec else None
     reference = TimedAudioReferenceBuffer(reference_seconds)
     speech_chunks = deque(
@@ -699,6 +702,11 @@ def play_tts_stream(
         if keypress_monitor is not None and keypress_monitor.pressed():
             return True, []
         if playback_started is None:
+            if resume_watch is not None and resume_watch.active:
+                # An early end-of-turn decision is still provisional: keep the
+                # capture and watch it for the speaker carrying on.
+                resume_watch.poll(microphone)
+                return False, []
             # Capture before speech output is not a supported barge-in window.
             # It was already drained at stream startup; retire it during model
             # waits instead of letting that unused backlog overrun the queue.
@@ -783,6 +791,7 @@ def play_tts_stream(
         output_rate = None  # set when the output stream opens
         buffered_chunks: list[np.ndarray] = []
         interrupted = False
+        resumed = False
         completed = False
 
         def submit(playback_chunk, kind="speech"):
@@ -823,6 +832,11 @@ def play_tts_stream(
                     raise chunk_samples
                 if chunk_samples is None:
                     voice_interrupt, buffered_chunks = check_barge_in()
+                    if resume_watch is not None and resume_watch.resumed:
+                        # Leave without cancelling: the turn is discarded once
+                        # the inference call already in flight has returned.
+                        resumed = True
+                        break
                     if voice_interrupt:
                         interrupted = True
                         if cancellation is not None:
@@ -838,6 +852,9 @@ def play_tts_stream(
                             submit(np.zeros((width, 1), dtype=np.float32), "gap_silence")
                     continue
                 if output_stream is None:
+                    if resume_watch is not None:
+                        # Audio is starting: the decision stands, and no chime is due.
+                        resume_watch.finish(release=False)
                     chime_player.stop_at_gap()
                     output_stream = sd.OutputStream(
                         samplerate=sr, channels=1, dtype="float32", device=output_device
@@ -895,6 +912,7 @@ def play_tts_stream(
                 capture_discard_reasons=dict(discard_reasons),
                 output_timing=timing.report,
                 started_at=playback_started,
+                resumed=resumed,
             )
         finally:
             capture_phase(microphone, "playback_cleanup")
@@ -905,9 +923,11 @@ def play_tts_stream(
                     if playback_level_callback is not None:
                         cleanup.callback(playback_level_callback, 0.0, False)
                     cleanup.callback(chime_player.stop)
-                    if microphone is not None and not buffered_chunks:
+                    # A resumed turn keeps its capture and voice-activity state:
+                    # the listening loop carries straight on with the same utterance.
+                    if microphone is not None and not buffered_chunks and not resumed:
                         cleanup.callback(microphone.drain)
-                    if vad is not None:
+                    if vad is not None and not resumed:
                         cleanup.callback(vad.reset)
                     if output_stream is not None:
                         cleanup.callback(output_stream.close)

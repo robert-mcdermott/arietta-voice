@@ -270,9 +270,46 @@ to about 290 ms. On the eight single-sentence questions (24 turns):
 It also ended both two-sentence questions after their first sentence in all six
 turns of each run. Those fixtures pause for 346 and 375 ms between sentences,
 the first sentence is a complete question, and Smart Turn judged it finished.
-The check is therefore off by default. Whole-run medians from those runs
+Whole-run medians from those runs
 (1,639 and 1,766 ms) are not valid, because a cut-off turn starts answering
-before the recorded end of speech.
+before the recorded end of speech. That result is why the check was first shipped
+off by default; the next section describes the fix.
+
+### Early check with resume (now the default)
+
+A later change keeps the turn provisional after an early decision: the
+assistant goes on listening until `silence_ms` has passed since the end of
+speech, and if speech resumes it discards the attempt and continues the same
+utterance. With that in place and `audio.endpoint_early_ms = 250`, later the
+same day on the same machine:
+
+| Configuration | Start of day p50 | Early check + resume p50 | Start of day p95 | Early check + resume p95 |
+| --- | ---: | ---: | ---: | ---: |
+| No tools | 2,483 | 1,710 | 3,820 | 2,931 |
+| `--model-tools` | 3,087 | 1,719 | 5,058 | 3,594 |
+
+Both runs passed every gate with no worker restarts or failed turns. All six
+two-sentence turns in each run resumed and were then transcribed in full; their
+median first write was 2,660 ms without tools and 2,960 ms with a tool on offer
+(3,744 and 4,420 ms at the start of the day). Single-sentence questions had a
+median of 1,685 and 1,705 ms. Median stages: endpoint wait 298, transcription
+199, chat generation 483 to 518, first TTS chunk 566.
+
+In those runs the speaker always resumed while the first attempt was being
+transcribed. Two short diagnostic runs with the pause lengthened by 200 and
+320 ms made speech resume during answer generation instead: all three such
+turns in each run were discarded and completed correctly, again with no worker
+restarts. A resumed turn pays for prompt processing again, because closing the
+discarded generation clears the prefix cache.
+
+One transcript in each 30-turn run did not match its fixture where it had
+before: the triangle question came back as "Yeah How many sides does a triangle
+have?" on the turn after a resumed one. The answer was unchanged. The cause is
+the recogniser, not the audio: calling Moonshine 0.0.54 directly with the
+fixture audio in a similar order reproduces it, with the same array transcribed
+correctly earlier in the same process. Its batch API therefore carries state
+between calls, and the extra transcription of a discarded attempt changes that
+history.
 
 ### Prompt-prefix reuse
 

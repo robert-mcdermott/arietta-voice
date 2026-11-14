@@ -822,3 +822,81 @@ def test_underflow_timing_contexts_remain_bounded():
     assert timing.report["writes"] == 100
     assert timing.report["underflow_contexts"][1]["producer_wait_ms"] == 100
     assert timing.report["underflow_contexts"][1]["capture_poll_ms"] == 2
+
+
+def _resume_playback(monkeypatch, frames, watch, microphone, vad, cancellation, chime=None):
+    monkeypatch.setattr(audio, "make_aec_processor", lambda rate: lambda chunk, reference: chunk)
+    output = Mock(write=Mock(return_value=False), write_available=0)
+    opened = Mock(return_value=output)
+    monkeypatch.setattr(audio.sd, "OutputStream", opened)
+    result = audio.play_tts_stream(
+        tts_stream=frames,
+        microphone=microphone,
+        vad=vad,
+        keypress_monitor=Mock(pressed=Mock(return_value=False)),
+        chime_player=chime or Mock(),
+        sample_rate=16000,
+        use_aec=True,
+        barge_in_threshold_chunks=3,
+        cancellation=cancellation,
+        resume_watch=watch,
+    )
+    return result, opened
+
+
+def test_speech_before_any_audio_resumes_the_turn_without_cancelling_inference(monkeypatch):
+    from arietta_voice.resume import ResumeWatch
+    from arietta_voice.turns import CancellationToken
+    from tests.test_resume import QueuedMicrophone, speech_vad
+
+    microphone = QueuedMicrophone([0])
+    vad = speech_vad()
+    watch = ResumeWatch(vad, window_end=1e9)
+    token = CancellationToken()
+    closed = []
+
+    async def frames():
+        try:
+            yield None, None  # Still generating: the speaker stays quiet.
+            microphone.push(1, 1, 0)
+            yield None, None
+            yield np.zeros(4096, dtype=np.float32), 24000  # Must never be played.
+        finally:
+            closed.append(True)
+
+    result, opened = _resume_playback(monkeypatch, frames(), watch, microphone, vad, token)
+    assert result.resumed and not result.interrupted
+    assert result.buffered_chunks == [] and result.started_at is None
+    opened.assert_not_called()
+    assert not token.cancelled
+    assert [chunk[0] for chunk in watch.chunks] == [0, 1, 1]
+    # Capture and voice-activity state carry over to the continuing utterance.
+    assert microphone.pending == [0]
+    microphone.drain.assert_not_called()
+    vad.reset.assert_not_called()
+    assert closed == [True]
+
+
+def test_playback_start_ends_the_watch_and_restores_normal_capture_handling(monkeypatch):
+    from arietta_voice.resume import ResumeWatch
+    from arietta_voice.turns import CancellationToken
+    from tests.test_resume import QueuedMicrophone, speech_vad
+
+    microphone = QueuedMicrophone([0, 0])
+    vad = speech_vad()
+    watch = ResumeWatch(vad, window_end=1e9)
+    chime = Mock()
+    watch.on_expire = chime.start
+
+    async def frames():
+        yield None, None
+        yield np.zeros(1024, dtype=np.float32), 24000
+
+    result, opened = _resume_playback(
+        monkeypatch, frames(), watch, microphone, vad, CancellationToken(), chime
+    )
+    assert not result.resumed and not result.interrupted
+    opened.assert_called_once()
+    assert not watch.active and watch.chunks == []
+    chime.start.assert_not_called()  # Speech began; no thinking chime is due.
+    microphone.drain.assert_called()

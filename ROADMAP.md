@@ -89,11 +89,10 @@ silence at or below 300 ms p95.
 Measured so far (30 warm turns, muted output; see
 [the latency report](evals/LATENCY_BASELINE.md#november-13-2026-first-milestone-1-changes)):
 
-| Configuration | Before | Now |
+| Configuration | At the start | Now |
 | --- | ---: | ---: |
-| Default, no tools on offer | 2.48 s | 2.17 s |
-| Default, a model tool on offer | 3.09 s | 2.19 s |
-| Early end-of-turn check on, single-sentence questions | 2.48 s | 1.81 s |
+| No tools on offer | 2.48 s | 1.71 s |
+| A model tool on offer (the default setup) | 3.09 s | 1.72 s |
 
 Done:
 
@@ -103,25 +102,27 @@ Done:
   mlx-vlm's own prefix cache, so no move to `mlx-lm` was needed.
 - The first spoken clause can end at a comma or dash.
 - Each spoken turn logs a stage timeline, shown on the console's Home page.
-- An early end-of-turn check exists but is **off by default**: it saves about
-  0.4 s, and it cut both two-sentence benchmark questions after their first
-  sentence.
+- The end of a turn is checked after 250 ms of silence, and work starts at once
+  on a confident answer. The turn stays provisional until the normal silence
+  window has passed and is discarded if the speaker carries on.
 
-Remaining, in order. A turn now spends about 710 ms deciding the speaker has
-finished, 215 ms transcribing, 500 ms generating and 560 ms on the first speech
+Remaining, in order. A turn now spends about 300 ms deciding the speaker has
+finished, 200 ms transcribing, 500 ms generating and 565 ms on the first speech
 chunk:
 
-1. **Recover when the speaker continues.** After an early end-of-turn decision,
-   keep listening until audio starts; if speech resumes, cancel the turn and
-   carry on with the same utterance. Then turn the early check on by default.
-   Needs live checks for chime and echo pickup.
-2. **First speech chunk.** It is now the largest stage after the endpoint wait,
-   so the Kokoro question reopens under the one-day rule: MLX Kokoro, or
-   synthesising a shorter first chunk.
-3. **Stream transcription.** Promote the Moonshine streaming path so the
-   transcript is ready when the turn ends.
+1. **First speech chunk.** It is now the largest stage, so the Kokoro question
+   reopens under the one-day rule: MLX Kokoro, or synthesising a shorter first
+   chunk.
+2. **Stream transcription.** Promote the Moonshine streaming path so the
+   transcript is ready when the turn ends. The current recogniser also carries
+   state between calls: identical audio once came back with a stray leading
+   word, depending on what it had transcribed before.
+3. **Keep the prompt cache across a discarded attempt.** A resumed turn
+   currently reprocesses its whole prompt.
 4. **Native tool calling** where the provider supports it (shared with
    Milestone 2's tool interface).
+5. **A live-microphone session** covering the early check, resuming and the
+   deferred chime. Everything above was measured with synthetic speech.
 
 **Done when:** the standing benchmark meets the target over 100 warm turns with
 no increase in false cutoffs, and interruption latency has been measured

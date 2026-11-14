@@ -201,3 +201,69 @@ def test_player_aborts_before_pending_native_generator_cleanup(monkeypatch, outc
             audio.play_tts_stream(**options)
     assert order == ["abort", "worker_closed"]
     assert not any(t.name == "arietta-speech-producer" for t in threading.enumerate())
+
+
+def test_discarded_turn_lets_the_inflight_call_finish_instead_of_cancelling_it():
+    worker, token = Mock(pid=42), CancellationToken()
+    discard, started, release = threading.Event(), threading.Event(), threading.Event()
+    operations, cancelled_during_call = [], []
+
+    def infer(operation, payload=None, *, cancellation):
+        cancellation.check()
+        operations.append(operation)
+        if operation == "chat_next":
+            started.set()
+            assert release.wait(2)
+            # A cancelled call would terminate the worker and its loaded models.
+            cancelled_during_call.append(cancellation.cancelled)
+            return {"kind": "clause", "text": "First clause."}
+
+    async def consume():
+        stream = speech_stream(
+            infer=infer,
+            worker=worker,
+            cancellation=token,
+            request={"message": "Synthetic"},
+            playback_events=True,
+            discard=discard,
+        )
+        assert await anext(stream) == (None, None)  # Nothing to play yet.
+        assert started.wait(1)
+        discard.set()
+        threading.Timer(0.05, release.set).start()
+        await stream.aclose()
+
+    asyncio.run(consume())
+    assert cancelled_during_call == [False]
+    assert operations == ["chat_start", "chat_next"]  # No speech was synthesised.
+    worker.call.assert_called_once_with("speech_close", timeout_s=1)
+    assert not token.cancelled
+    assert not any(t.name == "arietta-speech-producer" for t in threading.enumerate())
+
+
+def test_discard_releases_a_producer_blocked_on_a_full_audio_queue():
+    worker, token = Mock(pid=42), CancellationToken()
+    discard, full = threading.Event(), threading.Event()
+    frames = []
+
+    def infer(operation, payload=None, *, cancellation):
+        cancellation.check()
+        if operation == "tts_next":
+            frames.append(1)
+            if len(frames) == 10:  # One consumed, eight queued, one it cannot place.
+                full.set()
+            return np.zeros(4096, dtype=np.float32), 24000
+
+    async def consume():
+        stream = speech_stream(
+            "Synthetic", infer=infer, worker=worker, cancellation=token, discard=discard
+        )
+        await anext(stream)
+        assert full.wait(1)
+        discard.set()
+        await stream.aclose()
+
+    asyncio.run(consume())
+    assert len(frames) == 10  # No further synthesis after the discard.
+    assert not token.cancelled
+    assert not any(t.name == "arietta-speech-producer" for t in threading.enumerate())

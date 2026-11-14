@@ -43,3 +43,6 @@ class SessionContext:
 class UtteranceResult:
     buffered_chunks: list
     end_session_requested: bool = False
+    # The speaker carried on after an early end-of-turn decision: the buffered
+    # chunks continue the same utterance instead of starting a new one.
+    resumed: bool = False
