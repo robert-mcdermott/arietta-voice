@@ -1,5 +1,7 @@
 """Shared conversation policy for voice and the web console, without HTTP state."""
 
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 
 from arietta_voice.clauses import RESPONSE_CHARS, SpeechClauses
@@ -21,6 +23,10 @@ NATIVE_TOOL_RULES = (
     "Never say you set, changed or cancelled something unless a tool did it."
 )
 GAVE_UP = "Sorry, I couldn't finish that."
+# Said once per turn when a tool is still working after this long, so a slow
+# tool (the weather service, say) is not met with silence.
+FILLER = "One moment."
+FILLER_AFTER_S = 0.8
 
 
 @dataclass(slots=True)
@@ -106,7 +112,12 @@ class ConversationService:
             if t["content"].strip()
         ]
         tools = self._registry() if use_tools else None
-        hit = tools.fast_path(message) if tools is not None else None
+        filler = _Filler()
+        hit = None
+        if tools is not None:
+            hit = yield from filler.wait(
+                lambda: tools.fast_path(message), {"kind": "clause", "text": FILLER}
+            )
         used_tool = hit.name if hit else None
         if hit and hit.result.speak:
             yield from self._speech_events(
@@ -124,7 +135,7 @@ class ConversationService:
         if tools is not None and tools.model_tools and self._native_tools():
             called: list[str] = []
             yield from self._speech_events(
-                self._native_turn(tools, messages, called, max_tokens, temperature),
+                self._native_turn(tools, messages, called, max_tokens, temperature, filler),
                 source="model",
                 used_tool=used_tool,
                 finalize=lambda: {"model_tool": ", ".join(called) or None},
@@ -183,7 +194,7 @@ class ConversationService:
             self._tools_key = key
         return self._tools
 
-    def _native_turn(self, tools, messages, called, max_tokens, temperature):
+    def _native_turn(self, tools, messages, called, max_tokens, temperature, filler=None):
         """Text events for one turn with native tool calls, running tools between steps.
 
         The model may answer, call a tool, or start answering and then call one.
@@ -230,7 +241,11 @@ class ConversationService:
                 break
             call = calls[0]  # One at a time; the model can ask again for more.
             called.append(call.name)
-            content, result = _run_for_model(tools, call.name, call.arguments)
+            filler = filler or _Filler()
+            content, result = yield from filler.wait(
+                lambda: _run_for_model(tools, call.name, call.arguments),
+                ModelEvent("filler", FILLER),
+            )
             if result is not None and result.speak and _speaks_for_itself(tools, call.name):
                 yield ModelEvent("text", result.speak)
                 yield ModelEvent("done")
@@ -269,7 +284,10 @@ class ConversationService:
             for event in events:
                 if complete:
                     raise ValueError("Event after completion")
-                if event.kind == "text":
+                if event.kind == "filler":
+                    # Spoken while a tool works; not part of the answer.
+                    yield {"kind": "clause", "text": event.text}
+                elif event.kind == "text":
                     for clause in clauses.feed(event.text):
                         spoken.append(clause)
                         yield {"kind": "clause", "text": clause}
@@ -392,6 +410,29 @@ def _run_for_model(tools, name, arguments):
 
 def _speaks_for_itself(tools, name) -> bool:
     return getattr(tools.tools.get(name), "speaks_for_itself", False) is True
+
+
+class _Filler:
+    """Runs slow work in the background and says FILLER once if it takes a while."""
+
+    def __init__(self) -> None:
+        self.said = False
+
+    def wait(self, work, event):
+        """Generator: yields ``event`` at most once per turn; returns ``work()``."""
+        if self.said:
+            return work()
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arietta-tool-wait")
+        try:
+            future = pool.submit(work)
+            try:
+                return future.result(timeout=FILLER_AFTER_S)
+            except FutureTimeout:
+                self.said = True
+                yield event
+                return future.result()
+        finally:
+            pool.shutdown(wait=False)
 
 
 class _HiddenReasoning:

@@ -9,7 +9,9 @@ from arietta_voice.config import ModelConfig
 
 @dataclass(frozen=True, slots=True)
 class ModelEvent:
-    kind: str  # text or done; reasoning/tool payloads are never text events.
+    # text or done; reasoning/tool payloads are never text events. The
+    # conversation adds "filler", spoken while a slow tool works.
+    kind: str
     text: str = ""
     stop_reason: str | None = None
 
