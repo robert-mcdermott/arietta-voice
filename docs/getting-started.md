@@ -418,8 +418,38 @@ lets the model look up the date. Write descriptions as "use when ...": the
 model sees `use when <description>`.
 
 Mark tools that change something in the world, such as turning off lights,
-with `consequential = True`. The planned agent loop will ask before running
-them.
+with `consequential = True`. The assistant then asks out loud before running
+them ("Should I turn off the office lights?") and goes ahead only on a clear
+yes. Set `confirm = "first_use"` to ask only the first time, or `"never"` for a
+tool that is safe to run unasked. A tool that asks first never runs from a
+trigger; the model calls it, so the question can say what will happen.
+
+### Tools from MCP servers
+
+For calendars, notes, files and smart homes, an existing MCP server is usually
+easier than writing a tool. Open the console's **Connections** page, choose
+**Add a server**, and give either a program to run (for example `npx` with
+arguments `-y` and `@modelcontextprotocol/server-memory`) or a URL with any
+token as a header. Or paste the snippet from the server's README into **Paste
+from a README**. Choose **Test** to see its tools, and switch off any you do not
+need: every tool on offer is described to the model at the start of each
+prompt, and a small model chooses better from a short list.
+
+For Home Assistant, add its MCP Server integration in Home Assistant, create a
+long-lived access token on your profile page, then add:
+
+```json
+{"mcpServers": {"home": {"type": "http",
+  "url": "http://homeassistant.local:8123/api/mcp",
+  "headers": {"Authorization": "Bearer <token>"}}}}
+```
+
+Before a server's tool changes something, the assistant asks first. Choose per
+server whether it asks every time (the default; answer "always" to stop it
+asking about one action), only the first time each action is used, or never.
+Program servers run with your permissions, so adding or changing one from the
+console needs `[admin].allow_source_editing = true` in your private config;
+otherwise edit `config/mcp.local.json` yourself.
 
 ## 8. Verify Your Customizations
 
@@ -735,6 +765,19 @@ Check:
   `check_timers` or `cancel_timer` in `[tools].disabled` (the console's Tools
   page shows whether they are on)
 - the Mac was awake: anything due while it slept is announced, with how late it is, when it wakes
+
+### "An MCP server's tools never get used"
+
+Check:
+
+- the Connections page shows it as Working; if not, its error says why (a
+  command not found, a refused connection, a 401 for a wrong token)
+- a program server's own messages are in `logs/mcp-<name>.log`
+- the tool is switched on under "Tools the assistant may use"
+- the request names what the tool is for; with many tools on offer, switch off
+  the ones you do not use
+- for an action, the assistant asked first and heard a clear yes within a
+  minute; anything else drops the action
 
 ### "The assistant does not wake reliably"
 

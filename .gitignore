@@ -18,6 +18,8 @@ config/MEMORY.md
 /config/*.local.toml
 /config/*.local.toml.lock
 /config/*.local.md
+# MCP servers can hold tokens.
+/config/*.local.json
 /config/*.admin.json
 /config/.private-backups/
 /config/*.working

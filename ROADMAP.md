@@ -160,22 +160,30 @@ acoustically at least once.
    (the local model uses Gemma 4's own tool-call format; Bedrock keeps the
    prompted JSON). In a real-model check every tool request was routed to the
    right tool, including phrasings the prompted format missed. A slow tool
-   gets a spoken "One moment." after 0.8 seconds. Still to do: confirmation
-   before consequential actions, and native calls for Bedrock's Converse API.
-3. **MCP client.** Connect to Model Context Protocol servers so calendar,
-   notes, home automation and similar integrations come from the existing
-   ecosystem rather than hand-written adapters.
+   gets a spoken "One moment." after 0.8 seconds. Confirmation before
+   consequential actions is done: the call is held and the assistant asks
+   "Should I …?"; only a clear spoken yes runs it, once, and each server asks
+   every time, once per action or never. Still to do: native calls for
+   Bedrock's Converse API.
+3. **MCP client.** Done: servers in `config/mcp.local.json` (the common
+   `mcpServers` format) over stdio, Streamable HTTP or SSE, kept connected and
+   reloaded on change, set up and tested from the console's Connections page.
+   In a real-model check with a test lights server next to the built-in tools,
+   20 of 20 requests went the right way: actions asked first, status questions
+   ran directly, and instant answers were unaffected. Still to do: OAuth sign-in
+   for remote servers, and checking against a real Home Assistant and calendar
+   server.
 4. **Built-in skills.** Timers, reminders and alarms are done: instant answers
    for the usual phrasings, model calls for the rest, a shared store that
    survives restarts, spoken alerts between turns that repeat until answered,
    "stop" and "snooze" without the wake word, and a console card. Arithmetic
    and unit conversion are done (`calculate`; the 4-bit Gemma had said
    17 × 23 is 749), and so are date questions (`date_math`: "how many days
-   until Christmas?"), and weather is available as an opt-in tool (Open-Meteo;
-   it was built and tested against recorded responses, as the forecast host was
-   unreachable from the build machine at the time). Still to do: web search
+   until Christmas?"), and weather is available as an opt-in tool (Open-Meteo,
+   checked against the live service on November 14). Still to do: web search
    with spoken source attribution.
-5. **Home control** through Home Assistant: read-only status first, then
+5. **Home control** through Home Assistant, now through its own MCP server
+   (`/api/mcp`) rather than a custom adapter: read-only status first, then
    explicitly authorized actions.
 6. **Model routing.** Keep the small local model for fast turns and tool
    selection; optionally escalate hard questions to a cloud model. Off by
@@ -185,7 +193,10 @@ acoustically at least once.
    don't have that information"), with or without tools and whatever the tool
    instructions said; a larger local model or escalation is the likely fix.
 7. Treat retrieved text and tool output as untrusted data, with
-   prompt-injection fixtures in the evaluation corpus.
+   prompt-injection fixtures in the evaluation corpus. Partly done: MCP results
+   reach the model marked as data, the model is told never to follow
+   instructions in tool results, and an action needs the owner's spoken yes
+   however the model was led to it. The evaluation fixtures are still to do.
 
 **Done when:** "set a timer for ten minutes", "what's the weather tomorrow",
 "what's on my calendar" and "turn off the office lights" all work by voice;
@@ -251,7 +262,8 @@ Still to do:
 - **Settings** as forms with validation — done for the common settings
   (devices, models and paths are still file-only).
 - **Persona and memory** editors.
-- **Tools and integrations**: enable, configure and test tools and MCP servers.
+- **Tools and integrations**: enable, configure and test tools and MCP servers —
+  done (the Tools and Connections pages).
 - **Conversations**: searchable history.
 - **Diagnostics**: logs, health checks and the audio counters, moved off Home.
 

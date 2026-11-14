@@ -65,7 +65,9 @@ def tool_specs(tools) -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": tool.name,
-                "description": f"Use when {tool.description}.",
+                # MCP tools describe themselves ("Turns off a device").
+                "description": getattr(tool, "model_description", None)
+                or f"Use when {tool.description}.",
                 "parameters": tool.parameters,
             },
         }

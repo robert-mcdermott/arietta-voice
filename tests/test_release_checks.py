@@ -49,6 +49,8 @@ def test_public_starter_files_are_allowed(repository):
         "logs/events.jsonl",
         "logs/recording.wav",
         "state/timers.json",
+        "state/tool_approvals.json",
+        "config/mcp.local.json",
         ".knowledge_index/vectors.npy",
         ".env",
         ".aws/credentials",

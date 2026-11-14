@@ -104,6 +104,7 @@ class AriettaVoiceRuntime:
         self.chime_player = ChimePlayer(config.audio.chime_enabled)
         self.wake_detector = build_wake_word_detector(config.wake_word)
         self.session = SessionContext()
+        self._awaiting_answer = False  # The last answer asked "Should I …?".
         self.state = AssistantState.BOOTING
         self.startup_diagnostics: dict | None = None
         self.last_error: str | None = None
@@ -187,6 +188,7 @@ class AriettaVoiceRuntime:
     def reset_session(self) -> None:
         self.session.active = False
         self.session.history.clear()
+        self._awaiting_answer = False
         self.session.turn_count = 0
         self.session.activated_at = 0.0
         self.session.last_activity_at = 0.0
@@ -322,6 +324,9 @@ class AriettaVoiceRuntime:
         return result["response"]
 
     def _log_tool_result(self, result):
+        # After "Should I …?" the answer must be final before it counts: a turn
+        # started early may still turn out to be "yes, but only the kitchen".
+        self._awaiting_answer = bool(result.get("confirmation"))
         tool = result.get("model_tool") or result.get("used_tool")
         if tool:
             self.event_logger.log(
@@ -1155,7 +1160,9 @@ class AriettaVoiceRuntime:
                 if is_speech:
                     last_speech_at = time.monotonic()
                     continue
-                early = bool(early_limit) and silent_chunks == early_limit
+                early = (
+                    bool(early_limit) and silent_chunks == early_limit and not self._awaiting_answer
+                )
                 if silent_chunks < silence_limit and not early:
                     continue
                 utterance = buffer.audio()

@@ -87,6 +87,7 @@ p {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
   color: inherit;
@@ -489,7 +490,9 @@ pre,
 
 input[type="text"],
 input[type="number"],
+input[type="url"],
 input:not([type]),
+select,
 textarea {
   width: 100%;
   padding: 8px 11px;
@@ -509,6 +512,7 @@ input[type="number"] {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
@@ -1174,6 +1178,49 @@ details.fold[open] > summary {
   gap: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.msg-answers {
+  margin-top: 4px;
+}
+
+/* ---------- Connections ---------- */
+
+.mcp-tools {
+  margin-top: 10px;
+}
+
+.mcp-tool-list {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 10px;
+}
+
+.mcp-tool {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.mcp-tool:last-child {
+  border-bottom: 0;
+}
+
+.mcp-tool input {
+  margin-top: 3px;
+}
+
+.mcp-tool .pill {
+  margin-left: 6px;
+}
+
+.mcp-tool .tool-desc {
+  display: block;
+  font-size: 12.5px;
 }
 
 .typing {

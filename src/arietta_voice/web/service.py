@@ -21,6 +21,15 @@ from arietta_voice.diagnostics import run_startup_diagnostics
 from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
 from arietta_voice.llm import ChatModel, build_chat_model
 from arietta_voice.logging_utils import EventLogger
+from arietta_voice.mcp_servers import (
+    CONFIRM_POLICIES,
+    load_servers,
+    parse_server,
+    parse_servers,
+    save_servers,
+)
+from arietta_voice.mcp_servers import probe as mcp_probe
+from arietta_voice.mcp_servers.servers import MAX_SERVERS, merge_secrets
 from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
@@ -34,10 +43,16 @@ from arietta_voice.timers import (
     timer_name,
 )
 from arietta_voice.tool_admin import ToolAdmin
+from arietta_voice.tools.approvals import Approvals
 from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turns import CancellationToken
 from arietta_voice.web import settings as settings_module
-from arietta_voice.web.schemas import ChatRequest, TimerCreateRequest, ToolCreateRequest
+from arietta_voice.web.schemas import (
+    ChatRequest,
+    McpServerRequest,
+    TimerCreateRequest,
+    ToolCreateRequest,
+)
 from arietta_voice.worker import (
     InferenceWorker,
     WorkerBusy,
@@ -68,6 +83,8 @@ class AriettaApiService:
         self._llm: ChatModel | None = None
         self.worker = InferenceWorker(self.config)
         self._worker_model_pid: int | None = None
+        self._mcp_lock = threading.Lock()
+        self._mcp_tests: dict[str, dict[str, Any]] = {}  # The last Test of each server.
         self._chat_lock = threading.Lock()
         self._active_chat = None
         self._retired_chat_ids = deque(maxlen=128)
@@ -491,6 +508,155 @@ class AriettaApiService:
         ringing = [alert.id for alert in store.active() if alert.status == RINGING]
         stopped = store.cancel(ringing, outcome="dismissed") if ringing else []
         return {"stopped": [alert.id for alert in stopped], **self.timers()}
+
+    # MCP servers. The file is read by the voice runtime's worker, which notices
+    # changes and reconnects, so nothing here needs a restart.
+
+    def mcp_servers(self) -> dict[str, Any]:
+        path = Path(self.config.mcp.servers_file)
+        servers, problems = load_servers(path)
+        remembered = Approvals(self.config.mcp.approvals_file).all()
+        return {
+            "enabled": self.config.mcp.enabled,
+            "file": str(path),
+            "problems": problems,
+            # A command-line server runs a program on this Mac, like a tool's code.
+            "programs_allowed": bool(self.config.admin.allow_source_editing),
+            "policies": list(CONFIRM_POLICIES),
+            "servers": [
+                {
+                    **server.public(),
+                    "remembered": [
+                        key.split(":", 2)[2]
+                        for key in remembered
+                        if key.startswith(f"mcp:{server.name}:")
+                    ],
+                    "last_test": self._mcp_tests.get(server.name),
+                }
+                for server in servers
+            ],
+        }
+
+    def save_mcp_server(self, payload: McpServerRequest) -> dict[str, Any]:
+        with self._mcp_lock:
+            servers = self._editable_mcp_servers()
+            by_name = {server.name: server for server in servers}
+            # No original name means a new server; one means an edit of that server.
+            original = payload.original_name
+            previous = by_name.get(original) if original else None
+            if original and previous is None:
+                raise FileNotFoundError(f"No MCP server named {original!r}")
+            if payload.name in by_name and payload.name != original:
+                raise FileExistsError(f"An MCP server named {payload.name!r} already exists")
+            server = merge_secrets(parse_server(payload.name, payload.entry()), previous)
+            if previous is not None:
+                server.extra = previous.extra
+            changes_program = previous is None or (
+                previous.connection_key() != server.connection_key()
+            )
+            if server.runs_a_program and changes_program:
+                self._require_programs()
+            if previous is None:
+                servers.append(server)
+            else:
+                servers[servers.index(previous)] = server
+            save_servers(Path(self.config.mcp.servers_file), servers)
+            if original and payload.name != original:
+                self._mcp_tests.pop(original, None)
+                # A new name is a new server: earlier "always" answers do not carry over.
+                Approvals(self.config.mcp.approvals_file).remove(prefix=f"mcp:{original}:")
+        self.event_logger.log("api_mcp_server_saved", name=server.name, transport=server.transport)
+        return self.mcp_servers()
+
+    def delete_mcp_server(self, name: str) -> dict[str, Any]:
+        with self._mcp_lock:
+            servers = self._editable_mcp_servers()
+            kept = [server for server in servers if server.name != name]
+            if len(kept) == len(servers):
+                raise FileNotFoundError(f"No MCP server named {name!r}")
+            save_servers(Path(self.config.mcp.servers_file), kept)
+            self._mcp_tests.pop(name, None)
+            Approvals(self.config.mcp.approvals_file).remove(prefix=f"mcp:{name}:")
+        self.event_logger.log("api_mcp_server_deleted", name=name)
+        return self.mcp_servers()
+
+    def import_mcp_servers(self, text: str) -> dict[str, Any]:
+        """Add servers from a pasted {"mcpServers": ...} snippet; existing names are skipped."""
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise ValueError(f"Not valid JSON: {exc}") from exc
+        if isinstance(data, dict) and not ({"mcpServers", "servers"} & set(data)):
+            if any(key in data for key in ("command", "url")):
+                raise ValueError('Paste the whole entry, with its name: {"name": {...}}')
+        found, problems = parse_servers(data)
+        if problems:
+            raise ValueError("; ".join(problems))
+        if not found:
+            raise ValueError("No servers found in that text")
+        with self._mcp_lock:
+            servers = self._editable_mcp_servers()
+            names = {server.name for server in servers}
+            added = [server for server in found if server.name not in names]
+            if len(servers) + len(added) > MAX_SERVERS:
+                raise ValueError(f"At most {MAX_SERVERS} MCP servers can be connected")
+            if any(server.runs_a_program for server in added):
+                self._require_programs()
+            save_servers(Path(self.config.mcp.servers_file), [*servers, *added])
+        self.event_logger.log("api_mcp_servers_imported", names=[s.name for s in added])
+        return {
+            "added": [server.name for server in added],
+            "skipped": [server.name for server in found if server.name in names],
+            **self.mcp_servers(),
+        }
+
+    def test_mcp_server(self, name: str) -> dict[str, Any]:
+        servers, _ = load_servers(Path(self.config.mcp.servers_file))
+        server = next((server for server in servers if server.name == name), None)
+        if server is None:
+            raise FileNotFoundError(f"No MCP server named {name!r}")
+        result = mcp_probe(server, self.config)
+        test = {
+            "ok": result["ok"],
+            "error": result["error"],
+            "server_info": result["server_info"],
+            "elapsed_ms": result.get("elapsed_ms"),
+            "tested_at": datetime.now(timezone.utc).isoformat(),
+            "tools": [
+                {
+                    "name": tool.name,
+                    "title": (tool.annotations.title if tool.annotations else None)
+                    or tool.title
+                    or tool.name,
+                    "description": " ".join((tool.description or "").split())[:300],
+                    "read_only": bool(tool.annotations and tool.annotations.read_only_hint),
+                    "enabled": tool.name not in server.disabled_tools,
+                }
+                for tool in result["tools"]
+            ],
+        }
+        self._mcp_tests[name] = test
+        self.event_logger.log("api_mcp_server_tested", name=name, ok=test["ok"])
+        return test
+
+    def forget_mcp_approvals(self, name: str) -> dict[str, Any]:
+        Approvals(self.config.mcp.approvals_file).remove(prefix=f"mcp:{name}:")
+        return self.mcp_servers()
+
+    def _editable_mcp_servers(self) -> list:
+        servers, problems = load_servers(Path(self.config.mcp.servers_file))
+        if problems:
+            # Saving now would drop the entries that could not be read.
+            raise ValueError("Fix the MCP servers file first: " + "; ".join(problems))
+        return servers
+
+    def _require_programs(self) -> None:
+        if not self.config.admin.allow_source_editing:
+            raise PermissionError(
+                "Command-line MCP servers run a program on this Mac. To add or change one "
+                "from the console, set [admin].allow_source_editing = true, or edit "
+                f"{Path(self.config.mcp.servers_file).name} yourself."
+            )
 
     def chat(self, request: ChatRequest) -> ChatResult:
         token = CancellationToken()

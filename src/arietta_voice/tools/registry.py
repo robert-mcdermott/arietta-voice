@@ -20,6 +20,7 @@ from types import ModuleType
 from typing import Any
 
 from arietta_voice.config import LEGACY_TOOL_NAMES, canonical_tool_names
+from arietta_voice.tools.approvals import Approvals
 from arietta_voice.tools.base import ToolContext, ToolError, ToolResult
 from arietta_voice.tools.schema import check_schema, coerce_arguments, validate_arguments
 
@@ -119,7 +120,7 @@ def run_tool(tool, arguments: dict[str, Any]) -> ToolResult:
     if not isinstance(arguments, dict):
         raise ToolError(name, "invalid_arguments", "arguments must be an object")
     arguments = coerce_arguments(tool.parameters, _apply_aliases(tool, arguments))
-    problems = validate_arguments(tool.parameters, arguments)
+    problems = _argument_problems(tool, arguments)
     if problems:
         raise ToolError(name, "invalid_arguments", "; ".join(problems))
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"tool-{name}")
@@ -146,6 +147,18 @@ def run_tool(tool, arguments: dict[str, Any]) -> ToolResult:
     )
 
 
+def approval_key(tool) -> str:
+    return getattr(tool, "approval_key", None) or f"tool:{tool.name}"
+
+
+def _argument_problems(tool, arguments: dict[str, Any]) -> list[str]:
+    # MCP tools use full JSON Schema and check it themselves.
+    own = getattr(tool, "validate_arguments", None)
+    if callable(own):
+        return own(arguments)
+    return validate_arguments(tool.parameters, arguments)
+
+
 def _apply_aliases(tool, arguments: dict[str, Any]) -> dict[str, Any]:
     aliases = getattr(tool, "aliases", None) or {}
     renamed = dict(arguments)
@@ -163,9 +176,11 @@ class FastPathHit:
 
 
 class ToolRegistry:
-    def __init__(self, config, *, knowledge_retriever=None) -> None:
+    def __init__(self, config, *, knowledge_retriever=None, extra_tools=()) -> None:
+        """``extra_tools`` come from elsewhere, such as MCP servers, after the listed ones."""
         self.config = config
         self.context = ToolContext(config=config, knowledge_retriever=knowledge_retriever)
+        self.approvals = Approvals(config.mcp.approvals_file)
         self.errors: dict[str, str] = {}
         self.tools = {}
         for name in enabled_tool_names(config):
@@ -177,14 +192,53 @@ class ToolRegistry:
                 continue
             if tool is not None:
                 self.tools[name] = tool
+        for tool in extra_tools:
+            self.tools.setdefault(tool.name, tool)
 
     @property
     def model_tools(self) -> list:
         return [tool for tool in self.tools.values() if tool.model_callable]
 
+    # ----- Asking before actions -----
+
+    def needs_confirmation(self, name: str) -> bool:
+        """Whether to ask the owner before this tool runs.
+
+        Only tools that change something ask; a server marked ``never`` and an
+        action already approved for good ("always", or first use) run directly.
+        """
+        tool = self.tools.get(name)
+        if tool is None or not getattr(tool, "consequential", False):
+            return False
+        if getattr(tool, "confirm", "ask") == "never":
+            return False
+        return not self.approvals.has(approval_key(tool))
+
+    def remember_approval(self, name: str, *, always: bool) -> None:
+        """After a yes: remember it if it was "always", or the tool asks only once."""
+        tool = self.tools.get(name)
+        if tool is None:
+            return
+        if always or getattr(tool, "confirm", "ask") == "first_use":
+            self.approvals.add(approval_key(tool))
+
+    def argument_problems(self, name: str, arguments: Any) -> list[str]:
+        """What is wrong with arguments for a tool, without running it."""
+        tool = self.tools.get(name)
+        if tool is None:
+            return ["no such tool is enabled"]
+        if not isinstance(arguments, dict):
+            return ["arguments must be an object"]
+        return _argument_problems(tool, coerce_arguments(tool.parameters, arguments))
+
     def fast_path(self, text: str) -> FastPathHit | None:
-        """Run the first tool, in configured order, whose trigger matches."""
+        """Run the first tool, in configured order, whose trigger matches.
+
+        A tool that would ask first never runs from a trigger; the model asks.
+        """
         for name, tool in self.tools.items():
+            if self.needs_confirmation(name):
+                continue
             match = getattr(tool, "match", None)
             try:
                 arguments = match(text) if callable(match) else None
@@ -232,7 +286,8 @@ class ToolRegistry:
             note = f" ({', '.join(optional)} optional)" if optional else ""
             lines.append(f"- name: {tool.name}")
             lines.append(f"- arguments: {json.dumps(example)}{note}")
-            lines.append(f"- use when {tool.description}")
+            described = getattr(tool, "model_description", None)
+            lines.append(f"- {described}" if described else f"- use when {tool.description}")
         lines += [
             "",
             "If you need a tool, reply with JSON only in exactly this shape:",
@@ -256,7 +311,7 @@ def argument_example(schema: dict[str, Any]) -> dict[str, str]:
         if "enum" in spec:
             example[name] = "|".join(map(str, spec["enum"]))
             continue
-        description = spec.get("description") or spec["type"]
+        description = spec.get("description") or spec.get("type") or "value"
         _, found, sample = description.partition("such as ")
         example[name] = sample.strip() if found else f"<{description}>"
     return example

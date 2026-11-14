@@ -32,6 +32,7 @@ For planned improvements, see [ROADMAP.md](ROADMAP.md). The
 - default local chat with Gemma on MLX
 - optional AWS Bedrock chat integration through the same chat-model seam
 - tools with instant answers and model calls, with argument schemas and time limits
+- MCP servers for more tools (a calendar, notes, a smart home), set up from the console, with a spoken "Should I…?" before anything that changes something
 - local markdown knowledge retrieval
 - editable `SOUL.md` and optional memory file
 - a wake-word-first runtime designed for an always-on Mac mini
@@ -289,6 +290,7 @@ The main config sections are:
 - `[runtime]`: turn, endpoint detection, and model startup time limits
 - `[timers]`: where timers and reminders are kept, how often an unanswered one repeats, the snooze length and the alert tone
 - `[weather]`: your town or city and units for the optional weather tool
+- `[mcp]`: where MCP servers are listed, remembered approvals, and connection and call time limits
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
@@ -782,6 +784,70 @@ enabled = ["assistant_identity", "local_time", "set_timer", "set_reminder",
            "set_alarm", "check_timers", "cancel_timer", "calculate", "date_math",
            "weather", "search_knowledge", "system_info"]
 ```
+
+### MCP servers
+
+[MCP](https://modelcontextprotocol.io) servers give the assistant more tools
+without new code: a calendar, notes, files, a smart home (Home Assistant has its
+own MCP server). Add them on the console's **Connections** page: give a name and
+either a program to run on this Mac (stdio) or a URL (Streamable HTTP, or SSE
+for older servers), with any tokens as environment variables or headers. Most
+servers document a snippet for other MCP apps; paste it into "Paste from a
+README" as it is. Test connects once and lists the server's tools, marked
+"Reads only" or "Changes things", and you can switch off the ones you do not
+want: a small model is more accurate with fewer tools on offer.
+
+Servers are kept in `config/mcp.local.json` (private, not tracked by Git), in
+the format other MCP apps use:
+
+```json
+{"mcpServers": {
+  "memory": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"]},
+  "home": {"type": "http", "url": "http://homeassistant.local:8123/api/mcp",
+           "headers": {"Authorization": "Bearer <long-lived token>"},
+           "confirm": "first_use"}
+}}
+```
+
+The assistant connects when it starts, keeps the connections open, reconnects
+when one drops, and notices changes to the file, so a server added in the
+console is available from the next turn without a restart. A command-line
+server's own messages go to `logs/mcp-<name>.log`. Text from a server is passed
+to the model as data, never as instructions. Adding or changing a program
+server from the console runs a program on this Mac, so it needs
+`[admin].allow_source_editing = true`, like editing tool code; URL servers, and
+switching servers or tools on and off, do not.
+
+### Asking before actions
+
+Before a tool that changes something runs (any MCP tool its server does not
+mark as read-only, and your own tools with `consequential = True`), the
+assistant holds the call and asks out loud, for example "Should I turn off the
+office lights?". Only a clear answer within a minute decides:
+
+- "yes", "yeah, go ahead", "sure, do it": it runs exactly what was asked, once
+- "no", "cancel", "never mind": "Okay, I won't."
+- "always", "yes, and don't ask again": it runs, and that action stops asking
+- anything else, such as "no, the kitchen lights": the action is dropped and
+  the words are handled as a new request
+
+The question is worded from the held call alone (the tool's description and
+the exact arguments), and only if it names every target it acts on; otherwise a
+plain one built from the arguments is said, so earlier text cannot disguise
+what will happen. The answer counts only as the next words in the same
+conversation, right after the question (so it needs `max_history_turns` of
+at least 1, the default is 8): a new voice session, the console's
+Clear, or anything said in between drops the action. It also waits for the full
+end-of-turn pause, so "yes... but only the kitchen" is heard whole. The
+follow-up needs no wake word while the conversation is open. A tool counts as
+read-only when its server says so, so switch off the tools of a server you do
+not fully trust. Each server chooses when to ask, on the Connections page or
+with `"confirm"` in the file:
+`"ask"` (the default) every time, unless you said "always" for that action;
+`"first_use"` once per action; `"never"` for a server you trust. Console chat
+shows Yes, Always and No buttons for the same question, and the Connections page
+lists remembered approvals with a button to be asked again.
+
 
 ## Bedrock Integration
 
