@@ -111,9 +111,10 @@ alters real model output.
    separate decision: starter assets and first-run setup need packaging work
    before a standalone end-user installation is fully supported.
 
-No tag or release is created by the current review. No historical release date
-is inferred from the pre-existing `0.1.0` declaration. The next proposed patch
-is `0.1.1`; the roadmap's feature milestones begin at `0.2.0`.
+The first tag is `v0.2.0rc1` (November 14, 2026), a release candidate for
+`0.2.0`. No historical release date is inferred from the pre-existing `0.1.0`
+declaration. To finish `0.2.0` after the soak, set the version with
+`uvx uv@0.12.10 version 0.2.0`, rename the changelog section, and tag as above.
 
 ## CI and remaining release automation
 
