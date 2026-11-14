@@ -57,6 +57,39 @@ def test_tts_pieces_are_bounded_and_closing_clears_generator(tmp_path):
         engine._loop.close()
 
 
+@pytest.mark.parametrize("trim", [True, False])
+def test_each_backend_clip_is_trimmed_before_slicing_unless_disabled(tmp_path, trim):
+    config = default_config(tmp_path)
+    config.audio.tts_trim_silence = trim
+    engine = InferenceEngine(config)
+    padded = np.concatenate(
+        [np.zeros(7200, np.float32), np.full(4800, 0.3, np.float32), np.zeros(10_080, np.float32)]
+    )
+
+    async def stream(text):
+        # MLX may return a long clause as several padded segments.
+        yield padded, 24000
+        yield padded, 24000
+
+    engine._speaker = Mock(create_stream=stream)
+    try:
+        engine.handle("tts_start", "Synthetic")
+        pieces = []
+        while (piece := engine.handle("tts_next", None)) is not None:
+            pieces.append(piece[0])
+        audio = np.concatenate(pieces)
+        if trim:
+            # Each segment: 40 ms before and 100 ms after its 200 ms of speech.
+            assert len(audio) == 2 * (960 + 4800 + 2400)
+            assert np.flatnonzero(audio)[0] == 960
+        else:
+            assert len(audio) == 2 * len(padded)
+            assert np.flatnonzero(audio)[0] == 7200
+    finally:
+        engine.handle("tts_close", None)
+        engine._loop.close()
+
+
 def test_voice_tool_instances_survive_successful_turns(tmp_path, monkeypatch):
     from arietta_voice import tools
 

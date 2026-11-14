@@ -185,6 +185,10 @@ class InferenceEngine:
                     or not np.isfinite(samples).all()
                 ):
                     raise ValueError("Invalid or oversized TTS output")
+                if self.config.audio.tts_trim_silence:
+                    from arietta_voice.silence import trim_silence
+
+                    samples = trim_silence(samples, rate)
                 self._tts_pending = (samples, rate)
             samples, rate = self._tts_pending
             piece = samples[:4096].copy()

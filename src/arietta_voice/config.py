@@ -100,6 +100,7 @@ class AudioConfig:
     endpoint_early_threshold: float = 0.7
     tts_enabled: bool = True
     tts_backend: str = "onnx"
+    tts_trim_silence: bool = True
     mlx_kokoro_model: str = ""
     smart_turn_enabled: bool = True
     aec_enabled: bool = True
@@ -319,6 +320,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             ),
             tts_enabled=bool(audio.get("tts_enabled", base.audio.tts_enabled)),
             tts_backend=str(audio.get("tts_backend", base.audio.tts_backend)),
+            tts_trim_silence=bool(audio.get("tts_trim_silence", base.audio.tts_trim_silence)),
             mlx_kokoro_model=(
                 str(_resolve_path(base_dir, audio["mlx_kokoro_model"]))
                 if audio.get("mlx_kokoro_model")
