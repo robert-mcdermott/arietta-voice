@@ -110,29 +110,32 @@ Done:
 - Silence around each synthesised clip is trimmed. It matters only for MLX
   Kokoro, which pads every clip with about 0.3 s before and 0.4 s after.
 
+- All dependencies are on their latest releases, including Moonshine 0.1.6,
+  which now transcribes each utterance in its own stream. That removed the
+  stray leading word the old recogniser sometimes added and cut transcription
+  to about 180 ms.
+
 Remaining, in order. With ONNX Kokoro a turn spends about 300 ms deciding the
-speaker has finished, 200 ms transcribing, 500 ms generating and 565 ms on the
+speaker has finished, 180 ms transcribing, 480 ms generating and 490 ms on the
 first speech chunk. ONNX needs about 450 ms even for three words, so a shorter
 first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
 
 1. **Decide on MLX Kokoro as the default speech engine.** With trimming it
-   answers in 1.34 s against 1.72 s, but it needs transformers 5.14 or newer
-   (the lock has 5.5.4) plus mlx-audio, misaki, spaCy and an English spaCy
-   model, and one 100-turn muted run had an output underflow. Gate it on a live
-   soak.
-2. **Stream transcription and lift the Moonshine cap.** Move `moonshine-voice`
-   from the capped 0.0.54 to the latest release (0.1.6 as of November 2026)
-   and switch to its streaming path, so the transcript is ready when the turn
-   ends. 0.1.x changes the API and model format, and in October its batch
-   decoding was slower than 0.0.54's, so the upgrade lands with the streaming
-   adapter rather than before it. The promotion gates are in
-   [the Moonshine experiment](docs/archive/experiments/MOONSHINE_EXPERIMENT.md#promotion-gates).
-   This step is done only when the cap is gone from `pyproject.toml`. The
-   current recogniser also carries state between calls: identical audio once
-   came back with a stray leading word, depending on what it had transcribed
-   before.
-3. **Keep the prompt cache across a discarded attempt.** A resumed turn
-   currently reprocesses its whole prompt.
+   answered in 1.34 s against 1.72 s on ONNX. The dependency upgrade already
+   brings in mlx-audio; it would still add misaki (which declares support only
+   below Python 3.13, although uv installs it and it works), spaCy and an
+   English spaCy model. One 100-turn muted run had an output underflow. Gate it
+   on a live soak.
+2. **Stream transcription during speech.** Moonshine's streaming mode leaves
+   about 70 ms of work after the turn ends instead of about 170 ms. Getting
+   that needs a way to feed audio to the inference worker while the user is
+   speaking without blocking the listening loop, since each streaming update
+   takes up to about 160 ms. The gates in
+   [the Moonshine experiment](docs/archive/experiments/MOONSHINE_EXPERIMENT.md#promotion-gates)
+   still apply.
+3. **Keep the prompt cache across a discarded attempt.** Only matters when the
+   speaker resumes after answer generation has begun; resuming during
+   transcription, the common case in the benchmark, keeps the cache.
 4. **Native tool calling** where the provider supports it (shared with
    Milestone 2's tool interface).
 5. **A live-microphone session** covering the early check, resuming and the

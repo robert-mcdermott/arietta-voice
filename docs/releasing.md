@@ -41,8 +41,7 @@ does not automatically require a major version; user-visible compatibility does.
 
 Ship on the latest release of every dependency. Cap or pin an older version
 only for a demonstrated incompatibility, and write the reason next to the cap in
-`pyproject.toml`. Today the only cap is `moonshine-voice<0.0.55`, because 0.1.x
-changed its transcription API and model format.
+`pyproject.toml`. There are currently no caps.
 
 Before a release, refresh the lock with the uv version CI uses, so the lockfile
 format matches:

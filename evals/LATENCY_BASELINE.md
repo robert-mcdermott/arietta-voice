@@ -366,6 +366,32 @@ transformers 5.14 or newer (the main lock has 5.5.4, which the chat model's
 processor and the knowledge embeddings also use), plus misaki, spaCy and an
 English spaCy model installed from a GitHub release.
 
+### Moonshine 0.1.6
+
+After the dependency upgrade, Moonshine moved from 0.0.54 to 0.1.6, with each
+utterance transcribed in a fresh stream. Over 100 shuffled fixture utterances,
+including partial first sentences in between as resumed turns produce, the
+transcript matched exactly 80 times; the other 20 were "2 plus 2" and "5 times
+3" written as digits, every time. No stray words appeared. Median transcription
+was 169 ms (p95 314 ms).
+
+End to end, `--model-tools`, 30 warm muted turns each, back to back on the
+upgraded dependencies:
+
+| Moonshine | Median first audio | p95 | Median transcription | Transcript matches |
+| --- | ---: | ---: | ---: | ---: |
+| 0.0.54 | 1,616 ms | 3,329 ms | 209 ms | 23 of 30 |
+| 0.1.6 | 1,564 ms | 3,310 ms | 178 ms | 24 of 30 |
+
+The extra match is the triangle question, which 0.0.54 heard once as "Yeah How
+many sides does a triangle have?". The remaining mismatches are the two digit
+questions. Both runs passed every gate.
+
+Paced streaming with 0.1.6 (32 ms chunks in real time, 250 ms updates) finished
+the transcript 70 ms median after the last audio (144 ms max), with the same
+accuracy. Each update blocked `add_audio` for up to about 160 ms, which is why
+streaming during speech needs its own feeding path to the worker.
+
 ### Limits
 
 Thirty turns per run, one run per condition, synthetic speech and a software
