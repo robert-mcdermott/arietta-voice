@@ -92,6 +92,8 @@ class WeatherTool(BaseTool):
             return _say("Sorry, I couldn't reach the weather service.")
         day_text = str(arguments.get("day") or "today").strip().lower()
         say_place = bool(named)
+        if named and forecast.today() is not None:
+            today = forecast.today()  # Tomorrow in Tokyo is Tokyo's tomorrow.
         if "weekend" in day_text:
             return _say(describe_weekend(forecast, today, say_place=say_place))
         day = _resolve_day(day_text, today)

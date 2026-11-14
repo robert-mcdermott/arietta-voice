@@ -47,6 +47,11 @@ def call(name, **arguments):
             ],
         ),
         (call("a") + "\n" + call("b"), [("a", {}), ("b", {})]),
+        (
+            '<|tool_call>call:set_reminder{text:"to call, then text, Sam",when:"5:30 pm"}'
+            "<tool_call|>",
+            [("set_reminder", {"text": "to call, then text, Sam", "when": "5:30 pm"})],
+        ),
     ],
 )
 def test_native_calls_are_parsed(text, expected):
@@ -201,10 +206,12 @@ def test_an_unknown_tool_is_reported_and_never_runs(service_for):
     assert "could not be used (unavailable" in model.requests[1]["messages"][-1]["content"]
 
 
-def test_a_malformed_call_fails_the_turn_without_running_anything(service_for):
+def test_a_malformed_call_is_apologised_for_without_running_anything(service_for):
+    from arietta_voice.conversation import MIXED_UP
+
     service, _ = service_for("<|tool_call>call:lookup{what:" + Q + "open")
-    with pytest.raises(ValueError, match="Invalid tool call"):
-        spoken(service)
+    clauses, _ = spoken(service)
+    assert " ".join(clauses) == MIXED_UP
     assert Lookup.runs == []
 
 

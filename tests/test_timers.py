@@ -183,7 +183,7 @@ def test_alerts_set_by_another_process_are_noticed(store, clock):
     assert len(alerts.due()) == 1
 
 
-def test_a_store_that_cannot_be_written_does_not_ring_every_pass(store, clock, monkeypatch):
+def test_an_alert_that_cannot_be_recorded_is_said_once(store, clock, monkeypatch):
     alerts = scheduler(store, clock, repeat_s=30)
     store.add_timer(5)
     clock.now += 5
@@ -194,8 +194,27 @@ def test_a_store_that_cannot_be_written_does_not_ring_every_pass(store, clock, m
     monkeypatch.setattr(store, "mutate", fail)
     alerts.rang(alerts.due())
     assert alerts.due() == []
-    clock.now += 30
-    assert len(alerts.due()) == 1
+    # Its ring was never saved, so it would look due forever; it is not repeated.
+    clock.now += 3600
+    assert alerts.due() == []
+
+
+def test_entries_with_unsayable_times_are_dropped(store):
+    store.path.parent.mkdir(parents=True)
+    entry = {"id": "abcd1234", "kind": "timer", "created_at": START}
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "alerts": [
+                    {**entry, "due_at": 1e300},
+                    {**entry, "due_at": float("nan")},
+                    {**entry, "due_at": START},
+                ],
+            }
+        )
+    )
+    assert [a.due_at for a in store.load()] == [START]
 
 
 # What is said ---------------------------------------------------------------
@@ -566,3 +585,16 @@ def test_a_model_s_near_miss_argument_names_are_accepted(store, clock):
     assert run_tool(SetTimerTool(store=store), {"minutes": 6}).speak == (
         "Okay, 6 minutes, starting now."
     )
+
+
+def test_strict_dismissals_and_named_alerts():
+    from arietta_voice.timers import stop_label
+
+    assert is_stop_command("stop", strict=True)
+    assert is_stop_command("okay, turn it off", strict=True)
+    assert not is_stop_command("okay", strict=True)
+    assert not is_stop_command("thanks", strict=True)
+    assert is_stop_command("thanks")
+    assert stop_label("cancel my dentist reminder") == "dentist"
+    assert stop_label("stop the timer") is None
+    assert stop_label("what time is it") is None

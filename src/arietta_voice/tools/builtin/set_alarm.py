@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
-from arietta_voice.timephrases import describe_when, parse_when
+from arietta_voice.timephrases import describe_when, local_datetime, parse_when
 from arietta_voice.timers import TimerLimitError, apology
 from arietta_voice.tools.base import BaseTool, ToolContext, ToolResult
 from arietta_voice.tools.builtin._timers import alarm_request, store_for
@@ -67,9 +67,10 @@ class SetAlarmTool(BaseTool):
         if morning and not when.relative and not EXPLICIT_HALF.search(phrase):
             # "Wake me up at 7" and "an alarm for 5:45 tomorrow" mean the morning.
             if due.hour >= 12:
-                due -= timedelta(hours=12)
+                morning = time(due.hour - 12, due.minute)
+                due = local_datetime(due.date(), morning, now)
                 if due <= now:
-                    due += timedelta(days=1)
+                    due = local_datetime(due.date() + timedelta(days=1), morning, now)
         try:
             alert = self.store.add_alarm(due, label)
         except TimerLimitError as error:

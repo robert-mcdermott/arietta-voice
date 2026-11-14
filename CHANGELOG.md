@@ -54,6 +54,32 @@ version policy and the release procedure.
 - Timer and reminder apologies read naturally ("Sorry, timers can run from 1
   second to 24 hours; for longer, ask for a reminder.").
 
+### Fixed
+
+- A console chat stream closed before its first event (a tab closed while the
+  worker started) no longer leaves every later chat refused as busy until the
+  console restarts.
+- Alarms and reminders set across a daylight-saving change fire at the hour
+  asked for, not an hour off; delays across the change count real time.
+  Impossible hours ("24 am", "13 pm") are refused.
+- An instant-answer matcher that trips on odd input (a date three million days
+  away, a 300-digit number) no longer fails the turn and restarts the worker.
+- "How long until Christmas?" is answered by `date_math` instead of the timer
+  tool.
+- While an alert rings, "cancel my dentist reminder" is no longer taken as
+  "stop" for the ringing timer, and without the wake word only a clear
+  dismissal ("stop", "turn it off", "snooze") silences it; "okay" or "thanks"
+  said to someone else, or by a television, does not.
+- The calculator answers every failure plainly ("too big to say", "doesn't have
+  a real answer") instead of handing the question to the model.
+- Weather for a named place uses that place's own date for "today" and
+  "tomorrow"; odd service replies are reported as unreachable.
+- An alert whose ring cannot be recorded (an unwritable timers file) is said
+  once instead of every 30 seconds forever, and a hand-edited entry with an
+  impossible time is dropped instead of stopping the runtime.
+- A garbled native tool call gets a spoken apology instead of failing the turn
+  and reloading the models; JSON-quoted tool arguments may contain commas.
+
 ## 0.2.0rc1 — 2026-11-14
 
 Release candidate for 0.2.0, the first tagged release: everything since the

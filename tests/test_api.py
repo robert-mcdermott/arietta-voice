@@ -893,3 +893,16 @@ def test_api_reads_and_saves_settings(tmp_path):
         "/api/settings", auth=AUTH, json={"changes": {"timers": {"snooze_minutes": 0}}}
     )
     assert refused.status_code == 400 and "at least 1" in refused.json()["detail"]
+
+
+def test_a_chat_stream_closed_before_its_first_event_frees_the_turn(tmp_path):
+    from arietta_voice.web.schemas import ChatRequest
+
+    _, service, state = _streaming_client(tmp_path)
+    stream = service.chat_stream(ChatRequest(message="Hello"))
+    assert service._active_chat is not None
+    # The client left before anything was read: the generator never started.
+    stream.close()
+    stream.close()  # Safe twice, as the route closes it from two places.
+    assert service._active_chat is None and state["closed"]
+    assert next(iter(service.chat_stream(ChatRequest(message="Again"))))["kind"] == "clause"

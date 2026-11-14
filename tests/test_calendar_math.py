@@ -139,3 +139,16 @@ def test_timer_limits_are_apologised_for_in_lower_case(tmp_path):
     assert run_tool(tool, {"duration": "2 days"}).speak == (
         "Sorry, timers can run from 1 second to 24 hours; for longer, ask for a reminder."
     )
+
+
+@pytest.mark.parametrize(
+    "text", ["what's the date in 3000000 days", "how many days until december 25 99999"]
+)
+def test_dates_past_the_calendar_are_not_answered(text):
+    assert answer(text, TODAY) is None
+
+
+def test_how_long_until_a_date_is_a_date_question(registry):
+    hit = registry.fast_path("How long until Christmas?")
+    assert (hit.name, hit.result.speak) == ("date_math", "Christmas is in 41 days.")
+    assert registry.fast_path("how long until my pasta timer goes off").name == "check_timers"

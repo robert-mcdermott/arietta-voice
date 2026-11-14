@@ -7,6 +7,7 @@ the same tools with arguments.
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 
@@ -55,6 +56,8 @@ def timer_request(text: str) -> dict | None:
             rf"(?:{SET_VERB.pattern} )?(?:me )?(?:{ARTICLES} )?timer(?: please)?", spoken
         )
         return {"duration": ""} if bare else None
+    if not math.isfinite(found.seconds):
+        return None
     rest = f"{spoken[: found.start]} {spoken[found.end :]}"
     rest = " ".join(rest.split())
     label = ""
@@ -146,7 +149,8 @@ def alarm_request(text: str, now: datetime) -> dict | None:
 CHECK = re.compile(
     LEAD_IN + r"(?:"
     r"how (?:much|long)(?: time)?(?: is| s)? (?:left|remaining)|"
-    r"how much longer|how long until|how long till|"
+    r"how much longer|"
+    r"how long (?:until|till|before) (?:my |the )?(?:\w+ )?(?:timers?|alarms?|reminders?)|"
     r"how (?:much time|long) (?:is |s )?(?:left|remaining)|"
     r"(?:what|which|any) (?:timers?|reminders?|alarms?)|"
     r"(?:what s|what is|how s|how is) (?:on |left on )?(?:the|my) (?:\w+ )?"

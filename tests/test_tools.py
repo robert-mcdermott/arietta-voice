@@ -347,3 +347,32 @@ def test_parse_model_tool_request_accepts_fenced_json() -> None:
         '```json\n{"tool_call":{"name":"search_knowledge","arguments":{"query":"it"}}}\n```'
     )
     assert request.name == "search_knowledge" and request.arguments == {"query": "it"}
+
+
+def test_a_matcher_that_raises_is_skipped_not_fatal(tmp_path, monkeypatch) -> None:
+    class Fragile(BaseTool):
+        name = "fragile"
+        description = "testing"
+
+        def match(self, text):
+            raise OverflowError("odd input")
+
+        def run(self, arguments):
+            return ToolResult(speak="never")
+
+    from types import SimpleNamespace
+
+    from arietta_voice.tools import registry as tool_registry
+
+    original = tool_registry.load_module
+
+    def load(config, name):
+        if name == "fragile":
+            return SimpleNamespace(create_tool=lambda context: Fragile(context)), "user", None
+        return original(config, name)
+
+    monkeypatch.setattr(tool_registry, "load_module", load)
+    config = default_config(tmp_path)
+    config.tools.enabled = ("fragile", "local_time")
+    hit = ToolRegistry(config).fast_path("what time is it")
+    assert hit.name == "local_time"

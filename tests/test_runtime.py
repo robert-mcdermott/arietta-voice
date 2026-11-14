@@ -959,3 +959,35 @@ def test_alert_speech_starts_with_the_tone(runtime, monkeypatch, tone):
         assert len(frames) == 3 and frames[1][1] == 24000 and len(frames[1][0]) > 24000
     else:
         assert len(frames) == 2
+
+
+def test_without_the_wake_word_only_a_clear_dismissal_stops_an_alert(runtime):
+    store, due = ring(runtime)
+    runtime.announce_alerts(due, Mock(), Mock())
+    for overheard in ("Okay.", "Thanks!", "Got it.", "Done."):
+        runtime.worker.transcript = overheard
+        runtime.process_utterance(np.zeros(512), Mock(), Mock())
+        assert [a.status for a in store.active()] == ["ringing"], overheard
+    runtime.worker.transcript = "Turn it off."
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert store.active() == []
+
+
+def test_in_a_conversation_okay_also_stops_an_alert(runtime):
+    runtime.config.wake_word.enabled = False
+    runtime._open_session(None)
+    store, due = ring(runtime)
+    runtime.announce_alerts(due, Mock(), Mock())
+    runtime.worker.transcript = "Okay, thanks."
+    runtime.process_utterance(np.zeros(512), Mock(), Mock())
+    assert store.finished()[0].outcome == "dismissed"
+    assert runtime.last_assistant_text == "Okay."
+
+
+def test_a_command_naming_another_alert_is_not_a_stop(runtime):
+    runtime.config.wake_word.enabled = False
+    runtime._open_session(None)
+    store, due = ring(runtime, label="pasta")
+    runtime.announce_alerts(due, Mock(), Mock())
+    assert runtime._alert_reply("Cancel my dentist reminder") is None
+    assert runtime._alert_reply("Stop the pasta timer") == "Okay."

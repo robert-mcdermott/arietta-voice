@@ -195,3 +195,35 @@ def test_weather_is_opt_in(tmp_path, monkeypatch):
     assert hit.result.speak == "Probably not: only a 20 percent chance of rain tomorrow."
     assert registry.fast_path("what's 70 degrees fahrenheit in celsius").name == "calculate"
     assert "weather" not in default_config(tmp_path).tools.enabled
+
+
+def test_a_distant_place_uses_its_own_date(make_tool, monkeypatch):
+    from arietta_voice import weather
+
+    data = forecast_json()
+    data["utc_offset_seconds"] = 9 * 3600  # Tokyo
+    tool = make_tool(service=FakeService(forecast=data))
+    # Late on the 13th here is already the 14th in Tokyo.
+    real_datetime = weather.datetime
+
+    class Clock(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 11, 13, 20, 0, tzinfo=tz)
+
+    monkeypatch.setattr(weather, "datetime", Clock)
+    tool.clock = lambda: date(2026, 11, 13)
+    tomorrow = run_tool(tool, {"day": "tomorrow", "place": "Tokyo"}).speak
+    assert tomorrow.startswith("Tomorrow in Portland: partly cloudy skies")
+
+
+def test_odd_service_replies_are_reported_as_unreachable(make_tool):
+    class Broken(FakeService):
+        def __call__(self, url, timeout):
+            if "geocoding" in url:
+                return {"results": [{"name": "Nowhere"}]}  # No coordinates.
+            return super().__call__(url, timeout)
+
+    assert run_tool(make_tool(service=Broken()), {}).speak == (
+        "Sorry, I couldn't reach the weather service."
+    )

@@ -111,6 +111,9 @@ def _split_top_level(text: str) -> list[str]:
                 raise ValueError("Unterminated text value")
             i = close + len(_QUOTE)
             continue
+        if text[i] == '"':  # A JSON string, which may contain commas.
+            i = _json_string_end(text, i)
+            continue
         char = text[i]
         if char in "{[":
             depth += 1
@@ -127,6 +130,19 @@ def _split_top_level(text: str) -> list[str]:
     if text[start:].strip():
         parts.append(text[start:])
     return parts
+
+
+def _json_string_end(text: str, start: int) -> int:
+    """The index just past the JSON string that opens at ``start``."""
+    i = start + 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == '"':
+            return i + 1
+        i += 1
+    raise ValueError("Unterminated text value")
 
 
 def _parse_object(text: str) -> dict[str, Any]:
