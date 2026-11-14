@@ -6,8 +6,8 @@ from arietta_voice.tools.base import BaseTool, ToolContext, ToolResult
 class SearchKnowledgeTool(BaseTool):
     name = "search_knowledge"
     description = (
-        "the user's question depends on local organization or environment knowledge and the "
-        "existing snippets in the prompt are not enough"
+        "the user asks about this organization, home or its people (not general knowledge) "
+        "and the notes already in the prompt do not answer it"
     )
     parameters = {
         "type": "object",

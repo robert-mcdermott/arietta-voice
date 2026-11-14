@@ -81,9 +81,13 @@ class KnowledgeSearchResult:
     matches: tuple[KnowledgeMatch, ...]
 
     def prompt_context(self) -> str:
+        # Notes are found for most requests, often unrelated. Telling the model to
+        # be unsure whenever they did not answer made it refuse half of ordinary
+        # questions it knew ("how many legs does a spider have?").
         lines = [
-            "Use the following local knowledge snippets only if they are relevant to the user's question.",
-            "If the snippets do not answer the question, say you are not sure instead of inventing details.",
+            "Notes from the local knowledge base, found by a keyword search, so they may "
+            "have nothing to do with the question. If they answer it, use them. If not, "
+            "ignore them completely and answer from your own knowledge.",
         ]
         for index, match in enumerate(self.matches, start=1):
             lines.append(f"[Snippet {index}]")

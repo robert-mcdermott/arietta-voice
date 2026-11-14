@@ -50,9 +50,12 @@ class GemmaChatModel:
     # <|tool_call>call:name{...}<tool_call|> (see model_tooling).
     native_tool_calls = True
 
-    def __init__(self, model_name: str, *, reuse_prompt_prefix: bool = True) -> None:
+    def __init__(
+        self, model_name: str, *, reuse_prompt_prefix: bool = True, repetition_penalty: float = 1.2
+    ) -> None:
         self.model_name = model_name
         self.reuse_prompt_prefix = reuse_prompt_prefix
+        self.repetition_penalty = repetition_penalty
         self._model = None
         self._processor = None
         self._prefix_cache = None
@@ -65,6 +68,7 @@ class GemmaChatModel:
 
         self._logger.info("Loading local chat model %s", self.model_name)
         self._model, self._processor = load(self.model_name)
+        _align_per_layer_inputs(self._model)
 
     def is_loaded(self) -> bool:
         return self._model is not None and self._processor is not None
@@ -90,7 +94,7 @@ class GemmaChatModel:
             prompt,
             max_tokens=max_tokens,
             temperature=temperature,
-            repetition_penalty=1.2,
+            repetition_penalty=self.repetition_penalty,
             verbose=False,
         )
         return result.text if hasattr(result, "text") else str(result)
@@ -136,7 +140,7 @@ class GemmaChatModel:
             prompt,
             max_tokens=max_tokens,
             temperature=temperature,
-            repetition_penalty=1.2,
+            repetition_penalty=self.repetition_penalty,
             **options,
         )
         finished = False
@@ -172,6 +176,34 @@ class GemmaChatModel:
             KVCache() if isinstance(cache, RotatingKVCache) else cache
             for cache in make_prompt_cache(self._model.language_model)
         ]
+
+
+def _align_per_layer_inputs(model) -> None:
+    """Keep Gemma's per-layer inputs in step with the tokens of each forward pass.
+
+    Gemma 4 E2B/E4B add a per-layer embedding for every token. mlx-vlm 0.7.12
+    computes them once for all the tokens a generation is given and, for each
+    prefill chunk, slices them at the cache's absolute offset. When a cached
+    prompt prefix is reused, only the new tokens are given, yet the offset
+    counts the reused prefix, so the slice is shifted and every new token gets
+    another token's embedding. Answers then garbled what they copied from the
+    prompt, such as the first letters of an email address. Without the precomputed
+    copy, the language model computes them from each pass's own token ids,
+    which is always aligned and gives identical results otherwise. Text only:
+    the precomputed copy differs only for image and audio tokens.
+    """
+    original = getattr(model, "get_input_embeddings", None)
+    if not callable(original) or getattr(original, "_arietta_aligned", False):
+        return
+
+    def text_input_embeddings(*args, **kwargs):
+        features = original(*args, **kwargs)
+        if getattr(features, "per_layer_inputs", None) is not None:
+            features.per_layer_inputs = None
+        return features
+
+    text_input_embeddings._arietta_aligned = True
+    model.get_input_embeddings = text_input_embeddings
 
 
 def _repeat_safe_prefix_state():
@@ -316,7 +348,11 @@ class BedrockChatModel:
 def build_chat_model(config: ModelConfig) -> ChatModel:
     provider = (config.chat_provider or "local").strip().lower()
     if provider == "local":
-        return GemmaChatModel(config.chat_model, reuse_prompt_prefix=config.reuse_prompt_prefix)
+        return GemmaChatModel(
+            config.chat_model,
+            reuse_prompt_prefix=config.reuse_prompt_prefix,
+            repetition_penalty=config.repetition_penalty,
+        )
     if provider == "bedrock":
         return BedrockChatModel(
             config.chat_model,

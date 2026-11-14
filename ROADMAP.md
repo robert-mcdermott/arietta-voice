@@ -188,10 +188,12 @@ acoustically at least once.
 6. **Model routing.** Keep the small local model for fast turns and tool
    selection; optionally escalate hard questions to a cloud model. Off by
    default, with a clear statement of what leaves the machine. Refresh the
-   stale Bedrock model examples. With the default persona at temperature 0.7,
-   the 4-bit Gemma declined about one general-knowledge question in six ("I
-   don't have that information"), with or without tools and whatever the tool
-   instructions said; a larger local model or escalation is the likely fix.
+   stale Bedrock model examples. The 4-bit Gemma declining ordinary questions
+   ("I don't have that information") turned out not to be the model: knowledge
+   notes and the persona told it to, and prompt reuse corrupted its input.
+   With those fixed it declined 2 of 80 and got 48 of 48 facts right
+   ([answer quality](evals/ANSWER_QUALITY.md)). A larger model stays useful
+   for harder questions, and only as an explicit opt-in.
 7. Treat retrieved text and tool output as untrusted data, with
    prompt-injection fixtures in the evaluation corpus. Partly done: MCP results
    reach the model marked as data, the model is told never to follow

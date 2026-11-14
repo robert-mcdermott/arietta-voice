@@ -7,6 +7,9 @@ version policy and the release procedure.
 
 ### Added
 
+- `bench/answer_quality.py`: how often the chat model declines or gets an
+  ordinary question wrong, over 40 questions, through the same path as voice.
+- `models.repetition_penalty` (default 1.2, as before).
 - MCP servers as a source of tools. The assistant connects to the servers in
   `config/mcp.local.json` (the `{"mcpServers": ...}` format other MCP apps use)
   over stdio, Streamable HTTP or SSE with the official MCP Python SDK
@@ -41,6 +44,21 @@ version policy and the release procedure.
 
 ### Fixed
 
+- Reusing the cached prompt (on by default) corrupted what the model read:
+  with Gemma 4 E4B, mlx-vlm gave each new token the per-layer embedding of
+  another, so copied details such as email addresses and phone numbers were
+  garbled, and answers were worse in general. Each pass now computes its
+  own. See `evals/ANSWER_QUALITY.md`.
+- The assistant declined ordinary questions it knew ("How many legs does a
+  spider have?" got "I don't have that information"): 43 of 80 in a test on a
+  real setup, now 2 of 80, with every fact right (48 of 48). Knowledge notes no
+  longer tell the model to say it is unsure when they do not answer the
+  question, and the default persona tells it to answer general knowledge and
+  everyday questions from what it knows. Your own `SOUL.local.md` is not
+  changed; copy the new lines from `config/SOUL.md` if you started from the
+  old default.
+- The calculator no longer speaks an error when the model sends it something
+  that is not arithmetic; the model answers instead.
 - Asking the same thing twice in a row no longer reprocesses the whole prompt:
   the repeat reuses the cached prompt and starts speaking in about 0.4 s
   instead of 2.5 s or more.
