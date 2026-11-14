@@ -6,7 +6,7 @@ from arietta_voice.clauses import RESPONSE_CHARS, SpeechClauses
 from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.llm import ModelEvent, build_chat_model
 from arietta_voice.model_tooling import parse_model_tool_request
-from arietta_voice.models import ConversationTurn
+from arietta_voice.models import ConversationTurn, ToolResponse
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
 
 
@@ -25,8 +25,8 @@ class ConversationService:
         self.knowledge = knowledge or KnowledgeRetriever(config.knowledge)
         self._llm = None
         self._generate_override = generate
-        self._tools = self._model_tools = None
-        self._tools_key = self._model_tools_key = None
+        self._tools = None
+        self._tools_key = None
 
     def _llm_generate(self, messages, *, max_tokens=None, temperature=None):
         if self._generate_override is not None:
@@ -73,63 +73,63 @@ class ConversationService:
             for t in history
             if t["content"].strip()
         ]
-        knowledge = self.knowledge if self.config.knowledge.enabled else None
-        response = None
-        if use_tools:
-            from arietta_voice.tools import ToolRegistry
-
-            key = (tuple(self.config.tools.enabled), self.config.knowledge.enabled)
-            if self._tools is None or key != self._tools_key:
-                self._tools = ToolRegistry(self.config, knowledge_retriever=knowledge)
-                self._tools_key = key
-            response = self._tools.maybe_handle(message)
-        used_tool = response.name if response else None
-        if response and response.bypass_model:
+        tools = self._registry() if use_tools else None
+        hit = tools.fast_path(message) if tools is not None else None
+        used_tool = hit.name if hit else None
+        if hit and hit.result.speak:
             yield from self._speech_events(
-                iter([ModelEvent("text", response.content), ModelEvent("done")]),
+                iter([ModelEvent("text", hit.result.speak), ModelEvent("done")]),
                 source="tool",
                 used_tool=used_tool,
                 model_tool=None,
             )
             return
-        messages = self.prompt_manager.build_messages(history, message, response)
+        context = None
+        if hit:
+            context = ToolResponse(hit.name, "", bypass_model=False, context=hit.result.content)
+        messages = self.prompt_manager.build_messages(history, message, context)
 
         model_tool = None
-        if use_tools:
-            from arietta_voice.model_tools import ModelToolRegistry
-
-            key = (tuple(self.config.model_tools.enabled), self.config.knowledge.enabled)
-            if self._model_tools is None or key != self._model_tools_key:
-                self._model_tools = ModelToolRegistry(self.config, knowledge_retriever=knowledge)
-                self._model_tools_key = key
-            instruction = self._model_tools.instruction_text()
-            if instruction:
-                planning = self._llm_stream(
-                    [{"role": "system", "content": instruction}, *messages],
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+        instruction = tools.instruction_text() if tools is not None else None
+        if instruction:
+            planning = self._llm_stream(
+                [{"role": "system", "content": instruction}, *messages],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            tool_text, answer = _split_planning(planning)
+            if answer is not None:
+                # The model chose to answer directly: speak it as it arrives.
+                yield from self._speech_events(
+                    answer, source="model", used_tool=used_tool, model_tool=None
                 )
-                tool_text, answer = _split_planning(planning)
-                if answer is not None:
-                    # The model chose to answer directly: speak it as it arrives.
-                    yield from self._speech_events(
-                        answer, source="model", used_tool=used_tool, model_tool=None
-                    )
-                    return
-                request = parse_model_tool_request(tool_text)
-                if request is None:
-                    raise ValueError("Invalid tool planning response")
-                execution = self._model_tools.execute(request.name, request.arguments)
-                if execution is None:
-                    raise ValueError("Model requested an unavailable tool")
-                messages = [*messages, {"role": "system", "content": execution.followup_context}]
-                model_tool = request.name
+                return
+            request = parse_model_tool_request(tool_text)
+            if request is None:
+                raise ValueError("Invalid tool planning response")
+            model_tool = request.name
+            followup = _tool_followup(tools, request.name, request.arguments)
+            messages = [*messages, {"role": "system", "content": followup}]
         yield from self._speech_events(
             self._llm_stream(messages, max_tokens=max_tokens, temperature=temperature),
             source="model",
             used_tool=used_tool,
             model_tool=model_tool,
         )
+
+    def _registry(self):
+        from arietta_voice.tools import ToolRegistry, enabled_tool_names
+
+        key = (
+            tuple(enabled_tool_names(self.config)),
+            self.config.knowledge.enabled,
+            str(self.config.tools.directory),
+        )
+        if self._tools is None or key != self._tools_key:
+            knowledge = self.knowledge if self.config.knowledge.enabled else None
+            self._tools = ToolRegistry(self.config, knowledge_retriever=knowledge)
+            self._tools_key = key
+        return self._tools
 
     def _speech_events(self, events, **metadata):
         clauses = SpeechClauses()
@@ -236,3 +236,22 @@ def _direct_answer(seen, events):
 def _close(events):
     if hasattr(events, "close"):
         events.close()
+
+
+def _tool_followup(tools, name, arguments):
+    """What the model is told after it asks for a tool, including when that fails."""
+    from arietta_voice.tools import ToolError
+
+    try:
+        result = tools.run(name, arguments)
+    except ToolError as error:
+        return (
+            f"The {name} tool could not be used ({error.kind}: {error}). Answer as well as "
+            "you can without it, and say briefly that you could not check."
+        )
+    if not result.content.strip():
+        return (
+            f"The {name} tool found nothing for that request. If the answer depends on it, "
+            "say you are not sure instead of inventing details."
+        )
+    return f"Result from the {name} tool:\n{result.content}"

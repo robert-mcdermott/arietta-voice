@@ -38,6 +38,7 @@ from arietta_voice.prompts import sanitize_for_speech
 from arietta_voice.resume import ResumeWatch, TurnResumed
 from arietta_voice.runtime_status import RuntimeStatusPublisher
 from arietta_voice.streaming import speech_stream
+from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turn_detection import SileroVoiceActivityDetector
 from arietta_voice.turns import CancellationToken
 from arietta_voice.wake import WakeWordMatch, build_wake_word_detector
@@ -293,8 +294,7 @@ class AriettaVoiceRuntime:
             "message": user_text,
             "history": [asdict(turn) for turn in self.session.history],
             "use_tools": True,
-            "enabled_tools": self.config.tools.enabled,
-            "enabled_model_tools": self.config.model_tools.enabled,
+            "enabled_tools": tuple(enabled_tool_names(self.config)),
         }
 
     def _respond(self, user_text: str) -> str:

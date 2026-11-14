@@ -3,7 +3,7 @@ from unittest.mock import Mock
 from arietta_voice.config import default_config
 from arietta_voice.conversation import ConversationService
 from arietta_voice.inference import InferenceEngine
-from arietta_voice.models import ToolResponse
+from arietta_voice.tools import ToolResult
 
 
 def test_voice_and_console_share_policy_and_request_is_not_mutated(tmp_path):
@@ -40,13 +40,15 @@ def test_voice_and_console_share_policy_and_request_is_not_mutated(tmp_path):
 
 def test_shared_service_retains_tools_but_drops_disabled_registry(tmp_path, monkeypatch):
     from arietta_voice import tools
+    from arietta_voice.tools import FastPathHit, ToolResult
 
     config = default_config(tmp_path)
     config.knowledge.enabled = False
     config.tools.enabled = ("synthetic",)
     config.model_tools.enabled = ()
-    active = Mock(maybe_handle=Mock(return_value=ToolResponse("synthetic", "Tool answer")))
-    empty = Mock(maybe_handle=Mock(return_value=None))
+    hit = FastPathHit("synthetic", {}, ToolResult(content="Tool answer", speak="Tool answer"))
+    active = Mock(fast_path=Mock(return_value=hit), instruction_text=Mock(return_value=None))
+    empty = Mock(fast_path=Mock(return_value=None), instruction_text=Mock(return_value=None))
     factory = Mock(side_effect=[active, empty])
     monkeypatch.setattr(tools, "ToolRegistry", factory)
     service = ConversationService(config, generate=lambda *a, **kw: "Model answer")
@@ -56,7 +58,7 @@ def test_shared_service_retains_tools_but_drops_disabled_registry(tmp_path, monk
     config.tools.enabled = ()
     assert service.chat(message="Third").source == "model"
     assert factory.call_count == 2
-    assert active.maybe_handle.call_count == 2
+    assert active.fast_path.call_count == 2
 
 
 def test_stream_yields_clause_before_model_finishes_and_closes_on_cancel(tmp_path):
@@ -86,13 +88,14 @@ def test_stream_yields_clause_before_model_finishes_and_closes_on_cancel(tmp_pat
 
 def _planning_service(tmp_path, monkeypatch, streams, registry=None):
     """A service with one model tool on offer and scripted provider streams."""
-    from arietta_voice import model_tools
+    from arietta_voice import tools
 
     config = default_config(tmp_path)
     config.knowledge.enabled = False
     config.tools.enabled = ()
     registry = registry or Mock(instruction_text=lambda: "Plan privately")
-    monkeypatch.setattr(model_tools, "ModelToolRegistry", lambda *a, **kw: registry)
+    registry.fast_path = Mock(return_value=None)
+    monkeypatch.setattr(tools, "ToolRegistry", lambda *a, **kw: registry)
     service = ConversationService(config)
     calls = []
 
@@ -109,7 +112,7 @@ def test_tool_planning_is_withheld_and_only_final_answer_streams(tmp_path, monke
 
     registry = Mock(
         instruction_text=lambda: "Plan privately",
-        execute=Mock(return_value=Mock(followup_context="Synthetic tool result")),
+        run=Mock(return_value=ToolResult(content="Synthetic tool result")),
     )
     # The request arrives in pieces, as a provider would stream it.
     request = ['{"tool_', 'call":{"name":"synth', 'etic","arguments":{}}}']
@@ -125,9 +128,10 @@ def test_tool_planning_is_withheld_and_only_final_answer_streams(tmp_path, monke
     events = list(service.stream(message="Synthetic"))
     assert [e["text"] for e in events if e["kind"] == "clause"] == ["Final answer.", "More."]
     assert events[-1]["result"]["model_tool"] == "synthetic"
-    registry.execute.assert_called_once_with("synthetic", {})
+    registry.run.assert_called_once_with("synthetic", {})
     assert calls[0][0] == {"role": "system", "content": "Plan privately"}
-    assert calls[1][-1] == {"role": "system", "content": "Synthetic tool result"}
+    assert calls[1][-1]["role"] == "system"
+    assert calls[1][-1]["content"].endswith("Synthetic tool result")
 
 
 def test_fenced_tool_request_is_recognised_from_its_first_character(tmp_path, monkeypatch):
@@ -135,7 +139,7 @@ def test_fenced_tool_request_is_recognised_from_its_first_character(tmp_path, mo
 
     registry = Mock(
         instruction_text=lambda: "Plan privately",
-        execute=Mock(return_value=Mock(followup_context="Result")),
+        run=Mock(return_value=ToolResult(content="Result")),
     )
     fenced = ["\n ", "`", '``json\n{"tool_call":{"name":"synthetic","arguments":{"q":1}}}\n```']
     service, _ = _planning_service(
@@ -149,7 +153,7 @@ def test_fenced_tool_request_is_recognised_from_its_first_character(tmp_path, mo
     )
     events = list(service.stream(message="Synthetic"))
     assert [e["text"] for e in events if e["kind"] == "clause"] == ["Done."]
-    registry.execute.assert_called_once_with("synthetic", {"q": 1})
+    registry.run.assert_called_once_with("synthetic", {"q": 1})
 
 
 def test_direct_answer_is_spoken_while_planning_response_still_generates(tmp_path, monkeypatch):
@@ -219,13 +223,13 @@ def test_tool_request_after_speech_started_stops_the_turn(tmp_path, monkeypatch)
         finally:
             closed.append(True)
 
-    registry = Mock(instruction_text=lambda: "Plan privately", execute=Mock())
+    registry = Mock(instruction_text=lambda: "Plan privately", run=Mock())
     service, _ = _planning_service(tmp_path, monkeypatch, [answer], registry)
     stream = service.stream(message="Synthetic")
     assert next(stream)["text"] == "Let me check."
     with pytest.raises(ValueError, match="planning"):
         list(stream)
-    registry.execute.assert_not_called()
+    registry.run.assert_not_called()
     assert closed == [True]
 
 
@@ -245,7 +249,7 @@ def test_truncated_or_oversized_tool_request_fails_without_running_a_tool(tmp_pa
 
     from arietta_voice.llm import ModelEvent
 
-    registry = Mock(instruction_text=lambda: "Plan privately", execute=Mock())
+    registry = Mock(instruction_text=lambda: "Plan privately", run=Mock())
     service, _ = _planning_service(
         tmp_path,
         monkeypatch,
@@ -259,20 +263,19 @@ def test_truncated_or_oversized_tool_request_fails_without_running_a_tool(tmp_pa
         list(service.stream(message="Synthetic"))
     with pytest.raises(ValueError, match="limit"):
         list(service.stream(message="Synthetic"))
-    registry.execute.assert_not_called()
+    registry.run.assert_not_called()
 
 
 def test_invalid_tool_payload_never_reaches_speech(tmp_path, monkeypatch):
     import pytest
 
-    from arietta_voice import model_tools
+    from arietta_voice import tools
 
     config = default_config(tmp_path)
     config.knowledge.enabled = False
     config.tools.enabled = ()
-    monkeypatch.setattr(
-        model_tools, "ModelToolRegistry", lambda *a, **kw: Mock(instruction_text=lambda: "Plan")
-    )
+    registry = Mock(instruction_text=lambda: "Plan", fast_path=Mock(return_value=None))
+    monkeypatch.setattr(tools, "ToolRegistry", lambda *a, **kw: registry)
     service = ConversationService(config, generate=lambda *a, **kw: '{"tool_call": broken')
     with pytest.raises(ValueError, match="planning"):
         next(service.stream(message="Synthetic"))

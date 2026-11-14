@@ -1,75 +1,224 @@
+"""Load enabled tools and run them with validated arguments and a time limit.
+
+Built-in tools live in ``arietta_voice.tools.builtin``. User tools are single
+Python files in the configured tools directory (``tools/`` by default), so they
+survive upgrades and never require editing the installed package.
+"""
+
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import json
+import re
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
+from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
+from typing import Any
 
-from arietta_voice.config import AppConfig
-from arietta_voice.knowledge import KnowledgeRetriever
-from arietta_voice.models import ToolResponse
-from arietta_voice.tools.base import AssistantTool, ToolContext
+from arietta_voice.tools.base import ToolContext, ToolError, ToolResult
+from arietta_voice.tools.schema import check_schema, coerce_arguments, validate_arguments
 
-TOOLS_PACKAGE = "arietta_voice.tools"
+BUILTIN_PACKAGE = "arietta_voice.tools.builtin"
+TOOL_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
+MAX_CONTENT_CHARS = 4000
+MAX_SPEAK_CHARS = 1000
+MAX_TIMEOUT_S = 120.0
+# Names from before the two tool systems were merged.
+LEGACY_NAMES = {"knowledge_retrieval": "search_knowledge"}
+
+
+def enabled_tool_names(config) -> list[str]:
+    """Enabled tools in order, folding in the old [model_tools] list and names."""
+    names: list[str] = []
+    for raw in (*config.tools.enabled, *config.model_tools.enabled):
+        name = LEGACY_NAMES.get(raw.strip(), raw.strip())
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def builtin_names() -> list[str]:
+    package = importlib.import_module(BUILTIN_PACKAGE)
+    folder = Path(package.__file__).parent
+    return sorted(p.stem for p in folder.glob("*.py") if not p.stem.startswith("_"))
+
+
+def user_tool_path(config, name: str) -> Path:
+    if not TOOL_NAME.fullmatch(name):
+        raise ValueError(f"Tool names are lowercase letters, digits and underscores: {name!r}")
+    directory = Path(config.tools.directory).resolve()
+    path = (directory / f"{name}.py").resolve()
+    if path.parent != directory:
+        raise ValueError("Tool files must be directly inside the tools directory")
+    return path
+
+
+def load_module(config, name: str) -> tuple[ModuleType, str, Path | None]:
+    """Import a tool module by name: built-in first, then the user directory."""
+    if not TOOL_NAME.fullmatch(name):
+        raise ValueError(f"Tool names are lowercase letters, digits and underscores: {name!r}")
+    if name in builtin_names():
+        module = importlib.import_module(f"{BUILTIN_PACKAGE}.{name}")
+        return module, "builtin", Path(module.__file__)
+    path = user_tool_path(config, name)
+    if not path.is_file():
+        raise ValueError(f"No tool named {name!r}: expected {path}")
+    spec = importlib.util.spec_from_file_location(f"arietta_user_tools.{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module, "user", path
+
+
+def create_tool(module: ModuleType, name: str, context: ToolContext):
+    """Instantiate and check a tool; None means it is unavailable in this config."""
+    factory = getattr(module, "create_tool", None)
+    if not callable(factory):
+        raise ValueError(f"Tool {name!r} must define create_tool(context)")
+    tool = factory(context)
+    if tool is None:
+        return None
+    problems = describe_problems(tool, name)
+    if problems:
+        raise ValueError(f"Tool {name!r}: " + "; ".join(problems))
+    return tool
+
+
+def describe_problems(tool, name: str) -> list[str]:
+    problems = []
+    if getattr(tool, "name", None) != name:
+        problems.append(f"name must be {name!r} to match its file")
+    if not isinstance(getattr(tool, "description", None), str) or not tool.description.strip():
+        problems.append("description must say when to use the tool")
+    problems += check_schema(getattr(tool, "parameters", None))
+    for pattern in getattr(tool, "triggers", ()):
+        try:
+            re.compile(pattern)
+        except (re.error, TypeError):
+            problems.append(f"trigger {pattern!r} is not a valid regular expression")
+    timeout = getattr(tool, "timeout_s", None)
+    if not isinstance(timeout, (int, float)) or not 0 < timeout <= MAX_TIMEOUT_S:
+        problems.append(f"timeout_s must be between 0 and {MAX_TIMEOUT_S:g} seconds")
+    if not callable(getattr(tool, "run", None)):
+        problems.append("run(arguments) is missing")
+    return problems
+
+
+def run_tool(tool, arguments: dict[str, Any]) -> ToolResult:
+    """Validate arguments, run within the tool's time limit, and bound the result."""
+    name = tool.name
+    arguments = coerce_arguments(tool.parameters, arguments)
+    problems = validate_arguments(tool.parameters, arguments)
+    if problems:
+        raise ToolError(name, "invalid_arguments", "; ".join(problems))
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"tool-{name}")
+    try:
+        future = executor.submit(tool.run, arguments)
+        result = future.result(timeout=tool.timeout_s)
+    except FutureTimeout as exc:
+        # The thread cannot be stopped; it is abandoned and its result ignored.
+        raise ToolError(name, "timeout", f"no result within {tool.timeout_s:g} s") from exc
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise ToolError(name, "failed", type(exc).__name__) from exc
+    finally:
+        executor.shutdown(wait=False)
+    if result is None:
+        return ToolResult()
+    if not isinstance(result, ToolResult):
+        raise ToolError(name, "failed", "run() must return a ToolResult")
+    return ToolResult(
+        content=result.content[:MAX_CONTENT_CHARS],
+        speak=None if result.speak is None else result.speak[:MAX_SPEAK_CHARS],
+        data=result.data,
+    )
+
+
+@dataclass(slots=True, frozen=True)
+class FastPathHit:
+    name: str
+    arguments: dict[str, Any]
+    result: ToolResult
 
 
 class ToolRegistry:
-    def __init__(
-        self,
-        config: AppConfig,
-        *,
-        knowledge_retriever: KnowledgeRetriever | None = None,
-    ) -> None:
+    def __init__(self, config, *, knowledge_retriever=None) -> None:
         self.config = config
-        self.context = ToolContext(
-            config=config,
-            knowledge_retriever=knowledge_retriever,
-        )
-        self.tools = tuple(self._load_tools(config.tools.enabled))
+        self.context = ToolContext(config=config, knowledge_retriever=knowledge_retriever)
+        self.errors: dict[str, str] = {}
+        self.tools = {}
+        for name in enabled_tool_names(config):
+            try:
+                module, _, _ = load_module(config, name)
+                tool = create_tool(module, name, self.context)
+            except Exception as exc:  # One broken tool must not disable the rest.
+                self.errors[name] = f"{type(exc).__name__}: {exc}"
+                continue
+            if tool is not None:
+                self.tools[name] = tool
 
-    def maybe_handle(self, user_text: str) -> ToolResponse | None:
-        for tool in self.tools:
-            response = tool.maybe_handle(user_text)
-            if response is not None:
-                return response
+    @property
+    def model_tools(self) -> list:
+        return [tool for tool in self.tools.values() if tool.model_callable]
+
+    def fast_path(self, text: str) -> FastPathHit | None:
+        """Run the first tool, in configured order, whose trigger matches."""
+        for name, tool in self.tools.items():
+            match = getattr(tool, "match", None)
+            arguments = match(text) if callable(match) else None
+            if arguments is None:
+                continue
+            try:
+                result = run_tool(tool, arguments)
+            except ToolError:
+                continue  # A failed instant answer falls through to the model.
+            if not result.empty:
+                return FastPathHit(name, arguments, result)
         return None
 
-    def _load_tools(self, configured_tools: tuple[str, ...]) -> list[AssistantTool]:
-        loaded: list[AssistantTool] = []
-        seen: set[str] = set()
-        for tool_name in configured_tools:
-            normalized = tool_name.strip()
-            if not normalized or normalized in seen:
-                continue
-            loaded.append(self._load_tool(normalized))
-            seen.add(normalized)
-        return loaded
+    def run(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        tool = self.tools.get(name)
+        if tool is None or not tool.model_callable:
+            raise ToolError(name, "unavailable", "no such tool is enabled")
+        return run_tool(tool, arguments)
 
-    def _load_tool(self, tool_name: str) -> AssistantTool:
-        module_name = _tool_module_name(tool_name)
-        try:
-            module = importlib.import_module(module_name)
-        except ModuleNotFoundError as exc:
-            if exc.name == module_name:
-                raise ValueError(
-                    f"Configured tool '{tool_name}' could not be imported from '{module_name}'."
-                ) from exc
-            raise
-
-        factory = getattr(module, "create_tool", None)
-        if not callable(factory):
-            raise ValueError(
-                f"Configured tool '{tool_name}' must expose a callable create_tool(context)."
-            )
-
-        tool = factory(self.context)
-        if not callable(getattr(tool, "maybe_handle", None)):
-            raise ValueError(f"Configured tool '{tool_name}' must define maybe_handle(user_text).")
-
-        tool_id = getattr(tool, "name", None)
-        if not isinstance(tool_id, str) or not tool_id.strip():
-            raise ValueError(f"Configured tool '{tool_name}' must define a non-empty name.")
-        return tool
+    def instruction_text(self) -> str | None:
+        tools = self.model_tools
+        if not tools:
+            return None
+        lines = [
+            "You may make at most one tool call before answering the user.",
+            "Use a tool only when it is needed to answer accurately.",
+            "",
+            "Available tools:",
+        ]
+        for tool in tools:
+            lines.append(f"- name: {tool.name}")
+            lines.append(f"- arguments: {json.dumps(argument_example(tool.parameters))}")
+            lines.append(f"- use when {tool.description}")
+        lines += [
+            "",
+            "If you need a tool, reply with JSON only in exactly this shape:",
+            '{"tool_call":{"name":"<tool_name>","arguments":{...}}}',
+            "",
+            "Otherwise answer the user normally in plain text.",
+            "Do not explain the JSON format.",
+            "Do not call a tool if the provided snippets already answer the question.",
+        ]
+        return "\n".join(lines)
 
 
-def _tool_module_name(tool_name: str) -> str:
-    if "." in tool_name:
-        return tool_name
-    return f"{TOOLS_PACKAGE}.{tool_name}"
+def argument_example(schema: dict[str, Any]) -> dict[str, str]:
+    """A compact example for the model, e.g. {"query": "<short search query>"}."""
+    example = {}
+    for name, spec in schema.get("properties", {}).items():
+        if "enum" in spec:
+            hint = " | ".join(map(str, spec["enum"]))
+        else:
+            hint = spec.get("description") or spec["type"]
+        optional = "" if name in schema.get("required", []) else ", optional"
+        example[name] = f"<{hint}{optional}>"
+    return example

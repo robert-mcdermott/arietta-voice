@@ -119,14 +119,14 @@ hybrid_alpha = 0.55
 min_vector_score = 0.3
 
 [tools]
+# Built-in tools, then any of your own. Requests are checked against each tool's
+# trigger phrases in this order, so keep search_knowledge (which matches
+# everything) after tools that answer instantly.
 enabled = [
   "assistant_identity",
   "local_time",
-  "knowledge_retrieval",
-]
-
-[model_tools]
-enabled = [
   "search_knowledge",
   "system_info",
 ]
+# Your own tools: one Python file per tool. See tools/README.md.
+directory = "../tools"

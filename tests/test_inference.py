@@ -5,7 +5,6 @@ import pytest
 
 from arietta_voice.config import default_config
 from arietta_voice.inference import InferenceEngine
-from arietta_voice.models import ToolResponse
 
 
 @pytest.mark.parametrize(
@@ -92,11 +91,12 @@ def test_each_backend_clip_is_trimmed_before_slicing_unless_disabled(tmp_path, t
 
 def test_voice_tool_instances_survive_successful_turns(tmp_path, monkeypatch):
     from arietta_voice import tools
+    from arietta_voice.tools import FastPathHit, ToolResult
 
-    tool = Mock()
-    tool.maybe_handle.side_effect = [
-        ToolResponse("counter", "First"),
-        ToolResponse("counter", "Second"),
+    tool = Mock(instruction_text=Mock(return_value=None))
+    tool.fast_path.side_effect = [
+        FastPathHit("counter", {}, ToolResult(speak="First")),
+        FastPathHit("counter", {}, ToolResult(speak="Second")),
     ]
     constructor = Mock(return_value=tool)
     monkeypatch.setattr(tools, "ToolRegistry", constructor)

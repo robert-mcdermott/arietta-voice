@@ -6,12 +6,11 @@ from arietta_voice.web.schemas import (
     ChatRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
-    ModelToolCreateRequest,
-    ModelToolInvokeRequest,
     ToolCreateRequest,
     ToolEnabledRequest,
     ToolProbeRequest,
     ToolSourceWriteRequest,
+    ToolTestRequest,
 )
 from arietta_voice.web.service import API_VERSION, AUTH_REALM, AriettaApiService
 
@@ -23,11 +22,10 @@ __all__ = [
     "ChatRequest",
     "KnowledgeFileWriteRequest",
     "KnowledgeSearchRequest",
-    "ModelToolCreateRequest",
-    "ModelToolInvokeRequest",
     "ToolCreateRequest",
     "ToolEnabledRequest",
     "ToolProbeRequest",
     "ToolSourceWriteRequest",
+    "ToolTestRequest",
     "create_app",
 ]

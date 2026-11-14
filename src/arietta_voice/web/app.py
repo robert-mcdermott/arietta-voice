@@ -18,12 +18,11 @@ from arietta_voice.web.schemas import (
     ChatRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
-    ModelToolCreateRequest,
-    ModelToolInvokeRequest,
     ToolCreateRequest,
     ToolEnabledRequest,
     ToolProbeRequest,
     ToolSourceWriteRequest,
+    ToolTestRequest,
 )
 from arietta_voice.web.service import API_VERSION, AUTH_REALM, AriettaApiService
 from arietta_voice.worker import (
@@ -260,14 +259,33 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    @app.post("/api/tools/{tool_name}/probe")
-    def api_probe_tool(
+    @app.post("/api/tools/instructions")
+    def api_tool_instructions(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        try:
+            return svc().tool_instructions()
+        except Exception as exc:
+            service_obj = svc()
+            service_obj.last_error = f"{type(exc).__name__}: {exc}"
+            service_obj.event_logger.log(
+                "api_error", route="/api/tools/instructions", error=service_obj.last_error
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=service_obj.last_error
+            ) from exc
+
+    @app.post("/api/tools/{tool_name}/test")
+    def api_test_tool(
         tool_name: str,
-        payload: ToolProbeRequest,
+        payload: ToolTestRequest,
         _user: str = Depends(require_admin),
     ) -> dict[str, Any]:
+        if (payload.text is None) == (payload.arguments is None):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Send either text or arguments",
+            )
         try:
-            return svc().probe_tool(tool_name, payload.text)
+            return svc().test_tool(tool_name, text=payload.text, arguments=payload.arguments)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -277,92 +295,6 @@ def create_app(
         _user: str = Depends(require_admin),
     ) -> dict[str, Any]:
         return svc().validate_tool(tool_name)
-
-    @app.post("/api/model-tools/enabled")
-    def api_model_tools_enabled(
-        payload: ToolEnabledRequest,
-        _user: str = Depends(require_admin),
-    ) -> dict[str, Any]:
-        try:
-            return svc().set_enabled_model_tools(payload.enabled)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/model-tools/create")
-    def api_model_tool_create(
-        payload: ModelToolCreateRequest,
-        _user: str = Depends(require_source_editing),
-    ) -> dict[str, Any]:
-        try:
-            return svc().create_model_tool(payload)
-        except FileExistsError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/model-tools/reload")
-    def api_model_tools_reload(_user: str = Depends(require_admin)) -> dict[str, Any]:
-        return svc().reload_model_tools()
-
-    @app.get("/api/model-tools/{tool_name}/source")
-    def api_model_tool_source_read(
-        tool_name: str,
-        _user: str = Depends(require_admin),
-    ) -> dict[str, Any]:
-        try:
-            return svc().read_model_tool_source(tool_name)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.put("/api/model-tools/{tool_name}/source")
-    def api_model_tool_source_write(
-        tool_name: str,
-        payload: ToolSourceWriteRequest,
-        _user: str = Depends(require_source_editing),
-    ) -> dict[str, Any]:
-        try:
-            return svc().write_model_tool_source(tool_name, payload.content)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/model-tools/instructions")
-    def api_model_tool_instructions(_user: str = Depends(require_admin)) -> dict[str, Any]:
-        try:
-            return svc().model_tool_instructions()
-        except Exception as exc:
-            service_obj = svc()
-            service_obj.last_error = f"{type(exc).__name__}: {exc}"
-            service_obj.event_logger.log(
-                "api_error",
-                route="/api/model-tools/instructions",
-                error=service_obj.last_error,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=service_obj.last_error,
-            ) from exc
-
-    @app.post("/api/model-tools/{tool_name}/invoke")
-    def api_invoke_model_tool(
-        tool_name: str,
-        payload: ModelToolInvokeRequest,
-        _user: str = Depends(require_admin),
-    ) -> dict[str, Any]:
-        try:
-            return svc().invoke_model_tool(tool_name, payload.arguments)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    @app.post("/api/model-tools/{tool_name}/validate")
-    def api_validate_model_tool(
-        tool_name: str,
-        _user: str = Depends(require_admin),
-    ) -> dict[str, Any]:
-        return svc().validate_model_tool(tool_name)
 
     @app.post("/api/knowledge/search")
     def api_knowledge_search(
