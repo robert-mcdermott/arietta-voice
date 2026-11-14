@@ -103,3 +103,9 @@ class McpServerRequest(BaseModel):
 class McpImportRequest(BaseModel):
     # A snippet in the common {"mcpServers": {...}} format, as in a server's README.
     text: str = Field(min_length=2, max_length=100_000)
+
+
+class TextFileRequest(BaseModel):
+    """A persona or memory file's new text."""
+
+    content: str = Field(max_length=20_000)

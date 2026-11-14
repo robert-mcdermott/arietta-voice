@@ -259,7 +259,8 @@ Done:
 
 Still to do:
 
-- Push status updates over server-sent events instead of polling.
+- Push status updates over server-sent events instead of polling — done for
+  the runtime status on Home.
 - Browser smoke tests in CI. (Static checks run now: imports match exports,
   looked-up element ids exist in the page, and every module parses.)
 
@@ -267,7 +268,7 @@ Still to do:
 
 - **Settings** as forms with validation — done for the common settings
   (devices, models and paths are still file-only).
-- **Persona and memory** editors.
+- **Persona and memory** editors — done (the Persona page).
 - **Tools and integrations**: enable, configure and test tools and MCP servers —
   done (the Tools and Connections pages).
 - **Conversations**: searchable history.
