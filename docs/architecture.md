@@ -245,13 +245,32 @@ A tool that fails here is skipped and the next one is tried.
 
 ### 6.3 Model calls
 
-Tools with `model_callable` set (the default) are listed for the model with
-their names, argument examples derived from the schema, and descriptions. The
-model may reply with one JSON tool call, which is parsed, validated and run;
-its result is added as context and the model answers. If the tool is unknown,
-the arguments are invalid, or the tool fails or times out, the model is told
-that and answers without it. The model's first response is streamed, so a
-direct answer is spoken as it is generated.
+Tools with `model_callable` set (the default) are offered to the model in one
+of two ways.
+
+**Native calls (local model).** The tools are declared through Gemma 4's own
+chat template, in the system turn, so the declarations are part of the cached
+prompt prefix. The model answers with `<|tool_call>call:name{...}<tool_call|>`
+and stops; the call is parsed (`model_tooling.parse_native_tool_calls`),
+validated and run, and the result goes back as a `tool` message. The model then
+continues the same turn, and may call again, up to three tools per turn
+(`conversation.MAX_TOOL_STEPS`), after which the turn ends with an apology.
+Words the model says before a call are spoken and the answer continues after
+it. With tools declared Gemma 4 tends to reason in a hidden channel first, which
+cost 10 to 20 seconds, so the token that opens that channel is ruled out with a
+logit bias, and any channel text that still appears is never spoken. Set
+`models.native_tool_calls = false` to use the prompted format instead.
+
+**Prompted JSON (Bedrock, or native calls off).** The tools are described in a
+system message with argument examples, and the model may reply with one JSON
+tool call; its result is added as context and the model answers.
+
+Either way, a tool that is unknown, gets invalid arguments, fails or times out
+is reported to the model, which answers without it. A tool with
+`speaks_for_itself` (the timer tools) answers with its own `speak` instead of a
+second generation, which is faster and cannot misstate what the tool did. The
+model's first response is streamed, so a direct answer is spoken as it is
+generated.
 
 ### 6.4 Tool routing sequence
 

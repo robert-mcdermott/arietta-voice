@@ -40,6 +40,9 @@ def create_tool(context):
   Triggers are tried in the order tools are listed in `[tools].enabled`.
 - **`model_callable = False`** keeps a trigger-only tool out of the model's list.
 - **`timeout_s`** (default 10) bounds how long `run` may take.
+- **`speaks_for_itself = True`** makes `speak` the answer when the model calls
+  the tool too, instead of asking the model to put the result in its own words.
+  Use it when `speak` is a complete, exact answer, such as a confirmation.
 - **`aliases`** maps other names the model might use for an argument to the real
   one, such as `{"note": "text"}`. Small models often guess a near miss.
 - **`consequential = True`** marks a tool that changes something in the world.

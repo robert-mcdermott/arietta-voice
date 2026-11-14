@@ -138,10 +138,9 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
 3. **Keep the prompt cache across a discarded attempt.** Only matters when the
    speaker resumes after answer generation has begun; resuming during
    transcription, the common case in the benchmark, keeps the cache.
-4. **Native tool calling** where the provider supports it (shared with
-   Milestone 2's tool interface). The prompted JSON format is fragile with the
-   4-bit Gemma: in one check, prompt-prefix reuse alone was enough to turn a
-   `system_info` call into a spoken refusal.
+4. **Native tool calling** — done for the local model (Milestone 2, item 2).
+   The prompted JSON format was fragile with the 4-bit Gemma; native calls
+   chose the right tool in every check.
 5. **A live-microphone session** covering the early check, resuming and the
    deferred chime. Everything above was measured with synthetic speech.
 
@@ -155,8 +154,12 @@ acoustically at least once.
    JSON-schema arguments, optional triggers for instant answers, a time limit
    and a structured result, and user tools live in `tools/`. Unknown, invalid,
    failing and slow tools are reported to the model instead of failing the turn.
-2. **Agent loop.** Native tool calls, up to three steps per turn, a spoken
-   filler when a tool is slow, and confirmation before consequential actions.
+2. **Agent loop.** Native tool calls and up to three steps per turn are done
+   (the local model uses Gemma 4's own tool-call format; Bedrock keeps the
+   prompted JSON). In a real-model check every tool request was routed to the
+   right tool, including phrasings the prompted format missed. Still to do: a
+   spoken filler when a tool is slow, confirmation before consequential actions,
+   and native calls for Bedrock's Converse API.
 3. **MCP client.** Connect to Model Context Protocol servers so calendar,
    notes, home automation and similar integrations come from the existing
    ecosystem rather than hand-written adapters.
@@ -165,16 +168,16 @@ acoustically at least once.
    survives restarts, spoken alerts between turns that repeat until answered,
    "stop" and "snooze" without the wake word, and a console card. Still to do:
    weather, web search with spoken source attribution, and unit/date
-   arithmetic. Checks with the real model found the 4-bit Gemma unreliable at
-   choosing tools for less usual phrasings ("Is anything counting down right
-   now?") and once claiming to have cancelled a reminder without calling a
-   tool; native tool calling (item 2) is the next step for both.
+   arithmetic (the 4-bit Gemma said 17 × 23 is 749).
 5. **Home control** through Home Assistant: read-only status first, then
    explicitly authorized actions.
 6. **Model routing.** Keep the small local model for fast turns and tool
    selection; optionally escalate hard questions to a cloud model. Off by
    default, with a clear statement of what leaves the machine. Refresh the
-   stale Bedrock model examples.
+   stale Bedrock model examples. With the default persona at temperature 0.7,
+   the 4-bit Gemma declined about one general-knowledge question in six ("I
+   don't have that information"), with or without tools and whatever the tool
+   instructions said; a larger local model or escalation is the likely fix.
 7. Treat retrieved text and tool output as untrusted data, with
    prompt-injection fixtures in the evaluation corpus.
 

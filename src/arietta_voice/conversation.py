@@ -5,9 +5,22 @@ from dataclasses import dataclass
 from arietta_voice.clauses import RESPONSE_CHARS, SpeechClauses
 from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.llm import ModelEvent, build_chat_model
-from arietta_voice.model_tooling import parse_model_tool_request
+from arietta_voice.model_tooling import (
+    NATIVE_CALL_START,
+    parse_model_tool_request,
+    parse_native_tool_calls,
+    tool_specs,
+)
 from arietta_voice.models import ConversationTurn, ToolResponse
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
+
+# Tool calls the model may make in one turn before it must answer.
+MAX_TOOL_STEPS = 3
+NATIVE_TOOL_RULES = (
+    "Use a tool only when you need one, and answer general knowledge yourself. "
+    "Never say you set, changed or cancelled something unless a tool did it."
+)
+GAVE_UP = "Sorry, I couldn't finish that."
 
 
 @dataclass(slots=True)
@@ -19,8 +32,13 @@ class ChatResult:
 
 
 class ConversationService:
-    def __init__(self, config, *, prompt_manager=None, knowledge=None, generate=None):
+    def __init__(
+        self, config, *, prompt_manager=None, knowledge=None, generate=None, native_tools=False
+    ):
+        """``generate`` replaces the model (tests, the console); ``native_tools``
+        says whether that replacement takes ``tools`` and writes native calls."""
         self.config = config
+        self._native_override = native_tools
         self.prompt_manager = prompt_manager or PromptManager(config)
         self.knowledge = knowledge or KnowledgeRetriever(config.knowledge)
         self._llm = None
@@ -50,21 +68,35 @@ class ConversationService:
         finally:
             stream.close()
 
-    def _llm_stream(self, messages, *, max_tokens=None, temperature=None):
+    def _llm_stream(self, messages, *, max_tokens=None, temperature=None, tools=None):
         if self._generate_override is not None:
-            yield ModelEvent(
-                "text", self._llm_generate(messages, max_tokens=max_tokens, temperature=temperature)
+            options = {"tools": tools} if tools else {}
+            text = self._generate_override(
+                messages, max_tokens=max_tokens, temperature=temperature, **options
             )
+            yield ModelEvent("text", text)
             yield ModelEvent("done")
             return
         if self._llm is None:
             self._llm = build_chat_model(self.config.models)
+        options = {"tools": tools} if tools else {}
         yield from self._llm.stream(
             messages,
             max_tokens=max_tokens or self.config.models.max_tokens,
             temperature=self.config.models.temperature if temperature is None else temperature,
             reuse_prefix=True,
+            **options,
         )
+
+    def _native_tools(self) -> bool:
+        """Whether the model declares tools natively (Gemma 4) instead of prompted JSON."""
+        if not getattr(self.config.models, "native_tool_calls", True):
+            return False
+        if self._generate_override is not None:
+            return self._native_override
+        if self._llm is None:
+            self._llm = build_chat_model(self.config.models)
+        return getattr(self._llm, "native_tool_calls", False) is True
 
     def stream(self, *, message, history=(), use_tools=True, max_tokens=None, temperature=None):
         message = message.strip()
@@ -89,6 +121,16 @@ class ConversationService:
             context = ToolResponse(hit.name, "", bypass_model=False, context=hit.result.content)
         messages = self.prompt_manager.build_messages(history, message, context)
 
+        if tools is not None and tools.model_tools and self._native_tools():
+            called: list[str] = []
+            yield from self._speech_events(
+                self._native_turn(tools, messages, called, max_tokens, temperature),
+                source="model",
+                used_tool=used_tool,
+                finalize=lambda: {"model_tool": ", ".join(called) or None},
+            )
+            return
+
         model_tool = None
         instruction = tools.instruction_text() if tools is not None else None
         if instruction:
@@ -108,8 +150,18 @@ class ConversationService:
             if request is None:
                 raise ValueError("Invalid tool planning response")
             model_tool = request.name
-            followup = _tool_followup(tools, request.name, request.arguments)
-            messages = [*messages, {"role": "system", "content": followup}]
+            content, result = _run_for_model(tools, request.name, request.arguments)
+            if result is not None and result.speak and _speaks_for_itself(tools, request.name):
+                yield from self._speech_events(
+                    iter([ModelEvent("text", result.speak), ModelEvent("done")]),
+                    source="model",
+                    used_tool=used_tool,
+                    model_tool=model_tool,
+                )
+                return
+            if result is not None and result.content.strip():
+                content = f"Result from the {request.name} tool:\n{content}"
+            messages = [*messages, {"role": "system", "content": content}]
         yield from self._speech_events(
             self._llm_stream(messages, max_tokens=max_tokens, temperature=temperature),
             source="model",
@@ -131,7 +183,84 @@ class ConversationService:
             self._tools_key = key
         return self._tools
 
-    def _speech_events(self, events, **metadata):
+    def _native_turn(self, tools, messages, called, max_tokens, temperature):
+        """Text events for one turn with native tool calls, running tools between steps.
+
+        The model may answer, call a tool, or start answering and then call one.
+        Tool calls are never spoken. After each call the result is added as a
+        tool message and the model continues; after MAX_TOOL_STEPS calls it must
+        answer, or the turn ends with an apology.
+        """
+        specs = tool_specs(tools.model_tools)
+        messages = _with_rules(messages, NATIVE_TOOL_RULES)
+        fallback = None  # A tool's own answer, if the model then says nothing.
+        for step in range(MAX_TOOL_STEPS + 1):
+            spoken: list[str] = []
+            call_text = None
+            hidden = _HiddenReasoning()
+            events = self._llm_stream(
+                messages, max_tokens=max_tokens, temperature=temperature, tools=specs
+            )
+            try:
+                for event in events:
+                    if call_text is not None:
+                        if event.kind == "text":
+                            call_text += event.text
+                        continue
+                    if event.kind != "text":
+                        continue
+                    text = hidden.visible(event.text)
+                    head, marker, tail = text.partition(NATIVE_CALL_START)
+                    if head:
+                        spoken.append(head)
+                        yield ModelEvent("text", head)
+                    if marker:
+                        call_text = marker + tail
+            finally:
+                _close(events)
+            if call_text is None:
+                if not "".join(spoken).strip() and fallback:
+                    yield ModelEvent("text", fallback)
+                yield ModelEvent("done")
+                return
+            calls = parse_native_tool_calls(call_text)
+            if calls is None:
+                raise ValueError("Invalid tool call")
+            if step == MAX_TOOL_STEPS:
+                break
+            call = calls[0]  # One at a time; the model can ask again for more.
+            called.append(call.name)
+            content, result = _run_for_model(tools, call.name, call.arguments)
+            if result is not None and result.speak and _speaks_for_itself(tools, call.name):
+                yield ModelEvent("text", result.speak)
+                yield ModelEvent("done")
+                return
+            fallback = result.speak if result is not None else None
+            call_id = f"call_{step + 1}"
+            messages = [
+                *messages,
+                {
+                    "role": "assistant",
+                    "content": "".join(spoken),
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": call.name, "arguments": call.arguments},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": call.name,
+                    "content": content,
+                },
+            ]
+        yield ModelEvent("text", GAVE_UP)
+        yield ModelEvent("done")
+
+    def _speech_events(self, events, finalize=None, **metadata):
         clauses = SpeechClauses()
         spoken = []
         response_parts = []
@@ -160,6 +289,8 @@ class ConversationService:
                 spoken.append("I don't have a good answer for that yet.")
                 yield {"kind": "clause", "text": spoken[0]}
             response = sanitize_for_speech("".join(response_parts)) or spoken[0]
+            if finalize is not None:
+                metadata.update(finalize())
             yield {"kind": "done", "result": {"response": response, **metadata}}
         finally:
             if hasattr(events, "close"):
@@ -238,8 +369,8 @@ def _close(events):
         events.close()
 
 
-def _tool_followup(tools, name, arguments):
-    """What the model is told after it asks for a tool, including when that fails."""
+def _run_for_model(tools, name, arguments):
+    """Run a tool the model asked for: (text for the model, result or None on failure)."""
     from arietta_voice.tools import ToolError
 
     try:
@@ -247,11 +378,46 @@ def _tool_followup(tools, name, arguments):
     except ToolError as error:
         return (
             f"The {name} tool could not be used ({error.kind}: {error}). Answer as well as "
-            "you can without it, and say briefly that you could not check."
+            "you can without it, and say briefly that you could not check.",
+            None,
         )
     if not result.content.strip():
         return (
             f"The {name} tool found nothing for that request. If the answer depends on it, "
-            "say you are not sure instead of inventing details."
+            "say you are not sure instead of inventing details.",
+            result,
         )
-    return f"Result from the {name} tool:\n{result.content}"
+    return result.content, result
+
+
+def _speaks_for_itself(tools, name) -> bool:
+    return getattr(tools.tools.get(name), "speaks_for_itself", False) is True
+
+
+class _HiddenReasoning:
+    """Drops ``<|channel>...<channel|>`` reasoning from streamed text, across chunks."""
+
+    START, END = "<|channel>", "<channel|>"
+
+    def __init__(self) -> None:
+        self.inside = False
+
+    def visible(self, text: str) -> str:
+        shown = []
+        while text:
+            if self.inside:
+                _, found, text = text.partition(self.END)
+                self.inside = not found
+            else:
+                before, found, text = text.partition(self.START)
+                shown.append(before)
+                self.inside = bool(found)
+        return "".join(shown)
+
+
+def _with_rules(messages, rules):
+    """Add tool rules to the first system message, which holds the tool declarations."""
+    if messages and messages[0]["role"] == "system":
+        first = {**messages[0], "content": f"{messages[0]['content'].rstrip()}\n\n{rules}"}
+        return [first, *messages[1:]]
+    return [{"role": "system", "content": rules}, *messages]
