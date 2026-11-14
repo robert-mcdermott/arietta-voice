@@ -15,6 +15,7 @@ from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 
 PUBLIC_KNOWLEDGE = {"knowledge/README.md", "knowledge/getting-started.md"}
+PUBLIC_TOOLS = {"tools/README.md", "tools/example_dice.py"}
 PUBLIC_CONFIG = {
     "config/arietta_voice.toml",
     "config/SOUL.md",
@@ -30,6 +31,8 @@ def private_path(name: str) -> bool:
     if path.is_absolute() or ".." in path.parts or "\\" in name:
         return True
     if path.parts and path.parts[0] == "knowledge" and name not in PUBLIC_KNOWLEDGE:
+        return True
+    if path.parts and path.parts[0] == "tools" and name not in PUBLIC_TOOLS:
         return True
     if path.parts and path.parts[0] == "config" and name not in PUBLIC_CONFIG:
         return True

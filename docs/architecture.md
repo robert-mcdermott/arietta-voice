@@ -10,7 +10,7 @@ Arietta Voice is a local-first, voice-first assistant runtime for Apple Silicon 
 2. detect speech with VAD
 3. transcribe completed utterances locally
 4. use a wake word to enter an active session
-5. answer with deterministic tools, model-requested tools, local knowledge, and a chat model
+5. answer with tools (instant answers or model calls), local knowledge, and a chat model
 6. speak the response locally
 7. return to wake-word mode after goodbye or session timeout
 
@@ -20,7 +20,7 @@ The architecture is intentionally small and modular, with the runtime centered o
 
 - Keep the baseline runtime local-first and privacy-conscious.
 - Make wake-word voice interaction the default operating mode.
-- Preserve a clear seam between deterministic tools, knowledge retrieval, and model reasoning.
+- Preserve a clear seam between tools, knowledge retrieval, and model reasoning.
 - Keep the project easy to customize without editing core runtime code.
 - Support optional AWS Bedrock chat inference without changing the rest of the runtime.
 - Make future home-automation expansion a tool-layer concern.
@@ -36,8 +36,8 @@ The architecture is intentionally small and modular, with the runtime centered o
 | VAD and endpointing | `src/arietta_voice/turn_detection.py` | Silero VAD and Smart Turn |
 | Prompt assembly | `src/arietta_voice/prompts.py` | `SOUL.md`, memory, history, and tool context |
 | Chat model | `src/arietta_voice/llm.py` | Local MLX or AWS Bedrock |
-| Deterministic tools | `src/arietta_voice/tools/` | Pre-model routing and exact answers |
-| Model-requested tools | `src/arietta_voice/model_tools/` | One model-selected follow-up lookup |
+| Tools | `src/arietta_voice/tools/` | One tool interface: registry, argument schemas, built-in tools |
+| User tools | `tools/` | Your own tools, one file each, outside the installed package |
 | Knowledge retrieval | `src/arietta_voice/knowledge.py` | Keyword, vector, or hybrid markdown retrieval |
 | Runtime orchestration | `src/arietta_voice/runtime.py` | Main conversation loop |
 | HTTP API and admin console | `src/arietta_voice/web/` | Authenticated API, admin UI, health, logs, diagnostics, chat, tools, and knowledge |
@@ -168,10 +168,10 @@ The active session stays open until:
 
 Once a session is active, Arietta Voice answers turns in this order:
 
-1. deterministic tools
+1. instant answers from tool triggers
 2. prompt assembly with optional tool context
-3. chat generation
-4. optional single model-requested tool execution
+3. chat generation, streamed
+4. optional single tool call requested by the model
 5. final chat response
 6. TTS playback with barge-in support
 
@@ -209,7 +209,7 @@ sequenceDiagram
             Runtime-->>User: no response
         end
     end
-    Runtime->>Tools: maybe_handle(transcript)
+    Runtime->>Tools: fast_path(transcript)
     Tools-->>Runtime: direct answer or tool context or no-op
     Runtime->>Prompt: when model path is needed
     Prompt->>Chat: assembled messages
@@ -220,84 +220,66 @@ sequenceDiagram
 
 ## 6. Tooling Model
 
-### 6.1 Deterministic tools
+### 6.1 One tool interface
 
-Deterministic tools live under `src/arietta_voice/tools/`.
+Every tool, built in (`src/arietta_voice/tools/builtin/`) or yours (`tools/`), is
+a class with a `name`, a `description` of when to use it, a JSON-schema
+`parameters` object, optional `triggers`, a `timeout_s` and a `run(arguments)`
+method returning a `ToolResult`. `ToolResult.content` is information for the
+model; `ToolResult.speak` is a finished answer for the user.
 
-They are checked in config order before the model is called. Each tool returns a `ToolResponse`.
+`ToolRegistry` (`src/arietta_voice/tools/registry.py`) loads the tools listed in
+`[tools].enabled`, in order. A tool that fails to load is recorded in
+`registry.errors` and skipped, so one broken file does not disable the rest.
+Before a tool runs, its arguments are checked against its schema; it then runs
+in a thread with its time limit, and its result is truncated to bounded sizes.
 
-Use this category when:
+### 6.2 Instant answers
 
-- matching is explicit
-- the tool should directly answer
-- the output is a source of truth
+Before the model is called, each enabled tool's triggers are tried in
+configuration order and the first match runs. If its result has `speak`, that is
+the answer and the model is not called. If it has only `content`, the content is
+added to the prompt and the model answers with it. `search_knowledge` uses this
+to add relevant notes to every request, so it belongs at the end of the list.
+A tool that fails here is skipped and the next one is tried.
 
-The built-in `local_time` tool is the reference example.
+### 6.3 Model calls
 
-### 6.2 Model-requested tools
+Tools with `model_callable` set (the default) are listed for the model with
+their names, argument examples derived from the schema, and descriptions. The
+model may reply with one JSON tool call, which is parsed, validated and run;
+its result is added as context and the model answers. If the tool is unknown,
+the arguments are invalid, or the tool fails or times out, the model is told
+that and answers without it. The model's first response is streamed, so a
+direct answer is spoken as it is generated.
 
-Model-requested tools live under `src/arietta_voice/model_tools/`.
-
-The model sees a tool instruction block and may make at most one structured tool call. The runtime executes the tool and then gives the model one final answer turn with grounded follow-up context.
-
-Use this category when:
-
-- the model should decide whether the lookup is needed
-- the tool is gathering context rather than speaking directly
-- the workflow benefits from a single extra grounded step
-
-### 6.3 Tool routing sequence
+### 6.4 Tool routing sequence
 
 ```mermaid
 sequenceDiagram
     participant User
     participant Runtime
-    participant DTools as Deterministic ToolRegistry
+    participant Tools as ToolRegistry
     participant Prompt as PromptManager
     participant Chat as Chat model
-    participant MTools as ModelToolRegistry
 
     User->>Runtime: active-session utterance
-    Runtime->>DTools: maybe_handle(user_text)
-    alt direct deterministic match
-        DTools-->>Runtime: ToolResponse(bypass_model=True)
+    Runtime->>Tools: fast_path(user_text)
+    alt trigger matches and the tool returns speak
+        Tools-->>Runtime: ToolResult(speak=...)
         Runtime-->>User: direct tool answer
-    else context-enrichment match
-        DTools-->>Runtime: ToolResponse(context=...)
-        Runtime->>Prompt: build_messages(history, user, tool_context)
-        Prompt->>Chat: messages
-        Chat-->>Runtime: plain answer or tool_call JSON
-    else no deterministic match
-        Runtime->>Prompt: build_messages(history, user, no_tool_context)
-        Prompt->>Chat: messages
-        Chat-->>Runtime: plain answer or tool_call JSON
+    else trigger matches with content only, or no match
+        Runtime->>Prompt: build_messages(history, user, tool content if any)
+        Prompt->>Chat: tool list + messages
+        Chat-->>Runtime: answer (streamed) or tool_call JSON
     end
-    alt model requests one follow-up tool
-        Runtime->>MTools: execute(name, arguments)
-        MTools-->>Runtime: ModelToolExecution(followup_context)
-        Runtime->>Chat: original messages + followup_context
+    alt model requests one tool
+        Runtime->>Tools: run(name, arguments)
+        Tools-->>Runtime: ToolResult(content) or a failure note
+        Runtime->>Chat: messages + tool result
         Chat-->>Runtime: final answer
     end
 ```
-
-### 6.4 Ordering implications for deterministic tools
-
-Deterministic tools are checked in configuration order and the registry stops at the first match. In practice, exact utility tools should appear earlier in the list, while broad fallback tools such as `knowledge_retrieval` should stay near the end.
-
-This ordering matters because the deterministic registry is intentionally first-match-wins:
-
-- `local_time` should beat broad retrieval for exact time questions
-- custom exact-action tools should usually appear before `knowledge_retrieval`
-- `knowledge_retrieval` works best as a fallback context provider after specific tools have already had their turn
-
-### 6.5 Tool response modes
-
-The deterministic tool layer supports two main response styles:
-
-- direct answer: the tool returns `ToolResponse(bypass_model=True)`, so the runtime answers without calling the model
-- prompt enrichment: the tool returns `ToolResponse(bypass_model=False, context=...)`, so the runtime injects context and still calls the model
-
-Model-requested tools use `ModelToolExecution(followup_context=...)` instead of `ToolResponse`, because they always feed context back into a final model answer rather than bypassing the model directly.
 
 ## 7. Knowledge Architecture
 
@@ -350,7 +332,7 @@ sequenceDiagram
     participant MTools as ModelToolRegistry
 
     User->>Runtime: spoken question
-    Runtime->>Tools: maybe_handle(transcript)
+    Runtime->>Tools: fast_path(transcript)
     Tools->>KB: search(query)
     alt keyword backend
         KB->>KW: live lexical scoring
@@ -424,15 +406,14 @@ The runtime is driven by a typed `AppConfig` object that contains:
 - memory settings
 - logging settings
 - knowledge settings
-- deterministic tool registration
-- model-tool registration
+- enabled tools and the user tools directory
 
 This makes the boundary between runtime modules explicit and keeps config handling out of the main control loop.
 
 The TOML loader validates types, known keys, and runtime constraints before
 model construction. CLI overrides are validated again. History limits count
 user/assistant pairs, with zero retaining no history. `use_tools=false` in an
-API chat skips deterministic probing and model-tool registry construction.
+API chat skips instant answers and the tool registry.
 
 Configuration resolves built-in defaults, a selected base TOML, its sibling
 `.local.toml`, then CLI runtime overrides. Tables merge by setting and arrays
@@ -470,7 +451,7 @@ The repository is meant to be extended in these directions:
 
 - change persona and tone through ignored `config/SOUL.local.md`
 - add user-specific or environment-specific knowledge as markdown
-- add deterministic tools for exact actions and lookups
+- add tools with triggers for exact actions and lookups
 - add model-requested tools for follow-up reasoning workflows
 - replace or extend the wake detector backend
 - switch between local and Bedrock chat providers with config only

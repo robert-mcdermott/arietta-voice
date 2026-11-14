@@ -12,7 +12,7 @@ The project is meant to become *your* assistant, not a finished general-purpose
 assistant out of the box. As shipped, it is mostly a working runtime and admin
 surface; it becomes useful when you provide the assistant persona in `SOUL.md`,
 add knowledge articles for your environment, configure the wake word, and add
-deterministic or model-called tools for the things you want it to do.
+tools for the things you want it to do.
 
 The default assistant persona is named `Bridget`, and the default wake word is
 also `Bridget`. Both are easy to change in your private
@@ -31,8 +31,7 @@ For planned improvements, see [ROADMAP.md](ROADMAP.md). The
 - local VAD and turn-end detection with Silero VAD and Smart Turn
 - default local chat with Gemma on MLX
 - optional AWS Bedrock chat integration through the same chat-model seam
-- deterministic tool routing
-- model-requested follow-up tools
+- tools with instant answers and model calls, with argument schemas and time limits
 - local markdown knowledge retrieval
 - editable `SOUL.md` and optional memory file
 - a wake-word-first runtime designed for an always-on Mac mini
@@ -44,7 +43,7 @@ The project is intentionally focused on a voice-first assistant runtime with a s
 
 - the typed config system
 - the knowledge indexing and retrieval pipeline
-- deterministic tools and model-requested tools
+- tools, from instant answers to model calls
 - the local/Bedrock LLM adapter seam
 - STT, TTS, VAD, Smart Turn, and audio barge-in handling
 - prompt assembly and optional memory consolidation
@@ -280,8 +279,7 @@ The main config sections are:
 - `[memory]`: optional memory behavior
 - `[logging]`: runtime log locations, content opt-in, and event-log rotation
 - `[knowledge]`: knowledge directory, index directory, backend, and retrieval scoring knobs
-- `[tools]`: deterministic tools checked before the model
-- `[model_tools]`: model-requested follow-up tools
+- `[tools]`: enabled tools, in order, and the folder for your own tools
 - `[admin]`: source-editing permission (disabled by default)
 - `[runtime]`: turn, endpoint detection, and model startup time limits
 
@@ -665,29 +663,32 @@ Keep personal content in new files, since edits to the two starter documents
 remain tracked. See the [knowledge README](knowledge/README.md) for existing
 tracked files and custom knowledge directory locations.
 
-### Add a deterministic tool
+### Add a tool
 
-Copy [`src/arietta_voice/tools/tool_template.py`](src/arietta_voice/tools/tool_template.py) to a new module in the same directory, implement `maybe_handle(...)`, then add the module name to `[tools].enabled`.
+Put a Python file in [`tools/`](tools), then add its name to `[tools].enabled` or
+switch it on from the console's Tools page. [`tools/README.md`](tools/README.md)
+explains the format and [`tools/example_dice.py`](tools/example_dice.py) is a
+working example. Your tools live outside the installed package, so upgrades
+leave them alone, and only the README and the example are tracked by Git.
 
-Use deterministic tools when:
+Every tool has a name, a description of when to use it, a JSON schema for its
+arguments and a `run` method. A tool can work in two ways, or both:
 
-- the answer should be exact
-- routing should be explicit
-- the tool itself should produce the final answer
+- **Instant answer.** Give it `triggers` (regular expressions). A matching
+  request runs the tool at once, and if it returns `speak`, that is the answer;
+  the model is not asked. Use this when the answer must be exact, like the time.
+- **Model call.** The model sees the tool's name, description and arguments,
+  and can call it once before answering, using the tool's `content`. Use this
+  when the model should decide whether it needs the tool, or which arguments.
 
-The built-in `local_time` tool is the canonical example.
+Arguments are checked against the schema before a tool runs. A tool that fails,
+times out or does not exist is reported to the model, which answers without it
+instead of the turn failing. The built-in tools are `assistant_identity`,
+`local_time`, `search_knowledge` and `system_info`.
 
-### Add a model-requested tool
-
-Copy [`src/arietta_voice/model_tools/tool_template.py`](src/arietta_voice/model_tools/tool_template.py) to a new module in the same directory, implement `invoke(...)`, then add the module name to `[model_tools].enabled`.
-
-Use model-requested tools when:
-
-- the model should decide if the lookup is necessary
-- the tool gathers supporting facts instead of speaking directly
-- you want one grounded follow-up answer after tool execution
-
-This is the natural path for future home-automation actions and richer environment lookups.
+Configs from before tools were unified keep working: `[model_tools].enabled`
+is still read and added to `[tools].enabled`, and `knowledge_retrieval` means
+`search_knowledge`. Saving the tool list from the console writes the new form.
 
 ## Bedrock Integration
 
@@ -733,11 +734,11 @@ The current repo is a strong foundation for a home assistant or office assistant
 ├── evals/                      # Synthetic evaluation corpus and measured baselines
 ├── knowledge/                  # User-editable Markdown knowledge base
 ├── scripts/                    # Release checks
+├── tools/                      # Your own tools (README and an example are tracked)
 ├── src/
 │   └── arietta_voice/
-│       ├── tools/              # Deterministic tools (directly invoked)
+│       ├── tools/              # Tool interface, registry and built-in tools
 │       ├── web/                # Console API (app, service, schemas) and static frontend
-│       ├── model_tools/        # Tools invoked by model reasoning
 │       └── ...                 # Core runtime, models, audio, and knowledge handling
 └── tests/                      # Unit and process regression tests
 ```

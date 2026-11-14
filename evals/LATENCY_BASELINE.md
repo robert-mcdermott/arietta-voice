@@ -326,6 +326,24 @@ the same sixth turn (2 of 12). In each case the cached answer was a correct
 reply and the uncached one was not better, but the cause was not established;
 set `models.reuse_prompt_prefix = false` to compare.
 
+**Follow-up after the dependency upgrade.** With mlx-vlm 0.4.4, which these
+checks used, reuse trimmed Gemma 4's sliding-window caches by slicing them
+without updating their write position, and could not handle a window that had
+already wrapped; that likely explains the differences above. mlx-vlm 0.7.12,
+now locked, trims each cache with its own method and refuses to reuse one that
+cannot be trimmed. After a generation the recorded tokens and the cache length
+agree (47 and 47 in one check).
+
+Answers can still differ slightly, because a prompt processed in two parts is
+not bit-identical to one processed at once. In a five-question check with the
+unified tools, reuse on made the model answer "How much RAM does this machine
+have?" in words instead of calling `system_info`, which it called with reuse
+off; the other four answers matched. Turning reuse off costs about 0.65 s:
+with `--model-tools`, 30 warm muted turns, median first audio was 1,656 ms with
+reuse and 2,303 ms without (chat generation 507 ms against 1,148 ms). Reuse
+stays on; making tool selection robust to such small differences belongs to
+the tool-calling work.
+
 ### Speech engine and silence trimming
 
 ONNX Kokoro's first chunk is model inference on the CPU, about 445 ms even for

@@ -137,7 +137,9 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    speaker resumes after answer generation has begun; resuming during
    transcription, the common case in the benchmark, keeps the cache.
 4. **Native tool calling** where the provider supports it (shared with
-   Milestone 2's tool interface).
+   Milestone 2's tool interface). The prompted JSON format is fragile with the
+   4-bit Gemma: in one check, prompt-prefix reuse alone was enough to turn a
+   `system_info` call into a spoken refusal.
 5. **A live-microphone session** covering the early check, resuming and the
    deferred chime. Everything above was measured with synthetic speech.
 
@@ -147,10 +149,10 @@ acoustically at least once.
 
 ## Milestone 2 — Does things (`0.4.0`)
 
-1. **One tool interface.** Merge the deterministic and model-requested tool
-   systems: each tool has a name, description, JSON-schema arguments, an
-   optional fast-path trigger, a deadline and a structured result. Move user
-   tools out of the installed package into a user directory.
+1. **One tool interface.** Done: each tool has a name, description,
+   JSON-schema arguments, optional triggers for instant answers, a time limit
+   and a structured result, and user tools live in `tools/`. Unknown, invalid,
+   failing and slow tools are reported to the model instead of failing the turn.
 2. **Agent loop.** Native tool calls, up to three steps per turn, a spoken
    filler when a tool is slow, and confirmation before consequential actions.
 3. **MCP client.** Connect to Model Context Protocol servers so calendar,
