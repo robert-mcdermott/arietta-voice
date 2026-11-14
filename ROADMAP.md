@@ -42,7 +42,7 @@ The October work built a strong foundation and then stalled inside it.
   Markdown knowledge search and system info. The first real integration was
   scheduled for the fourth of five phases.
 - **Nothing shipped.** The version was still an untagged `0.1.0` with a large
-  unreleased changelog. (Since then: `0.2.0rc1` is tagged; see Milestone 0.)
+  unreleased changelog. (Since then: `0.2.0rc2` is tagged; see Milestone 0.)
 
 ## How this roadmap works
 
@@ -73,8 +73,9 @@ The console track below runs alongside milestones 0–3.
    further comparison runs until Milestone 1 names TTS as the bottleneck.
 2. Run one 30-minute soak on the default ONNX stack. If it passes the existing
    audio gate, release. If not, fix that failure only.
-3. Tag `0.2.0` from the current unreleased changelog. `0.2.0rc1` is tagged
-   (November 14); the final tag follows the soak in item 2.
+3. Tag `0.2.0` from the current unreleased changelog. `0.2.0rc1` and
+   `0.2.0rc2` are tagged (November 14); the final tag follows the soak in
+   item 2.
 4. Reorganize the repository (see [Repository layout](#repository-layout)).
 5. Add `ruff` formatting and linting to CI and reformat the dense October code.
 

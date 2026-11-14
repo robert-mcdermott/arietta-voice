@@ -111,8 +111,8 @@ alters real model output.
    separate decision: starter assets and first-run setup need packaging work
    before a standalone end-user installation is fully supported.
 
-The first tag is `v0.2.0rc1` (November 14, 2026), a release candidate for
-`0.2.0`. No historical release date is inferred from the pre-existing `0.1.0`
+The first tags are `v0.2.0rc1` and `v0.2.0rc2` (November 14, 2026), release
+candidates for `0.2.0`. No historical release date is inferred from the pre-existing `0.1.0`
 declaration. To finish `0.2.0` after the soak, set the version with
 `uvx uv@0.12.10 version 0.2.0`, rename the changelog section, and tag as above.
 
