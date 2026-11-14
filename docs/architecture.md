@@ -118,7 +118,7 @@ VAD is intentionally fast and lightweight. It answers the immediate question "is
 
 The second layer is Smart Turn, implemented by `SmartTurnEndpointDetector` in `src/arietta_voice/turn_detection.py`.
 
-Smart Turn does not run on every incoming chunk. It only runs after VAD has already detected speech, the runtime has buffered an utterance, and the silence window has elapsed. At that point, Arietta Voice has a candidate end-of-turn, and Smart Turn is used to decide whether that silence really means the user is done.
+Smart Turn does not run on every incoming chunk. It runs after VAD has detected speech and the runtime has buffered an utterance, once the full silence window has elapsed. An optional early check (`endpoint_early_ms`, off by default) can also run after a shorter silence and end the turn when the model is confident (`endpoint_early_threshold`, 0.7); it answers sooner but can end a turn at a pause between sentences. At that point, Arietta Voice has a candidate end-of-turn, and Smart Turn is used to decide whether that silence really means the user is done.
 
 Instead of looking at one tiny chunk, Smart Turn looks at the broader utterance context. The detector trims the buffered audio to the most recent 8 seconds, converts it into Whisper-style input features, and runs an ONNX model that returns an endpoint probability. That score is interpreted as "how likely is it that the user has actually finished their turn?"
 

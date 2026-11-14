@@ -35,6 +35,12 @@ reconnect_delay_s = 1.0
 sample_rate = 16000
 chunk_samples = 512
 silence_ms = 700
+# Optional faster turn-taking. With Smart Turn on and endpoint_early_ms above 0
+# (try 250), the end of a turn is also checked after that much silence, and the
+# assistant answers at once when the model is at least this confident. It saves
+# about 0.4 s, but a pause between two sentences can end the turn after the first.
+endpoint_early_ms = 0.0
+endpoint_early_threshold = 0.7
 tts_enabled = true
 # Experimental alternative: "mlx", only in the isolated trial environment.
 tts_backend = "onnx"
@@ -73,6 +79,9 @@ aws_access_key_id = ""
 aws_secret_access_key = ""
 aws_session_token = ""
 stt_language = "en"
+# Local model only: reuse the already-processed start of each conversation prompt
+# (persona, tool instructions, earlier turns) so the first word arrives sooner.
+reuse_prompt_prefix = true
 temperature = 0.7
 max_tokens = 220
 

@@ -15,6 +15,9 @@ knowledge. Run them from the repository root.
 uv run --locked bench/latency_baseline.py --turns 100 --audible
 ```
 
+Add `--model-tools` to offer the model one tool on every turn, which measures
+the default configuration's tool-planning path rather than the no-tool best case.
+
 Tests for these harnesses run with the main suite under `tests/`.
 
 ## Archived experiments

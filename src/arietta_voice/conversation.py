@@ -63,6 +63,7 @@ class ConversationService:
             messages,
             max_tokens=max_tokens or self.config.models.max_tokens,
             temperature=self.config.models.temperature if temperature is None else temperature,
+            reuse_prefix=True,
         )
 
     def stream(self, *, message, history=(), use_tools=True, max_tokens=None, temperature=None):
@@ -93,9 +94,7 @@ class ConversationService:
             return
         messages = self.prompt_manager.build_messages(history, message, response)
 
-        def generate(messages):
-            return self._llm_generate(messages, max_tokens=max_tokens, temperature=temperature)
-
+        model_tool = None
         if use_tools:
             from arietta_voice.model_tools import ModelToolRegistry
 
@@ -105,30 +104,26 @@ class ConversationService:
                 self._model_tools_key = key
             instruction = self._model_tools.instruction_text()
             if instruction:
-                # A planning response may be JSON. Never expose it incrementally.
-                first = generate([{"role": "system", "content": instruction}, *messages])
-                if len(first) > RESPONSE_CHARS:
-                    raise ValueError("Planning response exceeds its limit")
-                request = parse_model_tool_request(first)
-                if request is None:
-                    if "tool_call" in first or first.lstrip().startswith(("{", "```")):
-                        raise ValueError("Invalid tool planning response")
+                planning = self._llm_stream(
+                    [{"role": "system", "content": instruction}, *messages],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                tool_text, answer = _split_planning(planning)
+                if answer is not None:
+                    # The model chose to answer directly: speak it as it arrives.
                     yield from self._speech_events(
-                        iter([ModelEvent("text", first), ModelEvent("done")]),
-                        source="model",
-                        used_tool=used_tool,
-                        model_tool=None,
+                        answer, source="model", used_tool=used_tool, model_tool=None
                     )
                     return
+                request = parse_model_tool_request(tool_text)
+                if request is None:
+                    raise ValueError("Invalid tool planning response")
                 execution = self._model_tools.execute(request.name, request.arguments)
                 if execution is None:
                     raise ValueError("Model requested an unavailable tool")
                 messages = [*messages, {"role": "system", "content": execution.followup_context}]
                 model_tool = request.name
-            else:
-                model_tool = None
-        else:
-            model_tool = None
         yield from self._speech_events(
             self._llm_stream(messages, max_tokens=max_tokens, temperature=temperature),
             source="model",
@@ -169,3 +164,75 @@ class ConversationService:
         finally:
             if hasattr(events, "close"):
                 events.close()
+
+
+def _split_planning(events):
+    """Tell a tool request from a spoken answer after the first visible character.
+
+    A planning response is either JSON (optionally fenced) asking for a tool, or
+    the answer itself. Returns ``(text, None)`` with the complete response for a
+    tool request, which must never be spoken, or ``(None, events)`` replaying a
+    direct answer from its first event so speech can start while it generates.
+    """
+    seen = []
+    try:
+        for event in events:
+            seen.append(event)
+            if event.kind == "done":
+                return None, iter(seen)  # Finished without visible text.
+            if event.kind != "text":
+                raise ValueError("Unexpected generation event")
+            head = "".join(item.text for item in seen).lstrip()
+            if head.startswith(("{", "`")):
+                return _read_tool_request(head, events), None
+            if head:
+                return None, _direct_answer(seen, events)
+        raise RuntimeError("Incomplete generation stream")
+    except BaseException:
+        _close(events)
+        raise
+
+
+def _read_tool_request(head, events):
+    parts, size, complete = [head], len(head), False
+    try:
+        if size > RESPONSE_CHARS:
+            raise ValueError("Planning response exceeds its limit")
+        for event in events:
+            if complete:
+                raise ValueError("Event after completion")
+            if event.kind == "done":
+                complete = True
+            elif event.kind == "text":
+                size += len(event.text)
+                if size > RESPONSE_CHARS:
+                    raise ValueError("Planning response exceeds its limit")
+                parts.append(event.text)
+            else:
+                raise ValueError("Unexpected generation event")
+    finally:
+        _close(events)
+    if not complete:
+        raise RuntimeError("Incomplete generation stream")
+    return "".join(parts)
+
+
+def _direct_answer(seen, events):
+    # Speech has started, so a tool request appearing later cannot be honoured
+    # or spoken. Stop the turn rather than read JSON aloud.
+    text = ""
+    try:
+        for source in (seen, events):
+            for event in source:
+                if event.kind == "text":
+                    text += event.text
+                    if "tool_call" in text:
+                        raise ValueError("Invalid tool planning response")
+                yield event
+    finally:
+        _close(events)
+
+
+def _close(events):
+    if hasattr(events, "close"):
+        events.close()

@@ -434,11 +434,11 @@ def run_child(
         audio_module.sd = AudioProxy()
         original_process = runtime.process_utterance
 
-        def measured_process(pcm, mic, keys):
+        def measured_process(pcm, mic, keys, **options):
             row = microphone.row
             row["processing"] = time.monotonic()
             row["input_samples"] = len(pcm)
-            result = original_process(pcm, mic, keys)
+            result = original_process(pcm, mic, keys, **options)
             record = finish_row(row, time.monotonic(), runtime.last_error is not None)
             if resource_metrics:
                 record["model_resources"] = original_call("resource_snapshot", timeout_s=5)
@@ -493,6 +493,11 @@ def main():
         help="Sample worker MLX/RSS after each completed turn",
     )
     parser.add_argument(
+        "--model-tools",
+        action="store_true",
+        help="Enable the system_info model tool so each turn takes the tool-planning path",
+    )
+    parser.add_argument(
         "--case-offset",
         type=int,
         default=0,
@@ -521,6 +526,9 @@ def main():
             config.audio.tts_backend = args.tts_backend
         if args.mlx_kokoro_model is not None:
             config.audio.mlx_kokoro_model = str(args.mlx_kokoro_model.resolve())
+        if args.model_tools:
+            # The questions still need no tool; this measures the cost of offering one.
+            config.model_tools.enabled = ("system_info",)
         validate_config(config)
         if not config.audio.tts_enabled:
             parser.error("This baseline requires TTS enabled")
@@ -533,6 +541,7 @@ def main():
             chime_enabled=config.audio.chime_enabled,
             temperature=config.models.temperature,
             tts_backend=config.audio.tts_backend,
+            model_tools=list(config.model_tools.enabled),
             conversation_turns=args.conversation_turns,
             case_offset=args.case_offset,
             protocol="paced synthetic input; grouped conversation history; first output write, not acoustic onset",

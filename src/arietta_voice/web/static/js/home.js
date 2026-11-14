@@ -159,6 +159,43 @@ function renderExchange(runtime, assistant) {
     ${reply ? `<div class="exchange-line assistant"><span class="exchange-who">${escapeHtml(name)}</span><span>${escapeHtml(reply)}</span></div>` : ""}`;
 }
 
+function seconds(ms) {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
+}
+
+// Where the last spoken turn's time went, from the end of speech to first audio.
+function renderTurnTiming(runtime) {
+  const timing = runtime.reliability?.last_turn_timing;
+  const card = $("#turn-timing-card");
+  card.hidden = !timing || !(timing.first_audio_ms > 0);
+  if (card.hidden) return;
+  const wait = Math.max(0, timing.endpoint_wait_ms || 0);
+  const stt = Math.max(0, Math.min(timing.stt_ms || 0, timing.first_audio_ms - wait));
+  const respond = Math.max(0, timing.first_audio_ms - wait - stt);
+  const parts = [
+    ["timing-wait", `Deciding you had finished${timing.early_endpoint ? " (early)" : ""}`, wait],
+    ["timing-stt", "Transcribing", stt],
+    ["timing-respond", "Thinking and preparing speech", respond],
+  ];
+  $("#turn-timing-summary").textContent =
+    `First audio ${seconds(timing.first_audio_ms)} after you stopped speaking`;
+  const bar = $("#turn-timing-bar");
+  bar.replaceChildren(
+    ...parts.map(([name, , value]) => {
+      const segment = document.createElement("span");
+      segment.className = name;
+      segment.style.flexGrow = String(value);
+      return segment;
+    }),
+  );
+  $("#turn-timing-legend").innerHTML = parts
+    .map(
+      ([name, label, value]) =>
+        `<li><i class="${name}"></i>${escapeHtml(label)} · ${escapeHtml(seconds(value))}</li>`,
+    )
+    .join("");
+}
+
 export function renderRuntime(runtime) {
   overview.runtime = runtime;
   const assistant = overview.state?.assistant;
@@ -183,6 +220,7 @@ export function renderRuntime(runtime) {
   renderSteps(runtime);
   renderWarnings(runtime);
   renderExchange(runtime, assistant);
+  renderTurnTiming(runtime);
 }
 
 function renderFacts(state) {

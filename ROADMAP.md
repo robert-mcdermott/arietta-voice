@@ -86,29 +86,42 @@ files, and CI enforces formatting.
 speech to first audio at or below **1.0 s median and 1.6 s p95**; barge-in to
 silence at or below 300 ms p95.
 
-The baseline breaks down as roughly 715 ms waiting to decide the user finished,
-180 ms batch transcription, 690 ms full chat generation and 540 ms to the first
-TTS chunk. In order of expected gain:
+Measured so far (30 warm turns, muted output; see
+[the latency report](evals/LATENCY_BASELINE.md#november-13-2026-first-milestone-1-changes)):
 
-1. **Remove the buffered planning call.** Stream every generation; hold back
-   only output that begins as a tool call. Use native tool calling where the
-   provider supports it.
-2. **Endpoint adaptively.** Run Smart Turn after about 200 ms of silence and
-   respond immediately on a confident end of turn; keep the long silence window
-   only as a fallback. Measure false cutoffs on the existing fixtures.
-3. **Cache the prompt prefix.** Persona, memory and tool instructions are
-   re-processed on every turn. Move text chat to `mlx-lm` with a cached system
-   prefix (one-day experiment: confirm the Gemma build loads and first-token
-   time drops).
-4. **Stream transcription.** Promote the Moonshine streaming path so the
-   transcript is ready when the turn ends, and begin generation speculatively
-   on a stable partial.
-5. **Shorten the first spoken clause** so synthesis starts on a few words
-   rather than a full sentence.
-6. Revisit MLX Kokoro only if TTS is the largest remaining stage after 1–5.
+| Configuration | Before | Now |
+| --- | ---: | ---: |
+| Default, no tools on offer | 2.48 s | 2.17 s |
+| Default, a model tool on offer | 3.09 s | 2.19 s |
+| Early end-of-turn check on, single-sentence questions | 2.48 s | 1.81 s |
 
-Add a per-turn stage timeline to the event log so the console can show where
-each turn's time went.
+Done:
+
+- Direct answers stream past the tool-planning step instead of waiting for a
+  separate generation.
+- The local model reuses the already-processed start of each prompt. This used
+  mlx-vlm's own prefix cache, so no move to `mlx-lm` was needed.
+- The first spoken clause can end at a comma or dash.
+- Each spoken turn logs a stage timeline, shown on the console's Home page.
+- An early end-of-turn check exists but is **off by default**: it saves about
+  0.4 s, and it cut both two-sentence benchmark questions after their first
+  sentence.
+
+Remaining, in order. A turn now spends about 710 ms deciding the speaker has
+finished, 215 ms transcribing, 500 ms generating and 560 ms on the first speech
+chunk:
+
+1. **Recover when the speaker continues.** After an early end-of-turn decision,
+   keep listening until audio starts; if speech resumes, cancel the turn and
+   carry on with the same utterance. Then turn the early check on by default.
+   Needs live checks for chime and echo pickup.
+2. **First speech chunk.** It is now the largest stage after the endpoint wait,
+   so the Kokoro question reopens under the one-day rule: MLX Kokoro, or
+   synthesising a shorter first chunk.
+3. **Stream transcription.** Promote the Moonshine streaming path so the
+   transcript is ready when the turn ends.
+4. **Native tool calling** where the provider supports it (shared with
+   Milestone 2's tool interface).
 
 **Done when:** the standing benchmark meets the target over 100 warm turns with
 no increase in false cutoffs, and interruption latency has been measured

@@ -22,7 +22,7 @@ class ChatModel(Protocol):
 
     def is_loaded(self) -> bool: ...
 
-    def stream(self, messages, *, max_tokens=200, temperature=0.7): ...
+    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False): ...
 
     def generate(
         self,
@@ -36,10 +36,12 @@ class ChatModel(Protocol):
 class GemmaChatModel:
     provider = "local"
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, *, reuse_prompt_prefix: bool = True) -> None:
         self.model_name = model_name
+        self.reuse_prompt_prefix = reuse_prompt_prefix
         self._model = None
         self._processor = None
+        self._prefix_cache = None
         self._logger = logging.getLogger("arietta_voice.llm")
 
     def ensure_loaded(self) -> None:
@@ -79,13 +81,29 @@ class GemmaChatModel:
         )
         return result.text if hasattr(result, "text") else str(result)
 
-    def stream(self, messages, *, max_tokens=200, temperature=0.7):
+    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False):
+        """Yield text events; with reuse_prefix, skip prompt tokens shared with the last call.
+
+        Persona, tool instructions and earlier turns repeat at the start of every
+        conversation prompt. Reusing their cached attention state leaves only the
+        new tokens to process before the first word. Callers with unrelated
+        prompts, such as memory updates, must leave reuse off so they do not
+        replace the conversation's cache.
+        """
         self.ensure_loaded()
         from mlx_vlm import stream_generate
 
         prompt = self._processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
+        reuse_prefix = reuse_prefix and self.reuse_prompt_prefix
+        options = {}
+        if reuse_prefix:
+            if self._prefix_cache is None:
+                from mlx_vlm.generate import PromptCacheState
+
+                self._prefix_cache = PromptCacheState()
+            options["prompt_cache_state"] = self._prefix_cache
         chunks = stream_generate(
             self._model,
             self._processor,
@@ -93,16 +111,23 @@ class GemmaChatModel:
             max_tokens=max_tokens,
             temperature=temperature,
             repetition_penalty=1.2,
+            **options,
         )
+        finished = False
         try:
             for chunk in chunks:
                 # mlx-vlm emits incremental detokenizer segments, including its
                 # final flush. These are not cumulative response strings.
                 if chunk.text:
                     yield ModelEvent("text", chunk.text)
+            finished = True
             yield ModelEvent("done")
         finally:
             chunks.close()
+            if reuse_prefix and not finished:
+                # A stopped generation has advanced the cache past the tokens
+                # recorded for it. Start clean rather than reuse a mismatch.
+                self._prefix_cache = None
 
 
 class BedrockChatModel:
@@ -187,7 +212,8 @@ class BedrockChatModel:
         text_parts = [block["text"] for block in content_blocks if "text" in block]
         return "\n".join(part.strip() for part in text_parts if part and part.strip()).strip()
 
-    def stream(self, messages, *, max_tokens=200, temperature=0.7):
+    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False):
+        # Prefix reuse is a local-model optimisation; the service manages its own caching.
         self.ensure_loaded()
         system, conversation = _bedrock_messages(messages)
         request = {
@@ -225,7 +251,7 @@ class BedrockChatModel:
 def build_chat_model(config: ModelConfig) -> ChatModel:
     provider = (config.chat_provider or "local").strip().lower()
     if provider == "local":
-        return GemmaChatModel(config.chat_model)
+        return GemmaChatModel(config.chat_model, reuse_prompt_prefix=config.reuse_prompt_prefix)
     if provider == "bedrock":
         return BedrockChatModel(
             config.chat_model,

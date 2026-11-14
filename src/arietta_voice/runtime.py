@@ -85,6 +85,8 @@ class AriettaVoiceRuntime:
         self.turn_timeouts = 0
         self.utterances_discarded = 0
         self.last_turn_duration_ms: int | None = None
+        self.last_turn_timing: dict | None = None
+        self._turn_marks: dict = {}
         self.chime_player = ChimePlayer(config.audio.chime_enabled)
         self.wake_detector = build_wake_word_detector(config.wake_word)
         self.session = SessionContext()
@@ -379,7 +381,29 @@ class AriettaVoiceRuntime:
         self.set_state(next_state)
         return list(playback.buffered_chunks)
 
+    def _log_turn_timing(self) -> None:
+        """Record where a spoken turn's time went, measured from the end of speech."""
+        marks, self._turn_marks = self._turn_marks, {}
+        first_audio_at = marks.get("first_audio_at")
+        speech_end_at = marks.get("speech_end_at")
+        if first_audio_at is None or speech_end_at is None:
+            return  # Nothing was spoken, or the turn did not come from the microphone.
+
+        def since_speech(moment) -> int:
+            return round((moment - speech_end_at) * 1000)
+
+        self.last_turn_timing = {
+            "endpoint_wait_ms": since_speech(marks["decided_at"]),
+            "early_endpoint": bool(marks.get("early_endpoint")),
+            "stt_ms": marks.get("stt_ms"),
+            "first_audio_ms": since_speech(first_audio_at),
+            "total_ms": since_speech(time.monotonic()),
+        }
+        self.event_logger.log("turn_timing", **self.last_turn_timing)
+
     def _log_playback(self, playback):
+        if playback.started_at is not None:
+            self._turn_marks.setdefault("first_audio_at", playback.started_at)
         self.event_logger.log(
             "assistant_audio_complete",
             interrupted=playback.interrupted,
@@ -533,6 +557,7 @@ class AriettaVoiceRuntime:
         started_at = time.monotonic()
         transcript = self._infer("transcribe", audio).strip()
         stt_latency_ms = int((time.monotonic() - started_at) * 1000)
+        self._turn_marks["stt_ms"] = stt_latency_ms
 
         if not self.session.active and self.config.wake_word.enabled:
             if not transcript:
@@ -563,8 +588,14 @@ class AriettaVoiceRuntime:
         )
 
     def process_utterance(
-        self, audio: np.ndarray, microphone: MicrophoneStream, keypress_monitor: RawKeypressMonitor
+        self,
+        audio: np.ndarray,
+        microphone: MicrophoneStream,
+        keypress_monitor: RawKeypressMonitor,
+        *,
+        timing: dict | None = None,
     ) -> UtteranceResult:
+        self._turn_marks = dict(timing or {})
         self._turn_token = CancellationToken()
         self._turn_keys = keypress_monitor
         self._turn_thread_ident = threading.get_ident()
@@ -604,6 +635,7 @@ class AriettaVoiceRuntime:
             self._turn_microphone = None
             capture_phase(microphone, "listening")
             self.last_turn_duration_ms = round((time.monotonic() - self.turn_started_at) * 1000)
+            self._log_turn_timing()
             self.turn_started_at = self._turn_deadline = None
             self.turn_stage = "idle"
             self._publish_status(force=True)
@@ -666,6 +698,7 @@ class AriettaVoiceRuntime:
             "turn_timeouts": self.turn_timeouts,
             "utterances_discarded": self.utterances_discarded,
             "last_turn_duration_ms": self.last_turn_duration_ms,
+            "last_turn_timing": self.last_turn_timing,
             "worker_pid": self.worker.pid,
             "worker_restarts": self.worker.restarts,
             "memory": self.memory_jobs.snapshot(),
@@ -820,7 +853,23 @@ class AriettaVoiceRuntime:
             pre_roll.samples = np.zeros(0, dtype=np.float32)
             pre_roll.end = 0
 
+        # Optional: also ask Smart Turn after a short pause and keep the long
+        # silence window as the fallback. Off by default because a pause between
+        # sentences can then end the turn after the first one.
+        early_limit = 0
+        if self.config.audio.smart_turn_enabled and self.config.audio.endpoint_early_ms > 0:
+            early_limit = max(
+                1,
+                round(
+                    self.config.audio.endpoint_early_ms
+                    * self.config.audio.sample_rate
+                    / (self.config.audio.chunk_samples * 1000)
+                ),
+            )
+            if early_limit >= silence_limit:
+                early_limit = 0
         silent_chunks = 0
+        last_speech_at = None
         discard_until_quiet = False
         observed_drops = microphone.dropped_chunks + microphone.input_overflows
         while True:
@@ -880,7 +929,11 @@ class AriettaVoiceRuntime:
                     discard_until_quiet = True
                     self.vad.reset()
                     continue
-                if is_speech or silent_chunks < silence_limit:
+                if is_speech:
+                    last_speech_at = time.monotonic()
+                    continue
+                early = bool(early_limit) and silent_chunks == early_limit
+                if silent_chunks < silence_limit and not early:
                     continue
                 utterance = buffer.audio()
                 if self.config.audio.smart_turn_enabled:
@@ -895,13 +948,27 @@ class AriettaVoiceRuntime:
                         on_wait=self._playback_wait,
                     )
                     self._check_audio_health()
-                    self.event_logger.log("smart_turn_score", probability=round(endpoint, 4))
+                    self.event_logger.log(
+                        "smart_turn_score", probability=round(endpoint, 4), early=early
+                    )
                     self.turn_stage = "idle"
                     capture_phase(microphone, "listening")
-                    if endpoint < 0.5:
+                    if early:
+                        if endpoint < self.config.audio.endpoint_early_threshold:
+                            continue  # Not sure yet: wait for the full silence window.
+                    elif endpoint < 0.5:
                         silent_chunks = 0
                         continue
-                result = self.process_utterance(utterance, microphone, keypress_monitor)
+                result = self.process_utterance(
+                    utterance,
+                    microphone,
+                    keypress_monitor,
+                    timing={
+                        "speech_end_at": last_speech_at,
+                        "decided_at": time.monotonic(),
+                        "early_endpoint": early,
+                    },
+                )
                 if not result.buffered_chunks:
                     microphone.drain()
                 buffer.clear()

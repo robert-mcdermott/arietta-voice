@@ -96,6 +96,8 @@ class AudioConfig:
     sample_rate: int = 16000
     chunk_samples: int = 512
     silence_ms: int = 700
+    endpoint_early_ms: float = 0.0
+    endpoint_early_threshold: float = 0.7
     tts_enabled: bool = True
     tts_backend: str = "onnx"
     mlx_kokoro_model: str = ""
@@ -128,6 +130,7 @@ class ModelConfig:
     aws_secret_access_key: str | None = None
     aws_session_token: str | None = None
     stt_language: str = "en"
+    reuse_prompt_prefix: bool = True
     temperature: float = 0.7
     max_tokens: int = 220
 
@@ -310,6 +313,10 @@ def load_config(path: Path | None = None) -> AppConfig:
             sample_rate=int(audio.get("sample_rate", base.audio.sample_rate)),
             chunk_samples=int(audio.get("chunk_samples", base.audio.chunk_samples)),
             silence_ms=int(audio.get("silence_ms", base.audio.silence_ms)),
+            endpoint_early_ms=float(audio.get("endpoint_early_ms", base.audio.endpoint_early_ms)),
+            endpoint_early_threshold=float(
+                audio.get("endpoint_early_threshold", base.audio.endpoint_early_threshold)
+            ),
             tts_enabled=bool(audio.get("tts_enabled", base.audio.tts_enabled)),
             tts_backend=str(audio.get("tts_backend", base.audio.tts_backend)),
             mlx_kokoro_model=(
@@ -355,6 +362,9 @@ def load_config(path: Path | None = None) -> AppConfig:
             aws_session_token=str(models.get("aws_session_token", "")).strip()
             or base.models.aws_session_token,
             stt_language=str(models.get("stt_language", base.models.stt_language)),
+            reuse_prompt_prefix=bool(
+                models.get("reuse_prompt_prefix", base.models.reuse_prompt_prefix)
+            ),
             temperature=float(models.get("temperature", base.models.temperature)),
             max_tokens=int(models.get("max_tokens", base.models.max_tokens)),
         ),
@@ -477,6 +487,8 @@ def validate_config(config: AppConfig) -> AppConfig:
     require(config.audio.sample_rate == 16000, "audio.sample_rate must be 16000")
     require(config.audio.chunk_samples == 512, "audio.chunk_samples must be 512")
     require(config.audio.silence_ms > 0, "audio.silence_ms must be > 0")
+    number("audio.endpoint_early_ms", config.audio.endpoint_early_ms, 0, 5000)
+    number("audio.endpoint_early_threshold", config.audio.endpoint_early_threshold, 0.5, 1)
     require(
         config.audio.barge_in_threshold_chunks > 0, "audio.barge_in_threshold_chunks must be > 0"
     )
