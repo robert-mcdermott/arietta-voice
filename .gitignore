@@ -31,3 +31,6 @@ tmp/
 
 # macOS metadata
 .DS_Store
+
+# Downloaded model weights, such as the optional MLX Kokoro model.
+/models/

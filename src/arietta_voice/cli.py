@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--tts-backend",
         choices=["onnx", "mlx"],
-        help="Experimental MLX requires the trial environment",
+        help="MLX needs uv sync --group mlx-speech and a local model",
     )
     run_parser.add_argument(
         "--mlx-kokoro-model", type=Path, help="Explicit local Kokoro model directory for MLX"

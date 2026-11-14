@@ -530,11 +530,11 @@ def validate_config(config: AppConfig) -> AppConfig:
 
         require(
             bool(config.audio.mlx_kokoro_model.strip()),
-            "MLX trial requires audio.mlx_kokoro_model (local directory)",
+            "MLX speech requires audio.mlx_kokoro_model (local directory)",
         )
         require(
             bool(re.fullmatch(r"[ab][fm]_[a-z0-9_]+", config.audio.voice)),
-            "MLX trial supports named American/British English voices only",
+            "MLX speech supports named American/British English voices only",
         )
         number("audio.tts_speed", config.audio.tts_speed, 0.5, 2.0)
     require(

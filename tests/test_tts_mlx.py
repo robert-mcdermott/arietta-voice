@@ -63,6 +63,30 @@ def test_preflight_fails_without_local_assets_or_optional_dependencies(tmp_path,
         validate_trial(path, "af_heart")
 
 
+def test_preflight_accepts_any_installed_version_and_names_the_install_command(
+    tmp_path, monkeypatch
+):
+    from arietta_voice import tts_mlx
+
+    path = tmp_path / "Kokoro"
+    (path / "voices").mkdir(parents=True)
+    for name in ("config.json", "kokoro-v1_0.safetensors", "voices/af_heart.safetensors"):
+        (path / name).touch()
+    checked = []
+    monkeypatch.setattr(tts_mlx, "version", lambda package: checked.append(package) or "99.0")
+    assert validate_trial(path, "af_heart") == path.resolve()
+    assert set(checked) == {"mlx-audio", "mlx", "misaki", "en-core-web-sm"}
+
+    def missing(package):
+        if package == "misaki":
+            raise PackageNotFoundError(package)
+        return "1.0"
+
+    monkeypatch.setattr(tts_mlx, "version", missing)
+    with pytest.raises(ValueError, match="uv sync --group mlx-speech"):
+        validate_trial(path, "af_heart")
+
+
 def fake_speaker(samples, rate=24000):
     events = []
 

@@ -10,4 +10,5 @@ prune knowledge
 prune logs
 prune .knowledge_index
 prune tmp
+prune models
 global-exclude *.local.toml *.local.md *.admin.json *.working *.bak .DS_Store

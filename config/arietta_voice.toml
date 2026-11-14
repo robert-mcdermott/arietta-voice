@@ -43,7 +43,7 @@ silence_ms = 700
 endpoint_early_ms = 250.0
 endpoint_early_threshold = 0.7
 tts_enabled = true
-# Experimental alternative: "mlx", only in the isolated trial environment.
+# "mlx" is faster but optional: uv sync --group mlx-speech, then set mlx_kokoro_model.
 tts_backend = "onnx"
 # For MLX: explicit local Kokoro directory; relative paths resolve beside this config.
 mlx_kokoro_model = ""
