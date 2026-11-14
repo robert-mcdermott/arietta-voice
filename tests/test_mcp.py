@@ -210,7 +210,11 @@ def test_a_voice_turn_asks_then_switches_the_light_once(lights):
         assert not lights.log.exists()
         declared = {spec["function"]["name"] for spec in requests[0]}
         assert "lights_set_light" in declared
-        second = list(service.stream(message="Yes"))
+        history = [
+            {"role": "user", "content": "Turn off the office lights"},
+            {"role": "assistant", "content": first[-1]["result"]["response"]},
+        ]
+        second = list(service.stream(message="Yes", history=history))
         assert second[-1]["result"]["response"] == "Done, the office lights are off."
         assert lights.log.read_text() == "office=off\n"
     finally:
@@ -248,3 +252,108 @@ def test_a_short_plain_result_is_the_fallback_answer(lights):
     assert result.speak == "The kitchen lights are now on."
     failed = tools["lights_set_light"].run({"room": "kitchen", "on": "maybe"})
     assert failed.speak == "Sorry, that didn't work." and "problem" in failed.content
+
+
+def test_argument_names_survive_schema_cleaning():
+    schema = {
+        "type": "object",
+        "title": "CreateNote",
+        "properties": {"title": {"type": "string", "title": "Title"}, "body": {"type": "string"}},
+        "required": ["title"],
+    }
+    cleaned = clean_schema(schema)
+    assert cleaned["properties"] == {"title": {"type": "string"}, "body": {"type": "string"}}
+    assert cleaned["required"] == ["title"] and "title" not in {
+        k for k in cleaned if k != "properties"
+    }
+
+
+def test_a_saved_token_never_follows_a_new_address():
+    saved = parse_server("home", {"url": "http://a", "headers": {"Authorization": "Bearer s"}})
+    moved = parse_server(
+        "home", {"url": "https://elsewhere.test", "headers": {"Authorization": MASK}}
+    )
+    with pytest.raises(ValueError, match="enter the hidden values again"):
+        merge_secrets(moved, saved)
+    retyped = parse_server(
+        "home", {"url": "https://elsewhere.test", "headers": {"Authorization": "new"}}
+    )
+    assert merge_secrets(retyped, saved).headers == {"Authorization": "new"}
+
+
+def test_saving_keeps_other_top_level_keys(tmp_path):
+    path = tmp_path / "mcp.local.json"
+    path.write_text(
+        json.dumps({"inputs": [{"id": "token"}], "mcpServers": {"a": {"command": "x"}}})
+    )
+    servers, _ = load_servers(path)
+    save_servers(path, servers)
+    assert json.loads(path.read_text())["inputs"] == [{"id": "token"}]
+    with pytest.raises(ValueError, match="At most"):
+        save_servers(path, servers * 21)
+
+
+def test_stopping_a_server_that_is_still_starting_ends_it(tmp_path):
+    import asyncio
+    import time
+
+    from arietta_voice.mcp_servers import hub as hub_module
+
+    config = default_config(tmp_path)
+    started, ended = [], []
+
+    async def slow_session(self, ready):
+        started.append(True)
+        try:
+            await asyncio.sleep(30)
+        finally:
+            ended.append(True)
+
+    server = parse_server("slow", {"command": "x"})
+    connection = hub_module._Connection(server, config)
+    original = hub_module._Connection._session
+    hub_module._Connection._session = slow_session
+    try:
+        loop = asyncio.new_event_loop()
+        import threading
+
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+        connection.start(loop)
+        deadline = time.monotonic() + 5
+        while not started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        connection.stop()
+        while not ended and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ended == [True]
+        loop.call_soon_threadsafe(loop.stop)
+    finally:
+        hub_module._Connection._session = original
+
+
+def test_a_slow_call_keeps_the_connection(lights):
+    import anyio
+
+    hub = lights.hub()
+    connection = hub._connections["lights"]
+
+    class Slow:
+        async def call_tool(self, *args, **kwargs):
+            await anyio.sleep(5)
+
+    real, connection._client = connection._client, Slow()
+    try:
+        with pytest.raises(TimeoutError):
+            hub.call("lights", "set_light", {"room": "x", "on": True}, 0.2)
+        assert not connection._broken.is_set()
+    finally:
+        connection._client = real
+
+
+def test_a_tool_cannot_outlast_the_turn(tmp_path):
+    from arietta_voice.config import validate_config
+
+    config = default_config(tmp_path)
+    config.mcp.call_timeout_s = 58
+    with pytest.raises(ValueError, match="call_timeout_s"):
+        validate_config(config)

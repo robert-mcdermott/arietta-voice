@@ -831,8 +831,18 @@ office lights?". Only a clear answer within a minute decides:
 - anything else, such as "no, the kitchen lights": the action is dropped and
   the words are handled as a new request
 
-The follow-up needs no wake word while the conversation is open. Each server
-chooses when to ask, on the Connections page or with `"confirm"` in the file:
+The question is worded from the held call alone (the tool's description and
+the exact arguments), and only if it names every target it acts on; otherwise a
+plain one built from the arguments is said, so earlier text cannot disguise
+what will happen. The answer counts only as the next words in the same
+conversation, right after the question (so it needs `max_history_turns` of
+at least 1, the default is 8): a new voice session, the console's
+Clear, or anything said in between drops the action. It also waits for the full
+end-of-turn pause, so "yes... but only the kitchen" is heard whole. The
+follow-up needs no wake word while the conversation is open. A tool counts as
+read-only when its server says so, so switch off the tools of a server you do
+not fully trust. Each server chooses when to ask, on the Connections page or
+with `"confirm"` in the file:
 `"ask"` (the default) every time, unless you said "always" for that action;
 `"first_use"` once per action; `"never"` for a server you trust. Console chat
 shows Yes, Always and No buttons for the same question, and the Connections page

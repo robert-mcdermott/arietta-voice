@@ -364,12 +364,19 @@ as data, and a short plain result is kept as the answer to say if the model
 then says nothing.
 
 A tool that changes something (an MCP tool not marked `readOnlyHint`, or a
-local tool with `consequential = True`) is held instead of run. The model
-words a one-sentence question from the held call; if it writes anything else,
-a plain question is used. `ConversationService` keeps the held call for 60
-seconds. On the next message, `confirmations.confirmation_reply` accepts only a
-clear "yes", "no" or "always"; a yes runs exactly the held call, once, and the
-model answers from its result. Anything else drops the call. The registry's
+local tool with `consequential = True`) is held instead of run. The model words
+a one-sentence question in a separate short prompt that holds only the call
+(the tool's description and its arguments), outside the conversation's cached
+prompt; the wording is used only if it names every short text and number
+argument, else a plain question built from the arguments is used.
+`ConversationService` keeps the held call, with the tool's approval key, for 60
+seconds. It is honoured only if the conversation's last assistant turn is that
+question and the tool behind the name is unchanged. Then
+`confirmations.confirmation_reply` accepts only a clear "yes", "no" or "always";
+a yes runs exactly the held call, once, and the model answers from its result
+(a short plain result or "Done." if it says nothing). Anything else drops the
+call. While a question is open the voice runtime skips the early end-of-turn
+check, so the answer is final before it counts. The registry's
 `needs_confirmation` applies the tool's policy (`ask`, `first_use`, `never`)
 and remembered approvals in `state/tool_approvals.json`, and a tool that asks
 never runs from a trigger.

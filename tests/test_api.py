@@ -1016,3 +1016,33 @@ def test_a_broken_servers_file_is_not_overwritten(tmp_path: Path) -> None:
     body = {"name": "home", "transport": "http", "url": "https://home.example.test/mcp"}
     assert client.post("/api/mcp/servers", auth=AUTH, json=body).status_code == 400
     assert "bad name!" in path.read_text()
+
+
+def test_mcp_rename_drops_old_approvals_and_limits_hold(tmp_path: Path) -> None:
+    from arietta_voice.mcp_servers.servers import MAX_SERVERS
+    from arietta_voice.tools.approvals import Approvals
+
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    body = {
+        "name": "home",
+        "transport": "http",
+        "url": "https://home.example.test/mcp",
+        "headers": {"Authorization": "Bearer synthetic"},
+    }
+    client.post("/api/mcp/servers", auth=AUTH, json=body)
+    Approvals(service.config.mcp.approvals_file).add("mcp:home:HassTurnOff")
+    server = client.get("/api/mcp", auth=AUTH).json()["servers"][0]
+    renamed = client.post(
+        "/api/mcp/servers", auth=AUTH, json={**server, "original_name": "home", "name": "house"}
+    )
+    assert renamed.status_code == 200
+    assert Approvals(service.config.mcp.approvals_file).all() == []
+    moved = {**renamed.json()["servers"][0], "original_name": "house", "url": "https://x.test/mcp"}
+    refused = client.post("/api/mcp/servers", auth=AUTH, json=moved)
+    assert refused.status_code == 400 and "hidden values" in refused.json()["detail"]
+    many = {f"s{i}": {"url": f"https://s{i}.example.test/mcp"} for i in range(MAX_SERVERS)}
+    import json
+
+    too_many = client.post("/api/mcp/import", auth=AUTH, json={"text": json.dumps(many)})
+    assert too_many.status_code == 400 and "At most" in too_many.json()["detail"]

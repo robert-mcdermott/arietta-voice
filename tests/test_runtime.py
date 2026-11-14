@@ -991,3 +991,19 @@ def test_a_command_naming_another_alert_is_not_a_stop(runtime):
     runtime.announce_alerts(due, Mock(), Mock())
     assert runtime._alert_reply("Cancel my dentist reminder") is None
     assert runtime._alert_reply("Stop the pasta timer") == "Okay."
+
+
+def test_the_answer_to_a_confirmation_waits_for_the_full_silence_window(runtime):
+    # "Yes... but only the kitchen" must not run the action on an early guess.
+    runtime._log_tool_result({"source": "model", "confirmation": {"tool": "x", "question": "?"}})
+    _early_endpoint_runtime(runtime, [0.95])
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1] + [0] * 10), Mock())
+    call = runtime.process_utterance.call_args
+    assert call.kwargs["timing"]["early_endpoint"] is False
+    assert len(call.args[0]) == 11 * 512
+    runtime._log_tool_result({"source": "model"})
+    assert runtime._awaiting_answer is False
+    runtime._log_tool_result({"source": "model", "confirmation": {"tool": "x"}})
+    runtime.reset_session()
+    assert runtime._awaiting_answer is False

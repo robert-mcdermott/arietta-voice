@@ -29,7 +29,7 @@ from arietta_voice.mcp_servers import (
     save_servers,
 )
 from arietta_voice.mcp_servers import probe as mcp_probe
-from arietta_voice.mcp_servers.servers import merge_secrets
+from arietta_voice.mcp_servers.servers import MAX_SERVERS, merge_secrets
 from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
@@ -563,6 +563,8 @@ class AriettaApiService:
             save_servers(Path(self.config.mcp.servers_file), servers)
             if original and payload.name != original:
                 self._mcp_tests.pop(original, None)
+                # A new name is a new server: earlier "always" answers do not carry over.
+                Approvals(self.config.mcp.approvals_file).remove(prefix=f"mcp:{original}:")
         self.event_logger.log("api_mcp_server_saved", name=server.name, transport=server.transport)
         return self.mcp_servers()
 
@@ -596,6 +598,8 @@ class AriettaApiService:
             servers = self._editable_mcp_servers()
             names = {server.name for server in servers}
             added = [server for server in found if server.name not in names]
+            if len(servers) + len(added) > MAX_SERVERS:
+                raise ValueError(f"At most {MAX_SERVERS} MCP servers can be connected")
             if any(server.runs_a_program for server in added):
                 self._require_programs()
             save_servers(Path(self.config.mcp.servers_file), [*servers, *added])

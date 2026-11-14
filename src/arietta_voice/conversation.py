@@ -20,6 +20,7 @@ from arietta_voice.model_tooling import (
 )
 from arietta_voice.models import ConversationTurn, ToolResponse
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
+from arietta_voice.tools.registry import approval_key
 
 # Tool calls the model may make in one turn before it must answer.
 MAX_TOOL_STEPS = 3
@@ -38,10 +39,14 @@ FILLER_AFTER_S = 0.8
 # long; after that a "yes" is just a word, and the action is not taken.
 CONFIRM_WINDOW_S = 60.0
 CANCELLED = "Okay, I won't."
-ASK_FIRST = (
-    "Not done yet: this changes something, so the user must agree first. Ask them "
-    "in one short question whether to go ahead, saying plainly what will happen, "
-    'such as "Should I turn off the office lights?". Do not say it is done.'
+GONE = "Sorry, that action isn't available any more."
+# The question is worded from the held call alone, never from the conversation
+# or tool results, so text a server returned cannot disguise what will happen.
+QUESTION_RULES = (
+    "Write one short yes-or-no question asking the user whether to do exactly the "
+    "action below. Use everyday words, mention every detail given, and write "
+    "nothing else. Example: for the action 'Turn the lights in a room on or off' "
+    "with room=office and on=false, write: Should I turn off the office lights?"
 )
 # On the first turn, wait this long for MCP servers still starting, so their
 # tools are on offer from the start.
@@ -67,6 +72,8 @@ class PendingAction:
     arguments: dict = field(default_factory=dict)
     question: str = ""
     expires_at: float = 0.0
+    # Which action it is; a tool list rebuilt since may reuse the name.
+    key: str = ""
 
 
 class ConversationService:
@@ -148,10 +155,27 @@ class ConversationService:
             if t["content"].strip()
         ]
         tools = self._registry() if use_tools else None
-        # A question asked last turn: a clear answer settles it, anything else drops it.
+        # A question asked last turn: a clear answer settles it, anything else drops
+        # it. It counts only in the conversation that asked it, as its last words.
         pending, self._pending, self._asked = self._pending, None, None
-        if pending is not None and tools is not None and time.monotonic() < pending.expires_at:
+        if (
+            pending is not None
+            and tools is not None
+            and time.monotonic() < pending.expires_at
+            and _asked_last(history, pending.question)
+        ):
             reply = confirmation_reply(message)
+            tool = tools.tools.get(pending.name)
+            if reply in ("yes", "always") and (tool is None or approval_key(tool) != pending.key):
+                reply = "gone"
+            if reply == "gone":
+                yield from self._speech_events(
+                    iter([ModelEvent("text", GONE), ModelEvent("done")]),
+                    source="confirmation",
+                    used_tool=None,
+                    model_tool=None,
+                )
+                return
             if reply == "no":
                 yield from self._speech_events(
                     iter([ModelEvent("text", CANCELLED), ModelEvent("done")]),
@@ -227,13 +251,7 @@ class ConversationService:
             if request is None:
                 raise ValueError("Invalid tool planning response")
             if self._should_ask(tools, request.name, request.arguments):
-                arguments = json.dumps(request.arguments, ensure_ascii=False)
-                prompt = (
-                    f"You were about to use the {request.name} tool with {arguments}. {ASK_FIRST}"
-                )
-                question = self._question(
-                    [*messages, {"role": "system", "content": prompt}], tools, request, None
-                )
+                question = self._question(tools, request)
                 yield from self._speech_events(
                     iter([ModelEvent("text", question), ModelEvent("done")]),
                     source="model",
@@ -304,25 +322,39 @@ class ConversationService:
         # Bad arguments go back to the model to fix; asking about them would be pointless.
         return tools.needs_confirmation(name) and not tools.argument_problems(name, arguments)
 
-    def _question(self, messages, tools, call, specs) -> str:
-        """The model's own "Should I …?" for a held call, or a plain one if it fails."""
+    def _question(self, tools, call) -> str:
+        """Hold a call and word its "Should I …?".
+
+        The model sees only the call (the tool's description and the exact
+        arguments), so the question cannot be steered by earlier text. Its
+        wording is used only if it mentions every argument; otherwise a plain
+        question built from the arguments is used.
+        """
+        tool = tools.tools.get(call.name)
+        details = ", ".join(
+            f"{key}={json.dumps(value, ensure_ascii=False)}"
+            for key, value in call.arguments.items()
+        )
+        what = getattr(tool, "description", "") or call.name
+        prompt = [
+            {"role": "system", "content": QUESTION_RULES},
+            {"role": "user", "content": f"Action: {what}\nDetails: {details or 'none'}"},
+        ]
         text = ""
         try:
-            hidden = _HiddenReasoning()
-            events = self._llm_stream(messages, max_tokens=60, temperature=0.2, tools=specs)
-            try:
-                for event in events:
-                    if event.kind == "text":
-                        text += hidden.visible(event.text)
-                        if len(text) > 400:
-                            break
-            finally:
-                _close(events)
+            # Not the conversation's cached prompt: this is a separate, short one.
+            text = self._llm_generate(prompt, max_tokens=60, temperature=0.0)
         except Exception as error:  # A plain question still lets the owner decide.
             logger.warning("Could not word a confirmation question (%s)", type(error).__name__)
-        question = _clean_question(text) or _plain_question(tools.tools.get(call.name), call)
+        question = _clean_question(_HiddenReasoning().visible(text or ""))
+        if not _mentions_arguments(question, call.arguments):
+            question = _plain_question(tool, call)
         self._pending = PendingAction(
-            call.name, dict(call.arguments), question, time.monotonic() + CONFIRM_WINDOW_S
+            call.name,
+            dict(call.arguments),
+            question,
+            time.monotonic() + CONFIRM_WINDOW_S,
+            approval_key(tool) if tool is not None else "",
         )
         self._asked = {"tool": call.name, "question": question}
         return question
@@ -416,10 +448,7 @@ class ConversationService:
             call_id = f"call_{step + 1}"
             if self._should_ask(tools, call.name, call.arguments):
                 # Hold the call and ask; the owner's next words decide (see stream).
-                held = _tool_exchange(
-                    call_id, call.name, call.arguments, ASK_FIRST, "".join(spoken)
-                )
-                yield ModelEvent("text", self._question([*messages, *held], tools, call, specs))
+                yield ModelEvent("text", self._question(tools, call))
                 yield ModelEvent("done")
                 return
             called.append(call.name)
@@ -601,6 +630,37 @@ def _clean_question(text: str) -> str:
     # Only the question itself: "I need your OK first. Should I …?" -> "Should I …?"
     question = re.split(r"(?<=[.!])\s+", text[: text.index("?") + 1].strip())[-1]
     return question if 0 < len(question) <= 220 else ""
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _mentions_arguments(question: str, arguments: dict) -> bool:
+    """Whether a question names every short text or number it would act on.
+
+    A question that leaves out or changes a target ("the office" for a call on
+    "the garage") must not be what the owner agrees to.
+    """
+    if not question:
+        return False
+    said = set(_words(question))
+    for value in arguments.values():
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            continue
+        if isinstance(value, str) and len(value) > 60:
+            continue  # A message body, say: too long to repeat in a question.
+        for word in _words(str(value)):
+            if not ({word, word + "s", word + "es"} & said or word.rstrip("s") in said):
+                return False
+    return True
+
+
+def _asked_last(history, question: str) -> bool:
+    """Whether the assistant's last words in this conversation were the question."""
+    if not history or history[-1].role != "assistant":
+        return False
+    return " ".join(_words(question)) in " ".join(_words(history[-1].content))
 
 
 def _plain_question(tool, call) -> str:

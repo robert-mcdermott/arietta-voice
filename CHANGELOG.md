@@ -21,13 +21,16 @@ version policy and the release procedure.
   program needs `[admin].allow_source_editing = true`.
 - Spoken confirmation before actions. A tool that changes something (an MCP
   tool not marked read-only, or a local tool with `consequential = True`) is
-  held, and the assistant asks "Should I …?" in its own words. A clear "yes"
-  within a minute runs exactly that call, once; "no" cancels; "always" runs it
-  and stops asking about that action; anything else drops it and is answered
-  as a new request. Each server asks every time (the default), once per action,
+  held, and the assistant asks "Should I …?", worded from the held call alone
+  and checked to name what it acts on. A clear "yes" as the next words in the
+  same conversation, within a minute, runs exactly that call, once; "no"
+  cancels; "always" runs it and stops asking about that action; anything else
+  drops it and is answered as a new request. The answer waits for the full
+  end-of-turn pause. Each server asks every time (the default), once per action,
   or never. Console chat shows Yes, Always and No buttons for the same question.
 - `[mcp]` settings: `enabled`, `servers_file`, `approvals_file`,
-  `connect_timeout_s` and `call_timeout_s`.
+  `connect_timeout_s` and `call_timeout_s` (at least 5 seconds shorter than
+  `runtime.turn_timeout_s`).
 - Static checks of the console's JavaScript in the test suite: every imported
   name is exported, every element looked up by id exists in the page, and each
   module parses (with Node, which the CI runners have).
@@ -38,6 +41,8 @@ version policy and the release procedure.
 
 ### Fixed
 
+- A number sent where a tool expects text is passed on exactly
+  (`2065551234`, not `2.06555e+09`).
 - New built-in tools now switch on after an upgrade even when the private
   config has its own tool list. Before, `config-init` and the console's Tools
   page saved the whole list, so tools added by later releases stayed off until

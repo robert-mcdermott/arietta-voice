@@ -127,11 +127,18 @@ def clean_schema(schema: Any) -> dict[str, Any]:
 
     def clean(node):
         if isinstance(node, dict):
-            return {
-                key: clean(value)
-                for key, value in node.items()
-                if key not in ("title", "$schema", "$id", "examples")
-            }
+            cleaned = {}
+            for key, value in node.items():
+                if key in ("title", "$schema", "$id", "examples"):
+                    continue
+                if key in ("properties", "patternProperties", "$defs", "definitions") and (
+                    isinstance(value, dict)
+                ):
+                    # Names here are arguments (a "title" argument, say), not keywords.
+                    cleaned[key] = {name: clean(spec) for name, spec in value.items()}
+                else:
+                    cleaned[key] = clean(value)
+            return cleaned
         if isinstance(node, list):
             return [clean(item) for item in node]
         return node

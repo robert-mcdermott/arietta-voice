@@ -229,14 +229,17 @@ class _Connection:
                 timeout=self.config.mcp.connect_timeout_s,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            if not done:
+                raise TimeoutError(f"no answer within {self.config.mcp.connect_timeout_s:g} s")
+            await session
         finally:
+            # Stopped, timed out or failed: the session (and any program it
+            # started) must end with this attempt, never run on unseen.
             waiter.cancel()
-        if not done:
-            session.cancel()
-            with suppress(BaseException):
-                await session
-            raise TimeoutError(f"no answer within {self.config.mcp.connect_timeout_s:g} s")
-        await session
+            if not session.done():
+                session.cancel()
+                with suppress(BaseException):
+                    await session
 
     async def _session(self, ready: asyncio.Event) -> None:
         import anyio
@@ -278,6 +281,8 @@ class _Connection:
         try:
             with anyio.fail_after(timeout_s):
                 return await client.call_tool(tool, arguments, read_timeout_seconds=timeout_s)
+        except TimeoutError:
+            raise  # A slow tool; the connection itself is fine.
         except (ConnectionError, OSError, anyio.ClosedResourceError, anyio.BrokenResourceError):
             if self._broken is not None:
                 self._broken.set()  # Reconnect; this call has failed.

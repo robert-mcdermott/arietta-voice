@@ -740,6 +740,12 @@ def validate_config(config: AppConfig) -> AppConfig:
     require(len(config.weather.location) <= 120, "weather.location must be at most 120 characters")
     number("mcp.connect_timeout_s", config.mcp.connect_timeout_s, 1, 300)
     number("mcp.call_timeout_s", config.mcp.call_timeout_s, 1, 110)
+    # A tool that outlasts the turn would get the worker restarted, reloading
+    # every model and dropping every MCP connection.
+    require(
+        config.mcp.call_timeout_s + 5 <= config.runtime.turn_timeout_s,
+        "mcp.call_timeout_s must be at least 5 seconds shorter than runtime.turn_timeout_s",
+    )
     return config
 
 

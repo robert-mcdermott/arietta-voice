@@ -76,11 +76,18 @@ def coerce_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[
             elif (
                 kind == "string" and isinstance(value, (int, float)) and not isinstance(value, bool)
             ):
-                value = f"{value:g}"
+                value = _number_text(value)
         except ValueError:
             pass  # Left as text; validation reports it.
         converted[name] = value
     return converted
+
+
+def _number_text(value: int | float) -> str:
+    """A number as text, exactly: 10 -> "10", 2.5 -> "2.5", 2065551234 stays whole."""
+    if isinstance(value, float) and value.is_integer() and abs(value) < 1e15:
+        value = int(value)
+    return str(value)
 
 
 def _check_value(spec: dict[str, Any], value: Any) -> list[str]:

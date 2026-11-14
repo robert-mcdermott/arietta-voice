@@ -64,10 +64,25 @@ def service_for(tmp_path, monkeypatch):
     return build
 
 
-def turn(service, message, history=()):
-    events = list(service.stream(message=message, history=history))
+def turn(service, message, history=None):
+    """One turn, keeping the conversation's history as the voice runtime does."""
+    kept = _history(service)
+    used = kept if history is None else history
+    events = list(service.stream(message=message, history=list(used)))
     clauses = " ".join(event["text"] for event in events if event["kind"] == "clause")
-    return clauses, events[-1]["result"]
+    result = events[-1]["result"]
+    if history is None:
+        kept += [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": result["response"]},
+        ]
+    return clauses, result
+
+
+def _history(service):
+    if not hasattr(service, "test_history"):
+        service.test_history = []
+    return service.test_history
 
 
 QUESTION = "Should I turn off the office lights?"
@@ -80,20 +95,17 @@ def test_an_action_is_held_and_the_model_words_the_question(service_for):
     assert Lights.runs == []  # Nothing happens until the owner agrees.
     assert result["confirmation"] == {"tool": "lights", "question": QUESTION}
     assert result["model_tool"] is None
-    held = model.requests[1]["messages"]
-    assert held[-1]["role"] == "tool" and "must agree first" in held[-1]["content"]
-    # The same tools are declared, so the cached prompt prefix still applies.
-    assert model.requests[1]["tools"] == model.requests[0]["tools"]
+    # The question is worded from the held call alone, not the conversation.
+    asked = model.requests[1]["messages"]
+    assert [message["role"] for message in asked] == ["system", "user"]
+    assert 'room="office", on=false' in asked[1]["content"]
+    assert model.requests[1]["tools"] is None
 
 
 def test_yes_runs_exactly_the_held_call_once(service_for):
     service, model = service_for(switch(), QUESTION, "Done, the office lights are off.")
     turn(service, "Turn off the office lights")
-    history = [
-        {"role": "user", "content": "Turn off the office lights"},
-        {"role": "assistant", "content": QUESTION},
-    ]
-    said, result = turn(service, "Yeah, go ahead.", history)
+    said, result = turn(service, "Yeah, go ahead.")
     assert said == "Done, the office lights are off."
     assert Lights.runs == [{"room": "office", "on": False}]
     assert result["model_tool"] == "lights"
@@ -195,7 +207,7 @@ def test_the_prompted_format_asks_too(service_for):
     service, model = service_for(request, QUESTION, "Done.", native=False)
     said, result = turn(service, "Turn off the office lights")
     assert said == QUESTION and result["confirmation"]["tool"] == "lights"
-    assert "about to use the lights tool" in model.requests[1]["messages"][-1]["content"]
+    assert 'room="office"' in model.requests[1]["messages"][-1]["content"]
     said, _ = turn(service, "Yes")
     assert Lights.runs == [{"room": "office", "on": False}]
     assert "Result from the lights tool" in model.requests[2]["messages"][-1]["content"]
@@ -256,3 +268,48 @@ def test_the_question_drops_any_preamble(service_for):
     service, _ = service_for(switch(), "I need your OK first. " + QUESTION)
     said, _ = turn(service, "Turn off the office lights")
     assert said == QUESTION
+
+
+def test_a_question_about_something_else_is_replaced_by_the_plain_one(service_for):
+    # The held call is the garage; a question naming the office must not be agreed to.
+    service, _ = service_for(switch("garage"), QUESTION, "Done.")
+    said, _ = turn(service, "Turn off the garage lights")
+    assert said == "Should I go ahead with lights, with room garage and on off?"
+    turn(service, "Yes")
+    assert Lights.runs == [{"room": "garage", "on": False}]
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        [],  # The console's Clear, or a new voice session.
+        [{"role": "user", "content": "Turn off the office lights"}],
+        [
+            {"role": "user", "content": "Turn off the office lights"},
+            {"role": "assistant", "content": "Something else entirely."},
+        ],
+    ],
+)
+def test_a_yes_counts_only_right_after_the_question(service_for, history):
+    service, model = service_for(switch(), QUESTION, "Okay.")
+    turn(service, "Turn off the office lights")
+    turn(service, "Yes", history)
+    assert Lights.runs == []
+
+
+def test_a_held_action_whose_tool_changed_is_not_run(service_for):
+    service, _ = service_for(switch(), QUESTION)
+    turn(service, "Turn off the office lights")
+    service._pending.key = "mcp:other:switch"  # The name now belongs to another action.
+    said, _ = turn(service, "Yes")
+    assert said == conversation.GONE
+    assert Lights.runs == []
+
+
+def test_numbers_sent_as_text_stay_exact():
+    from arietta_voice.tools.schema import coerce_arguments
+
+    schema = {"type": "object", "properties": {"phone": {"type": "string"}}}
+    assert coerce_arguments(schema, {"phone": 2065551234}) == {"phone": "2065551234"}
+    assert coerce_arguments(schema, {"phone": 10.0}) == {"phone": "10"}
+    assert coerce_arguments(schema, {"phone": 2.5}) == {"phone": "2.5"}

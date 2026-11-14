@@ -180,12 +180,37 @@ def load_servers(path: Path) -> tuple[list[ServerConfig], list[str]]:
 
 
 def save_servers(path: Path, servers: list[ServerConfig]) -> None:
-    data = {"mcpServers": {server.name: server.to_json() for server in servers}}
+    """Write the servers, keeping anything else at the top of an existing file."""
+    if len(servers) > MAX_SERVERS:
+        raise ValueError(f"At most {MAX_SERVERS} MCP servers can be connected")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if isinstance(data.get("servers"), dict):
+        del data["servers"]  # Read as the servers list; written back under the usual key.
+    data["mcpServers"] = {server.name: server.to_json() for server in servers}
     write_private_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def merge_secrets(updated: ServerConfig, saved: ServerConfig | None) -> ServerConfig:
-    """Keep saved env and header values where the console sent back the mask."""
+    """Keep saved env and header values where the console sent back the mask.
+
+    Only for the same destination: a saved token never follows a server to a
+    new URL or program, so changing either needs the values entered again.
+    """
+    masked = MASK in updated.env.values() or MASK in updated.headers.values()
+    moved = saved is None or (
+        (updated.transport, updated.url, updated.command, updated.args)
+        != (saved.transport, saved.url, saved.command, saved.args)
+    )
+    if masked and moved:
+        raise ValueError(
+            "The address or program changed, so enter the hidden values again "
+            "(saved tokens are not sent anywhere new)"
+        )
     previous_env = saved.env if saved else {}
     previous_headers = saved.headers if saved else {}
     return replace(
