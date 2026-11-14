@@ -292,6 +292,7 @@ The main config sections are:
 - `[weather]`: your town or city and units for the optional weather tool
 - `[mcp]`: where MCP servers are listed, remembered approvals, and connection and call time limits
 - `[smarter_model]`: an optional bigger model, off by default, and when to hand it a question
+- `[web_search]`: optional web search, off by default: the provider and its key or address
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
@@ -709,7 +710,7 @@ times out or does not exist is reported to the model, which answers without it
 instead of the turn failing. The built-in tools are `assistant_identity`,
 `local_time`, `set_timer`, `set_reminder`, `set_alarm`, `check_timers`,
 `cancel_timer`, `calculate`, `date_math`, `search_knowledge` and `system_info`,
-plus the optional `weather` (see below).
+plus the optional `weather` and `web_search` (see below).
 
 `calculate` works out arithmetic and unit conversions exactly, since the small
 model gets sums wrong: "what's seventeen times twenty three?", "15% of 80",
@@ -785,6 +786,26 @@ enabled = ["assistant_identity", "local_time", "set_timer", "set_reminder",
            "set_alarm", "check_timers", "cancel_timer", "calculate", "date_math",
            "weather", "search_knowledge", "system_info"]
 ```
+
+### Web search (optional)
+
+With web search on, "look up who Ada Lovelace was", "search the web for the
+James Webb telescope" or a question about news and current facts is looked up
+online, and the answer says where it came from: "According to Wikipedia, ...".
+It is off until you turn it on, in the console's Settings page ("Web search")
+or your private config:
+
+```toml
+[web_search]
+enabled = true
+provider = "wikipedia"   # or "brave" (with api_key) or "searxng" (with url)
+```
+
+Only the search words leave the Mac, sent to the provider: Wikipedia needs no
+account; Brave Search needs an API key (`api_key`, kept in your private
+config); SearXNG is your own server (`url`). Results are cached for ten
+minutes. Everyday and general-knowledge questions are still answered by the
+model without searching.
 
 ### MCP servers
 

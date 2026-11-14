@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import tomllib
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -33,6 +34,8 @@ DEFAULT_ENABLED_TOOLS = (
     "cancel_timer",
     "calculate",
     "date_math",
+    # Offered only when [web_search] is turned on.
+    "web_search",
     # Looks up every request, so it comes after the tools that answer directly.
     "search_knowledge",
     "system_info",
@@ -308,6 +311,19 @@ class TimersConfig:
 
 
 @dataclass(slots=True)
+class WebSearchConfig:
+    """Web search (opt-in): only the search words leave the Mac, to the provider."""
+
+    enabled: bool = False
+    # "wikipedia" (no account), "brave" (needs api_key) or "searxng" (needs url).
+    provider: str = "wikipedia"
+    api_key: str = ""  # Brave Search API key. Private: keep it in your private config.
+    url: str = ""  # Your SearXNG server, such as http://localhost:8888.
+    language: str = "en"  # Wikipedia edition.
+    max_results: int = 3
+
+
+@dataclass(slots=True)
 class SmarterModelConfig:
     """An optional bigger model for questions the local one cannot answer well.
 
@@ -366,6 +382,7 @@ class AppConfig:
     weather: WeatherConfig = field(default_factory=WeatherConfig)
     mcp: McpConfig = field(default_factory=McpConfig)
     smarter_model: SmarterModelConfig = field(default_factory=SmarterModelConfig)
+    web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
 
 
 def default_config(project_root: Path | None = None) -> AppConfig:
@@ -444,6 +461,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     weather = raw.get("weather", {})
     mcp = raw.get("mcp", {})
     smarter = raw.get("smarter_model", {})
+    search = raw.get("web_search", {})
 
     # Your saved list keeps its order; standard tools it has not considered are added.
     chosen = private_tools.get("enabled")
@@ -628,6 +646,14 @@ def load_config(path: Path | None = None) -> AppConfig:
             model=str(smarter.get("model", base.smarter_model.model)).strip(),
             when=str(smarter.get("when", base.smarter_model.when)).strip().lower(),
         ),
+        web_search=WebSearchConfig(
+            enabled=bool(search.get("enabled", base.web_search.enabled)),
+            provider=str(search.get("provider", base.web_search.provider)).strip().lower(),
+            api_key=str(search.get("api_key", base.web_search.api_key)).strip(),
+            url=str(search.get("url", base.web_search.url)).strip(),
+            language=str(search.get("language", base.web_search.language)).strip().lower(),
+            max_results=int(search.get("max_results", base.web_search.max_results)),
+        ),
     )
     return validate_config(config)
 
@@ -728,8 +754,6 @@ def validate_config(config: AppConfig) -> AppConfig:
     require(bool(config.audio.voice.strip()), "audio.voice must not be blank")
     require(config.audio.tts_backend in {"onnx", "mlx"}, "audio.tts_backend must be onnx or mlx")
     if config.audio.tts_backend == "mlx":
-        import re
-
         require(
             bool(config.audio.mlx_kokoro_model.strip()),
             "MLX speech requires audio.mlx_kokoro_model (local directory)",
@@ -789,6 +813,25 @@ def validate_config(config: AppConfig) -> AppConfig:
         "smarter_model.model must name a model when smarter_model.enabled is true",
     )
     require(len(config.smarter_model.model) <= 200, "smarter_model.model is too long")
+    search = config.web_search
+    require(
+        search.provider in {"wikipedia", "brave", "searxng"},
+        "web_search.provider must be 'wikipedia', 'brave' or 'searxng'",
+    )
+    require(
+        not (search.enabled and search.provider == "brave" and not search.api_key),
+        "web_search.api_key is needed for Brave Search",
+    )
+    require(
+        not (search.enabled and search.provider == "searxng")
+        or search.url.startswith(("http://", "https://")),
+        "web_search.url must be your SearXNG address, starting with http:// or https://",
+    )
+    require(
+        bool(re.fullmatch(r"[a-z]{2,3}(-[a-z]+)?", search.language)),
+        "web_search.language must be a Wikipedia language code, such as en or de",
+    )
+    require(1 <= search.max_results <= 5, "web_search.max_results must be between 1 and 5")
     number("mcp.connect_timeout_s", config.mcp.connect_timeout_s, 1, 300)
     number("mcp.call_timeout_s", config.mcp.call_timeout_s, 1, 110)
     # A tool that outlasts the turn would get the worker restarted, reloading
