@@ -22,10 +22,20 @@ version policy and the release procedure.
   Day and Labor Day), month-and-day dates in digits or words, `12/25`, ISO dates
   and weekdays. Enabled by default.
 
+- An optional `weather` tool: current conditions and a seven-day forecast,
+  rain and umbrella questions, the weekend, and other places ("what's the
+  weather in Paris on Friday?"), from Open-Meteo (no account or key). It is off
+  until `[weather].location` is set and `weather` is added to `[tools].enabled`;
+  it sends the place name and its coordinates to open-meteo.com, and caches
+  answers for ten minutes. New `[weather]` settings: `location` and `units`.
+
 ### Changed
 
 - A reminder set a day or more ahead with a delay ("in three weeks") that would
   fall at night now goes off at 9 AM that day instead.
+- A tool file in `tools/` now replaces a built-in tool of the same name, so a
+  built-in added in an upgrade (such as `weather`) never hides a tool you
+  already have.
 - Timer and reminder apologies read naturally ("Sorry, timers can run from 1
   second to 24 hours; for longer, ask for a reminder.").
 

@@ -223,6 +223,15 @@ class TimersConfig:
 
 
 @dataclass(slots=True)
+class WeatherConfig:
+    # Your town or city ("Seattle", "Portland, Maine"). The weather tool is
+    # available only once this is set; it sends the place name and its
+    # coordinates to open-meteo.com (no account or key).
+    location: str = ""
+    units: str = "imperial"  # or "metric"
+
+
+@dataclass(slots=True)
 class AppConfig:
     project_root: Path
     assistant: AssistantProfile
@@ -238,6 +247,7 @@ class AppConfig:
     admin: AdminConfig = field(default_factory=AdminConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     timers: TimersConfig = field(default_factory=TimersConfig)
+    weather: WeatherConfig = field(default_factory=WeatherConfig)
 
 
 def default_config(project_root: Path | None = None) -> AppConfig:
@@ -306,6 +316,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     admin = raw.get("admin", {})
     runtime = raw.get("runtime", {})
     timers = raw.get("timers", {})
+    weather = raw.get("weather", {})
 
     config = AppConfig(
         project_root=base.project_root,
@@ -467,6 +478,10 @@ def load_config(path: Path | None = None) -> AppConfig:
             snooze_minutes=float(timers.get("snooze_minutes", base.timers.snooze_minutes)),
             alert_tone=bool(timers.get("alert_tone", base.timers.alert_tone)),
         ),
+        weather=WeatherConfig(
+            location=str(weather.get("location", base.weather.location)).strip(),
+            units=str(weather.get("units", base.weather.units)).strip().lower(),
+        ),
     )
     return validate_config(config)
 
@@ -605,6 +620,11 @@ def validate_config(config: AppConfig) -> AppConfig:
     number("timers.repeat_s", config.timers.repeat_s, 5, 600)
     require(0 <= config.timers.max_repeats <= 20, "timers.max_repeats must be between 0 and 20")
     number("timers.snooze_minutes", config.timers.snooze_minutes, 1, 120)
+    require(
+        config.weather.units in {"imperial", "metric"},
+        "weather.units must be 'imperial' or 'metric'",
+    )
+    require(len(config.weather.location) <= 120, "weather.location must be at most 120 characters")
     return config
 
 

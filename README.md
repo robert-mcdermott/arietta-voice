@@ -283,6 +283,7 @@ The main config sections are:
 - `[admin]`: source-editing permission (disabled by default)
 - `[runtime]`: turn, endpoint detection, and model startup time limits
 - `[timers]`: where timers and reminders are kept, how often an unanswered one repeats, the snooze length and the alert tone
+- `[weather]`: your town or city and units for the optional weather tool
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
@@ -691,7 +692,8 @@ Arguments are checked against the schema before a tool runs. A tool that fails,
 times out or does not exist is reported to the model, which answers without it
 instead of the turn failing. The built-in tools are `assistant_identity`,
 `local_time`, `set_timer`, `set_reminder`, `set_alarm`, `check_timers`,
-`cancel_timer`, `calculate`, `date_math`, `search_knowledge` and `system_info`.
+`cancel_timer`, `calculate`, `date_math`, `search_knowledge` and `system_info`,
+plus the optional `weather` (see below).
 
 `calculate` works out arithmetic and unit conversions exactly, since the small
 model gets sums wrong: "what's seventeen times twenty three?", "15% of 80",
@@ -738,6 +740,27 @@ them.
 If your private config lists `[tools].enabled`, add `set_timer`, `set_reminder`,
 `set_alarm`, `check_timers` and `cancel_timer` to it, before `search_knowledge`
 (or switch them on in the console's Tools page), to ask for them by voice.
+
+### Weather (optional)
+
+The `weather` tool answers "what's the weather like?", "will it rain
+tomorrow?", "do I need an umbrella?", "what's the forecast for this weekend?"
+and "what's the weather in Paris on Friday?". It is off until you choose a place,
+because it is the one built-in tool that sends anything off the machine: the
+place name (once, to find its coordinates) and those coordinates go to
+[Open-Meteo](https://open-meteo.com), which needs no account or key. Answers are
+cached for ten minutes. To turn it on, in `config/arietta_voice.local.toml`:
+
+```toml
+[weather]
+location = "Seattle"   # or "Portland, Maine"
+units = "imperial"     # or "metric"
+
+[tools]
+enabled = ["assistant_identity", "local_time", "set_timer", "set_reminder",
+           "set_alarm", "check_timers", "cancel_timer", "calculate", "date_math",
+           "weather", "search_knowledge", "system_info"]
+```
 
 ## Bedrock Integration
 

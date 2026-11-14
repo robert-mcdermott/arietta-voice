@@ -153,3 +153,11 @@ max_repeats = 4
 snooze_minutes = 5.0
 # A short tone before the announcement.
 alert_tone = true
+
+[weather]
+# Your town or city, such as "Seattle" or "Portland, Maine". The weather tool
+# works only once this is set (in your private config) and "weather" is added to
+# [tools].enabled. It sends this place name and its coordinates to open-meteo.com,
+# which needs no account or key.
+location = ""
+units = "imperial"

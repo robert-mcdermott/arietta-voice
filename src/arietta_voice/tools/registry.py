@@ -57,14 +57,18 @@ def user_tool_path(config, name: str) -> Path:
 
 
 def load_module(config, name: str) -> tuple[ModuleType, str, Path | None]:
-    """Import a tool module by name: built-in first, then the user directory."""
+    """Import a tool module by name: your tools directory first, then the built-ins.
+
+    A file of your own replaces a built-in of the same name, so a new built-in
+    in an upgrade never silently shadows a tool you already had.
+    """
     if not TOOL_NAME.fullmatch(name):
         raise ValueError(f"Tool names are lowercase letters, digits and underscores: {name!r}")
-    if name in builtin_names():
-        module = importlib.import_module(f"{BUILTIN_PACKAGE}.{name}")
-        return module, "builtin", Path(module.__file__)
     path = user_tool_path(config, name)
     if not path.is_file():
+        if name in builtin_names():
+            module = importlib.import_module(f"{BUILTIN_PACKAGE}.{name}")
+            return module, "builtin", Path(module.__file__)
         raise ValueError(f"No tool named {name!r}: expected {path}")
     spec = importlib.util.spec_from_file_location(f"arietta_user_tools.{name}", path)
     module = importlib.util.module_from_spec(spec)

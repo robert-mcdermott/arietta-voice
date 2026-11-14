@@ -170,8 +170,10 @@ acoustically at least once.
    "stop" and "snooze" without the wake word, and a console card. Arithmetic
    and unit conversion are done (`calculate`; the 4-bit Gemma had said
    17 × 23 is 749), and so are date questions (`date_math`: "how many days
-   until Christmas?"). Still to do: weather and web search with spoken source
-   attribution.
+   until Christmas?"), and weather is available as an opt-in tool (Open-Meteo;
+   it was built and tested against recorded responses, as the forecast host was
+   unreachable from the build machine at the time). Still to do: web search
+   with spoken source attribution.
 5. **Home control** through Home Assistant: read-only status first, then
    explicitly authorized actions.
 6. **Model routing.** Keep the small local model for fast turns and tool
