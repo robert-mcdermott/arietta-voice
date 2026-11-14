@@ -439,6 +439,137 @@ def test_endpoint_timeout_recovers_and_accepts_next_turn(runtime):
     runtime.process_utterance.assert_called_once()
 
 
+def _early_endpoint_runtime(runtime, scores, *, early_ms=64, silence_ms=320):
+    """Two silent chunks trigger the early check; ten trigger the fallback."""
+    from arietta_voice.models import UtteranceResult
+
+    runtime.config.audio.smart_turn_enabled = True
+    runtime.config.audio.silence_ms = silence_ms
+    runtime.config.audio.endpoint_early_ms = early_ms
+    runtime.config.audio.endpoint_early_threshold = 0.7
+    runtime.config.audio.pre_roll_ms = 0
+    runtime.vad.probability.side_effect = lambda chunk: float(chunk[0] > 0)
+    runtime.worker.call = Mock(side_effect=scores)
+    runtime.process_utterance = Mock(return_value=UtteranceResult(buffered_chunks=[]))
+    runtime.event_logger = Mock()
+    return runtime
+
+
+def _endpoint_events(runtime):
+    return [
+        call.kwargs
+        for call in runtime.event_logger.log.call_args_list
+        if call.args[0] == "smart_turn_score"
+    ]
+
+
+def test_confident_early_endpoint_answers_without_waiting_for_full_silence(runtime):
+    _early_endpoint_runtime(runtime, [0.9])
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1, 0, 0]), Mock())
+    runtime.process_utterance.assert_called_once()
+    call = runtime.process_utterance.call_args
+    assert len(call.args[0]) == 3 * 512  # One speech chunk and only two of silence.
+    assert call.kwargs["timing"]["early_endpoint"] is True
+    assert call.kwargs["timing"]["decided_at"] >= call.kwargs["timing"]["speech_end_at"]
+    assert _endpoint_events(runtime) == [{"probability": 0.9, "early": True}]
+
+
+def test_unsure_early_endpoint_waits_for_the_full_silence_window(runtime):
+    # 0.6 would pass the normal 0.5 bar but not the stricter early one.
+    _early_endpoint_runtime(runtime, [0.6, 0.6])
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1] + [0] * 9), Mock())
+    runtime.process_utterance.assert_not_called()  # Nine silent chunks: still waiting.
+    assert runtime.worker.call.call_count == 1
+
+    _early_endpoint_runtime(runtime, [0.6, 0.6])
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1] + [0] * 10), Mock())
+    runtime.process_utterance.assert_called_once()
+    call = runtime.process_utterance.call_args
+    assert len(call.args[0]) == 11 * 512
+    assert call.kwargs["timing"]["early_endpoint"] is False
+    assert [event["early"] for event in _endpoint_events(runtime)] == [True, False]
+
+
+def test_speech_resuming_after_an_unsure_early_check_stays_in_the_same_turn(runtime):
+    _early_endpoint_runtime(runtime, [0.2, 0.95])
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1, 0, 0, 1, 1, 0, 0]), Mock())
+    runtime.process_utterance.assert_called_once()
+    assert len(runtime.process_utterance.call_args.args[0]) == 7 * 512
+    assert runtime.worker.call.call_count == 2
+
+
+def test_early_endpoint_can_be_turned_off(runtime):
+    _early_endpoint_runtime(runtime, [0.9], early_ms=0)
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1] + [0] * 10), Mock())
+    runtime.process_utterance.assert_called_once()
+    assert len(runtime.process_utterance.call_args.args[0]) == 11 * 512
+    assert _endpoint_events(runtime) == [{"probability": 0.9, "early": False}]
+
+
+def test_early_endpoint_needs_smart_turn_and_a_longer_fallback_window(runtime):
+    # Without the endpoint model there is nothing to ask early.
+    _early_endpoint_runtime(runtime, [])
+    runtime.config.audio.smart_turn_enabled = False
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1] + [0] * 10), Mock())
+    assert len(runtime.process_utterance.call_args.args[0]) == 11 * 512
+    runtime.worker.call.assert_not_called()
+
+    # An early window at or beyond the fallback would never fire first.
+    _early_endpoint_runtime(runtime, [0.9], early_ms=320, silence_ms=320)
+    with pytest.raises(KeyboardInterrupt):
+        runtime._listen(ScriptedMicrophone([1] + [0] * 10), Mock())
+    assert _endpoint_events(runtime) == [{"probability": 0.9, "early": False}]
+
+
+def test_turn_timing_is_logged_only_for_spoken_microphone_turns(runtime, monkeypatch):
+    runtime.event_logger = Mock()
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: 12.5)
+
+    runtime._turn_marks = {"speech_end_at": 10.0, "decided_at": 10.25, "stt_ms": 180}
+    runtime._log_turn_timing()  # No audio was produced.
+    runtime._turn_marks = {"first_audio_at": 11.0}
+    runtime._log_turn_timing()  # Not a microphone turn.
+    runtime.event_logger.log.assert_not_called()
+    assert runtime.last_turn_timing is None
+
+    runtime._turn_marks = {
+        "speech_end_at": 10.0,
+        "decided_at": 10.25,
+        "early_endpoint": True,
+        "stt_ms": 180,
+        "first_audio_at": 11.1,
+    }
+    runtime._log_turn_timing()
+    expected = {
+        "endpoint_wait_ms": 250,
+        "early_endpoint": True,
+        "stt_ms": 180,
+        "first_audio_ms": 1100,
+        "total_ms": 2500,
+    }
+    runtime.event_logger.log.assert_called_once_with("turn_timing", **expected)
+    assert runtime.last_turn_timing == expected
+    assert runtime.reliability_snapshot()["last_turn_timing"] == expected
+    assert runtime._turn_marks == {}
+
+
+def test_first_playback_of_a_turn_marks_first_audio(runtime):
+    from arietta_voice.audio import PlaybackResult
+
+    runtime.event_logger = Mock()
+    runtime._log_playback(PlaybackResult(interrupted=False, started_at=None))
+    assert "first_audio_at" not in runtime._turn_marks
+    runtime._log_playback(PlaybackResult(interrupted=False, started_at=5.0))
+    runtime._log_playback(PlaybackResult(interrupted=False, started_at=9.0))
+    assert runtime._turn_marks["first_audio_at"] == 5.0
+
+
 def test_startup_failure_stops_worker_and_publishes_final_status(runtime):
     import json
 

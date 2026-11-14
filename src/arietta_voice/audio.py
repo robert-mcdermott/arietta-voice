@@ -554,6 +554,7 @@ class PlaybackResult:
     alignment_reset_reasons: dict[str, int] = field(default_factory=dict)
     capture_discard_reasons: dict[str, int] = field(default_factory=dict)
     output_timing: dict = field(default_factory=dict)
+    started_at: float | None = None  # monotonic time the output stream opened
 
 
 class _PlaybackTiming:
@@ -893,6 +894,7 @@ def play_tts_stream(
                 alignment_reset_reasons=dict(reset_reasons),
                 capture_discard_reasons=dict(discard_reasons),
                 output_timing=timing.report,
+                started_at=playback_started,
             )
         finally:
             capture_phase(microphone, "playback_cleanup")

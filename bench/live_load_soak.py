@@ -236,15 +236,15 @@ class LiveLoadRuntime(AriettaVoiceRuntime):
             self.row["output_underflows"] += playback.output_underflows
             self.row["alignment_resets"] += playback.alignment_resets
 
-    def process_utterance(self, audio, microphone, keypress_monitor):
+    def process_utterance(self, audio, microphone, keypress_monitor, **options):
         if self.phase != "load":
-            return super().process_utterance(audio, microphone, keypress_monitor)
+            return super().process_utterance(audio, microphone, keypress_monitor, **options)
         started, failures, cancellations = (
             time.monotonic(),
             self.turn_failures,
             self.turn_cancellations,
         )
-        result = super().process_utterance(audio, microphone, keypress_monitor)
+        result = super().process_utterance(audio, microphone, keypress_monitor, **options)
         row = self.row
         row.update(
             processing_seconds=time.monotonic() - started,
