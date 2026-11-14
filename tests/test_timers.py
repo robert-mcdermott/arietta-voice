@@ -311,6 +311,8 @@ def answer(registry, text):
             "Okay, a 1 minute 30 second timer to check the oven, starting now.",
         ),
         ("Set a timer.", "How long should the timer be?"),
+        # Speech recognition heard "pasta" as "pause to".
+        ("Set a 10-minute pause to timer.", "Okay, a 10 minute pause to timer, starting now."),
     ],
 )
 def test_timers_are_set_instantly(registry, text, speak):
