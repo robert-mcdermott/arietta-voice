@@ -38,35 +38,19 @@ class ToolEnabledRequest(BaseModel):
 
 
 class ToolCreateRequest(BaseModel):
-    module_name: str = Field(min_length=1, max_length=80)
-    trigger_phrase: str = Field(default="example custom tool", min_length=1, max_length=240)
-    response: str = Field(
-        default="The custom tool is wired up. Replace this response with your real behavior.",
-        min_length=1,
-        max_length=4000,
-    )
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=600)
+    trigger: str = Field(default="", max_length=240)
+    response: str = Field(default="", max_length=4000)
     enable: bool = True
+
+
+class ToolTestRequest(BaseModel):
+    """Either a sample request, run through the tool's triggers, or arguments."""
+
+    text: str | None = Field(default=None, min_length=1, max_length=4000)
+    arguments: dict[str, Any] | None = None
 
 
 class ToolSourceWriteRequest(BaseModel):
     content: str = Field(min_length=1, max_length=1_000_000)
-
-
-class ModelToolInvokeRequest(BaseModel):
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-
-class ModelToolCreateRequest(BaseModel):
-    module_name: str = Field(min_length=1, max_length=80)
-    description: str = Field(
-        default="you need a custom model-called tool result before answering",
-        min_length=1,
-        max_length=600,
-    )
-    arguments_example: dict[str, Any] = Field(default_factory=dict)
-    followup_context: str = Field(
-        default="Custom model tool result. Use this result when composing the final answer.",
-        min_length=1,
-        max_length=4000,
-    )
-    enable: bool = True

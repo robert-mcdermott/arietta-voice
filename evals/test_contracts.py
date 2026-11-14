@@ -11,11 +11,8 @@ import pytest
 from arietta_voice.config import default_config
 from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.memory import MemoryStore
-from arietta_voice.model_tooling import maybe_generate_with_model_tools
-from arietta_voice.model_tools import ModelToolRegistry
-from arietta_voice.model_tools.base import ModelToolExecution
 from arietta_voice.models import ConversationTurn, ToolResponse
-from arietta_voice.prompts import PromptManager
+from arietta_voice.prompts import PromptManager, sanitize_for_speech
 from arietta_voice.runtime import AriettaVoiceRuntime
 from arietta_voice.wake import build_wake_word_detector
 from arietta_voice.worker import WorkerFailure
@@ -87,36 +84,45 @@ def test_memory_contract(case, tmp_path):
 
 @cases("tool_policy")
 def test_tool_policy_contract(case, tmp_path, monkeypatch):
+    from arietta_voice.conversation import ConversationService
+    from arietta_voice.tools import BaseTool, ToolResult
+    from arietta_voice.tools import registry as tool_registry
+
+    calls = []
+
+    class Counter(BaseTool):
+        name = "synthetic_counter"
+        description = "read a synthetic counter"
+
+        def run(self, arguments):
+            calls.append(arguments)
+            if case.get("fails"):
+                raise RuntimeError("synthetic tool failure")
+            return ToolResult(content="Synthetic counter result")
+
+    module = SimpleNamespace(create_tool=lambda context: Counter(context))
+    monkeypatch.setattr(tool_registry, "load_module", lambda config, name: (module, "user", None))
     config = default_config(tmp_path)
-    config.model_tools.enabled = ("synthetic",) if case["enabled"] else ()
-    invoke = Mock(return_value=ModelToolExecution("Synthetic counter result", {"count": 1}))
-    if case.get("fails"):
-        invoke.side_effect = RuntimeError("synthetic tool failure")
-    tool = SimpleNamespace(
-        name="synthetic_counter",
-        description="read a synthetic counter",
-        arguments_example={},
-        invoke=invoke,
-    )
-    monkeypatch.setattr(ModelToolRegistry, "_load_tool", lambda self, name: tool)
-    registry = ModelToolRegistry(config)
+    config.knowledge.enabled = False
+    config.tools.enabled = ("synthetic_counter",) if case["enabled"] else ()
+    config.model_tools.enabled = ()
     generate = Mock(side_effect=[case["output"], case.get("followup", "Synthetic answer")])
-    if case.get("fails"):
-        with pytest.raises(RuntimeError, match="synthetic tool failure"):
-            maybe_generate_with_model_tools([], model_tool_registry=registry, llm_generate=generate)
+    service = ConversationService(config, generate=generate)
+    if case["outcome"] == "error":
+        with pytest.raises(ValueError, match="planning"):
+            service.chat(message="Read the synthetic counter")
         assert generate.call_count == 1
     else:
-        response, used = maybe_generate_with_model_tools(
-            [{"role": "user", "content": "Read the synthetic counter"}],
-            model_tool_registry=registry,
-            llm_generate=generate,
-        )
-        assert (used is not None) == bool(case["calls"])
-        assert generate.call_count == 1 + case["calls"]
-        assert response == (
-            case.get("followup", "Synthetic answer") if case["calls"] else case["output"]
-        )
-    assert invoke.call_count == case["calls"]
+        result = service.chat(message="Read the synthetic counter")
+        planned = case["enabled"] and case["output"].lstrip().startswith(("{", "`"))
+        assert generate.call_count == 1 + planned
+        expected = case.get("followup", "Synthetic answer") if planned else case["output"]
+        assert result.response == sanitize_for_speech(expected)
+        if planned:
+            followup = generate.call_args_list[1].args[0][-1]["content"]
+            assert case.get("followup_note", "Synthetic counter result") in followup
+    # One call at most, never retried, and never when the tool is disabled.
+    assert len(calls) == case["calls"]
 
 
 class ScriptedWorker:

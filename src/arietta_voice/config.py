@@ -22,13 +22,10 @@ DEFAULT_GOODBYES = (
 
 DEFAULT_WAKE_WORDS = ("bridget",)
 
+# Instant answers are tried in this order, so the catch-all knowledge lookup is last.
 DEFAULT_ENABLED_TOOLS = (
-    "local_time",
     "assistant_identity",
-    "knowledge_retrieval",
-)
-
-DEFAULT_ENABLED_MODEL_TOOLS = (
+    "local_time",
     "search_knowledge",
     "system_info",
 )
@@ -174,11 +171,19 @@ class KnowledgeConfig:
 @dataclass(slots=True)
 class ToolsConfig:
     enabled: tuple[str, ...] = field(default_factory=lambda: DEFAULT_ENABLED_TOOLS)
+    # User tools: one Python file per tool, outside the installed package.
+    directory: Path = Path("tools")
 
 
 @dataclass(slots=True)
 class ModelToolsConfig:
-    enabled: tuple[str, ...] = field(default_factory=lambda: DEFAULT_ENABLED_MODEL_TOOLS)
+    """Before tools were unified, model-called tools were listed here.
+
+    Still read so existing private configs keep working; entries are added to
+    [tools].enabled. New settings belong in [tools].
+    """
+
+    enabled: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -233,7 +238,7 @@ def default_config(project_root: Path | None = None) -> AppConfig:
             directory=root / "knowledge",
             index_directory=root / ".knowledge_index",
         ),
-        tools=ToolsConfig(),
+        tools=ToolsConfig(directory=root / "tools"),
         model_tools=ModelToolsConfig(),
     )
 
@@ -418,6 +423,7 @@ def load_config(path: Path | None = None) -> AppConfig:
                 base.tools.enabled,
                 allow_empty=True,
             ),
+            directory=_resolve_path(base_dir, tools.get("directory", base.tools.directory)),
         ),
         model_tools=ModelToolsConfig(
             enabled=_merge_tuple(

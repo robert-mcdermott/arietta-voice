@@ -89,7 +89,8 @@ class InferenceEngine:
             payload = dict(payload)
             service = self.service()
             service.config.tools.enabled = tuple(payload.pop("enabled_tools"))
-            service.config.model_tools.enabled = tuple(payload.pop("enabled_model_tools"))
+            # Callers from before tools were unified also send a second list.
+            service.config.model_tools.enabled = tuple(payload.pop("enabled_model_tools", ()))
             payload.pop("voice_turn", None)  # Compatibility with older runtime callers.
             if operation == "chat_start":
                 self.handle("chat_close", None)

@@ -7,6 +7,28 @@ version policy and the release procedure.
 
 ### Changed
 
+- One tool interface replaces the separate "deterministic" and
+  "model-requested" tools. Each tool has a name, a description of when to use
+  it, a JSON schema for its arguments, optional trigger patterns that answer
+  instantly, a time limit, and a result with `content` for the model and an
+  optional `speak` answer. Arguments are validated before a tool runs; results
+  are bounded. Built-in tools are now named `assistant_identity`, `local_time`,
+  `search_knowledge` and `system_info`, and `local_time` can also be called by
+  the model (for example for the date).
+- Your own tools now live in `tools/` (set by `[tools].directory`), outside
+  the installed package. Only `tools/README.md` and `tools/example_dice.py` are
+  tracked; release checks reject other tracked files there. Existing configs
+  keep working: `[model_tools].enabled` is merged into `[tools].enabled` and
+  `knowledge_retrieval` maps to `search_knowledge`. Tools written for the old
+  interfaces must be ported (see `tools/README.md`).
+- When the model asks for a tool that is unknown or disabled, sends invalid
+  arguments, or the tool fails or times out, the model is told and answers
+  without it. Previously the turn failed.
+- The console's Tools page shows one ordered list with instant-answer and
+  model-call badges, a per-tool Test (sample request or arguments), and a
+  preview of what the model is told. The `/api/model-tools/*` routes are
+  replaced by `/api/tools/*`, including `/api/tools/{name}/test` and
+  `/api/tools/instructions`.
 - Speech recognition upgraded from Moonshine 0.0.54 to 0.1.6, lifting the
   last dependency cap. Each utterance is now transcribed in its own stream, so
   earlier utterances can no longer add stray words (the old recogniser once

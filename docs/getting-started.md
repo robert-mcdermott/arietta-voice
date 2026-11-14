@@ -5,8 +5,7 @@ This guide walks through the main ways to customize Arietta Voice for your own u
 - add knowledge
 - choose a knowledge backend
 - build the semantic index when needed
-- add deterministic tools
-- add model-requested tools
+- add tools
 - personalize the assistant's name, wake word, and `SOUL.md`
 - verify your changes
 
@@ -21,8 +20,8 @@ The main files and directories you will touch are:
 - `config/SOUL.local.md`: ignored private personality, tone, and behavior rules
 - `config/MEMORY.md`: optional long-term memory file, created automatically if memory is enabled
 - [`knowledge/`](../knowledge): your markdown knowledge base
-- [`src/arietta_voice/tools/`](../src/arietta_voice/tools): deterministic tools
-- [`src/arietta_voice/model_tools/`](../src/arietta_voice/model_tools): model-requested tools
+- [`tools/`](../tools): your own tools, one Python file each
+- [`src/arietta_voice/tools/builtin/`](../src/arietta_voice/tools/builtin): the built-in tools
 
 Create private copies once before customizing:
 
@@ -326,259 +325,95 @@ Important behavior:
 
 If you edit a file and forget to reindex, `hybrid` may still find it through keyword matching, but you should not treat that as your normal workflow.
 
-## 6. Add A Deterministic Tool
+## 6. Add A Tool
 
-Deterministic tools are the tools Arietta checks before calling the model.
+A tool is a Python file in [`tools/`](../tools). Start from the working example:
 
-Use them when:
-
-- you want exact routing
-- the answer should come directly from the tool
-- the tool performs a precise action or lookup
-
-The built-in example is [`src/arietta_voice/tools/local_time.py`](../src/arietta_voice/tools/local_time.py).
-
-### How deterministic tools work
-
-Each deterministic tool:
-
-- lives in [`src/arietta_voice/tools/`](../src/arietta_voice/tools)
-- exposes `create_tool(context)`
-- returns an object with `name` and `maybe_handle(user_text)`
-- returns `ToolResponse` when it wants to handle the turn
-
-The base context lives in [`src/arietta_voice/tools/base.py`](../src/arietta_voice/tools/base.py) and gives the tool access to:
-
-- `context.config`
-- `context.knowledge_retriever`
-
-Start from the template at [`src/arietta_voice/tools/tool_template.py`](../src/arietta_voice/tools/tool_template.py).
-
-### Deterministic tool order matters
-
-Deterministic tools are checked in the order they appear in `[tools].enabled`, and Arietta stops at the first tool that returns a match.
-
-That means order is important:
-
-- put narrow, exact tools first
-- put broader fallback tools later
-- keep `knowledge_retrieval` last in most configurations
-
-Why `knowledge_retrieval` should usually be last:
-
-- it is much broader than most exact tools
-- if it finds a match first, later tools never get a chance
-- it works best as the fallback grounding step after exact tools have already had their turn
-
-Good ordering example:
-
-```toml
-[tools]
-enabled = [
-  "local_time",
-  "assistant_identity",
-  "home_mode",
-  "knowledge_retrieval",
-]
+```bash
+cp tools/example_dice.py tools/office_lights.py
 ```
 
-In that order:
-
-- `local_time` gets first chance to answer exact time questions
-- `assistant_identity` handles direct identity questions
-- `home_mode` handles its own exact routing
-- `knowledge_retrieval` acts as the broad fallback context tool
-
-If you put `knowledge_retrieval` before `home_mode`, then some home-mode questions may get routed into knowledge retrieval instead of your exact tool.
-
-### Example deterministic tool
-
-Create `src/arietta_voice/tools/home_mode.py`:
+Then edit it. The `name` must match the file name:
 
 ```python
-from __future__ import annotations
-
-from pathlib import Path
-import re
-
-from arietta_voice.models import ToolResponse
-from arietta_voice.tools.base import ToolContext
+from arietta_voice.tools import BaseTool, ToolResult
 
 
-MATCH_PATTERNS = (
-    re.compile(r"\bwhat(?:'s| is) the home mode\b"),
-    re.compile(r"\bwhat mode is the house in\b"),
-)
+class OfficeLightsTool(BaseTool):
+    name = "office_lights"
+    description = "the user asks whether the office lights are on"
+    triggers = (r"\bare the (?:office )?lights on\b",)
+    parameters = {"type": "object", "properties": {}}
 
-
-class HomeModeTool:
-    name = "get_home_mode"
-
-    def __init__(self, context: ToolContext) -> None:
-        self.project_root = context.config.project_root
-
-    def maybe_handle(self, user_text: str) -> ToolResponse | None:
-        lowered = user_text.lower()
-        if not any(pattern.search(lowered) for pattern in MATCH_PATTERNS):
-            return None
-
-        mode_path = self.project_root / "data" / "home_mode.txt"
-        mode = mode_path.read_text(encoding="utf-8").strip() if mode_path.exists() else "unknown"
-        return ToolResponse(
-            name=self.name,
-            content=f"The home is currently in {mode} mode.",
+    def run(self, arguments):
+        state = "on"  # Replace with a real lookup.
+        return ToolResult(
+            content=f"The office lights are {state}.",
+            speak=f"The office lights are {state}.",
         )
 
 
-def create_tool(context: ToolContext) -> HomeModeTool:
-    return HomeModeTool(context)
+def create_tool(context):
+    return OfficeLightsTool(context)
 ```
 
-Then enable it:
+Enable it by adding its name to `[tools].enabled` in your private config, before
+`search_knowledge`:
 
 ```toml
 [tools]
-enabled = [
-  "local_time",
-  "assistant_identity",
-  "home_mode",
-  "knowledge_retrieval",
-]
+enabled = ["assistant_identity", "local_time", "office_lights", "search_knowledge", "system_info"]
 ```
 
-### Deterministic tool patterns to follow
+Or open the console's Tools page, switch it on, move it above
+`search_knowledge` and choose Save. Restart the voice runtime afterwards.
 
-- Return `None` if the tool should not handle the utterance.
-- Return a final answer if the tool is the source of truth.
-- Keep matching logic clear and predictable.
-- Put live lookups or device control here when you want exact intent routing.
+Test it without speaking: the Tools page's Test button runs one tool with a
+sample request or with arguments, and "Which tool answers?" shows which enabled
+tool would handle a request. [`tools/README.md`](../tools/README.md) lists every
+attribute a tool can set.
 
-### Context-only deterministic tools
+### How a tool is used
 
-Deterministic tools do not always have to answer directly. The built-in knowledge retrieval tool in [`src/arietta_voice/tools/knowledge_retrieval.py`](../src/arietta_voice/tools/knowledge_retrieval.py) returns `ToolResponse(..., bypass_model=False, context=...)`, which means:
+- **Triggers** are regular expressions tried before the model, in the order of
+  `[tools].enabled`. The first tool whose trigger matches runs. If it returns
+  `speak`, that is the whole answer. If it returns only `content`, the content
+  is added to the prompt and the model answers. Named groups in a trigger, such
+  as `(?P<room>\w+)`, become arguments.
+- **Model calls.** Unless `model_callable = False`, the model is shown the
+  tool's name, description and arguments and may call it once before answering.
+  It then answers using the tool's `content`.
+- **Arguments** are checked against `parameters` before `run` is called. Use
+  types string, integer, number or boolean, with `enum`, `minimum`, `maximum`
+  and `maxLength`, and list required ones in `required`.
+- **Failures** never end the conversation. A tool that raises, takes longer than
+  `timeout_s` (10 seconds by default) or receives invalid arguments is reported
+  to the model, which answers without it.
 
-- the tool matched
-- the tool gathered grounding context
-- the model still writes the final answer
+Only `tools/README.md` and `tools/example_dice.py` are tracked by Git; your own
+tool files stay local and survive upgrades.
 
-That is a good pattern when you want explicit routing but still want the model to phrase the reply naturally.
+## 7. Choose Instant Answers Or Model Calls
 
-## 7. Add A Model-Requested Tool
+Give a tool triggers and return `speak` when:
 
-Model-requested tools are the non-deterministic tool path. Arietta exposes these to the model after the deterministic pass.
+- the answer must be exact, such as the time or a sensor reading
+- the request is easy to recognise
+- waiting for the model adds nothing
 
-Use them when:
+Leave triggers out and write a good `description` when:
 
-- the model should decide whether a lookup is needed
-- the tool gathers supporting information rather than speaking directly
-- the tool is useful, but only for some questions
+- the model should decide whether the tool is needed
+- the model has to pick arguments from free-form speech
+- the tool gathers facts the model should put into words
 
-The built-in example is [`src/arietta_voice/model_tools/search_knowledge.py`](../src/arietta_voice/model_tools/search_knowledge.py).
+A tool can do both: `local_time` answers "what time is it" instantly and also
+lets the model look up the date. Write descriptions as "use when ...": the
+model sees `use when <description>`.
 
-### How model-requested tools work
-
-Each model-requested tool:
-
-- lives in [`src/arietta_voice/model_tools/`](../src/arietta_voice/model_tools)
-- exposes `create_tool(context)`
-- defines `name`, `description`, and `arguments_example`
-- implements `invoke(arguments)`
-- returns `ModelToolExecution(followup_context=...)`
-
-The runtime flow is in [`src/arietta_voice/model_tooling.py`](../src/arietta_voice/model_tooling.py):
-
-1. the model is shown the available tool metadata
-2. it may emit a single JSON tool call
-3. Arietta executes the tool
-4. the tool returns `followup_context`
-5. the model gets one more chance to answer using that grounded context
-
-Start from the template at [`src/arietta_voice/model_tools/tool_template.py`](../src/arietta_voice/model_tools/tool_template.py).
-
-### Example model-requested tool
-
-Create `src/arietta_voice/model_tools/room_sensor.py`:
-
-```python
-from __future__ import annotations
-
-import json
-from pathlib import Path
-
-from arietta_voice.model_tools.base import ModelToolContext, ModelToolExecution
-
-
-class RoomSensorTool:
-    name = "get_room_sensor"
-    description = (
-        "you need the latest room temperature or humidity reading from the local sensor file"
-    )
-    arguments_example = {"metric": "temperature"}
-
-    def __init__(self, context: ModelToolContext) -> None:
-        self.project_root = context.config.project_root
-
-    def invoke(self, arguments: dict[str, object]) -> ModelToolExecution | None:
-        metric = str(arguments.get("metric", "")).strip().lower()
-        if metric not in {"temperature", "humidity"}:
-            return None
-
-        sensor_path = self.project_root / "data" / "room_sensor.json"
-        if not sensor_path.exists():
-            return ModelToolExecution(
-                followup_context=(
-                    "Room sensor tool was requested, but the sensor data file is missing. "
-                    "Say that the reading is unavailable instead of inventing one."
-                ),
-                details={"metric": metric, "status": "missing"},
-            )
-
-        payload = json.loads(sensor_path.read_text(encoding="utf-8"))
-        value = payload.get(metric)
-        unit = "degrees Fahrenheit" if metric == "temperature" else "percent"
-        return ModelToolExecution(
-            followup_context=(
-                f"Room sensor result:\n"
-                f"{metric.title()}: {value} {unit}\n"
-                "Use this tool result directly when answering."
-            ),
-            details={"metric": metric, "status": "ok"},
-        )
-
-
-def create_tool(context: ModelToolContext) -> RoomSensorTool:
-    return RoomSensorTool(context)
-```
-
-Then enable it:
-
-```toml
-[model_tools]
-enabled = [
-  "search_knowledge",
-  "system_info",
-  "room_sensor",
-]
-```
-
-### Deterministic vs model-requested: how to choose
-
-Choose a deterministic tool when:
-
-- the user intent is obvious from the utterance
-- the tool should either answer or act immediately
-- you do not want the model deciding whether to call it
-
-Choose a model-requested tool when:
-
-- the lookup is optional
-- the tool result is supporting context
-- you want the model to decide if the extra step is necessary
-
-Good rule of thumb:
-
-- `What time is it?` -> deterministic
-- `Can you check the room sensor if that would help answer this?` -> model-requested
+Mark tools that change something in the world, such as turning off lights,
+with `consequential = True`. The planned agent loop will ask before running
+them.
 
 ## 8. Verify Your Customizations
 
@@ -841,14 +676,14 @@ console directly.
 - rename the assistant
 - change the wake word
 - add house rules, Wi-Fi info, appliance notes, and routines as knowledge
-- add deterministic tools for exact home-control commands
-- add model-requested tools for optional sensor lookups
+- add tools with triggers for exact home-control commands
+- add model-called tools for optional sensor lookups
 
 ### Office assistant
 
 - put stable policy and support info in knowledge
-- use deterministic tools for exact internal utilities
-- use model-requested tools for live status lookups
+- use tools with triggers for exact internal utilities
+- use model-called tools for live status lookups
 - keep `SOUL.md` concise and professional
 
 ### Bedrock-backed setup
@@ -877,10 +712,12 @@ Check:
 
 Check:
 
-- the module is in the right directory
-- the module name is listed in `[tools].enabled` or `[model_tools].enabled`
+- the file is in `tools/` and its `name` matches the file name
+- the name is listed in `[tools].enabled`, before `search_knowledge` if it has triggers
 - `create_tool(context)` exists
-- the matching logic actually triggers
+- the console's Tools page shows no error for it, and Validate passes
+- its trigger matches your request (use Test with a sample request)
+- the voice runtime was restarted after the change
 
 ### "The assistant does not wake reliably"
 
@@ -903,8 +740,8 @@ If you are setting up Arietta Voice for the first time, this is a good sequence:
 3. Add 3-5 knowledge articles for the most common questions.
 4. Start with `backend = "keyword"`.
 5. Verify retrieval with `knowledge-search`.
-6. Add one deterministic tool for an exact action or lookup.
-7. Add one model-requested tool only if you truly need optional follow-up lookups.
+6. Add one tool for an exact action or lookup.
+7. Let the model call it too, if requests for it vary in wording.
 8. Once your knowledge base grows, try `hybrid` and build the index.
 
 That path usually gives the fastest progress with the least complexity.

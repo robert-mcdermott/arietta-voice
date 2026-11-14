@@ -205,13 +205,14 @@
         <!-- Tools -->
         <section id="tools" class="view">
           <div class="notice">
-            <span>Tools are listed from their source without running it, so a listed tool is not yet proven to load. Validate, Test and Invoke run the tool's code on this machine.</span>
+            <span>Tools are listed from their source without running it. Test, Validate and the instruction preview run the tool's code on this machine.</span>
           </div>
+
           <div class="card">
             <div class="card-head">
               <div>
-                <h3>Instant tools</h3>
-                <p class="hint">Answer immediately when a request matches, without asking the model.</p>
+                <h3>Tools</h3>
+                <p class="hint">Instant tools answer when a request matches their triggers, without the model. The model can call the others while it answers. Order matters: triggers are tried top to bottom.</p>
               </div>
               <div class="row">
                 <span id="tools-summary" class="row"></span>
@@ -219,57 +220,36 @@
               </div>
             </div>
             <div class="row grow">
-              <input id="tools-probe-text" type="text" placeholder="Try a phrase, for example “what time is it”" aria-label="Sample phrase">
-              <button class="btn" id="tools-probe-enabled" type="button">Test phrase</button>
+              <input id="tools-probe-text" type="text" placeholder="Try a request, for example “what time is it”" aria-label="Sample request">
+              <button class="btn" id="tools-probe-enabled" type="button">Which tool answers?</button>
             </div>
             <div id="tools-content"></div>
             <div class="result" id="tools-result-box" hidden>
               <div class="result-title" id="tools-result-title"></div>
               <pre class="output" id="tools-result"></pre>
             </div>
-            <details class="fold">
-              <summary>Create an instant tool</summary>
-              <div class="form">
-                <label class="field">Module name<input id="tools-create-name" type="text" placeholder="my_custom_tool"></label>
-                <label class="field">Trigger phrase<input id="tools-create-trigger" type="text" value="example custom tool"></label>
-                <label class="field">Response<textarea id="tools-create-response">The custom tool is wired up. Replace this response with your real behavior.</textarea></label>
-                <label class="check"><input id="tools-create-enable" type="checkbox" checked> Enable after creation</label>
-                <div class="row"><button class="btn primary" id="tools-create" type="button" disabled>Create tool</button><span class="hint source-policy"></span></div>
-              </div>
-            </details>
+            <div class="row hero-actions">
+              <button class="btn small" id="tools-instructions" type="button">Preview what the model is told</button>
+              <span class="hint" id="tools-directory"></span>
+            </div>
           </div>
 
           <div class="card">
             <div class="card-head">
               <div>
-                <h3>Model tools</h3>
-                <p class="hint">The model decides when to call these while composing an answer.</p>
+                <h3>Test a tool</h3>
+                <p class="hint" id="tool-test-meta">Choose Test on a tool above.</p>
               </div>
-              <div class="row">
-                <span id="model-tools-summary" class="row"></span>
-                <button class="btn small primary" id="model-tools-save-enabled" type="button">Save</button>
-              </div>
+              <button class="btn small primary" id="tool-test-run" type="button" disabled>Run</button>
             </div>
-            <div id="tools-model-content"></div>
-            <label class="field">Arguments for Invoke (JSON)<textarea id="model-tools-arguments" class="code" rows="3">{}</textarea></label>
-            <div class="result" id="model-tools-result-box" hidden>
-              <div class="result-title" id="model-tools-result-title"></div>
-              <pre class="output" id="model-tools-result"></pre>
+            <div class="grid-2">
+              <label class="field">Sample request (uses the tool's triggers)<input id="tool-test-text" type="text" placeholder="Leave empty to use arguments"></label>
+              <label class="field">Arguments (JSON)<textarea id="tool-test-args" class="code" rows="3">{}</textarea></label>
             </div>
-            <div class="row hero-actions">
-              <button class="btn small" id="model-tools-instructions" type="button">Preview model instructions</button>
+            <div class="result" id="tool-test-result-box" hidden>
+              <div class="result-title" id="tool-test-result-title"></div>
+              <pre class="output" id="tool-test-result"></pre>
             </div>
-            <details class="fold">
-              <summary>Create a model tool</summary>
-              <div class="form">
-                <label class="field">Module name<input id="model-tools-create-name" type="text" placeholder="my_model_tool"></label>
-                <label class="field">Use when…<input id="model-tools-create-description" type="text" value="you need a custom model-called tool result before answering"></label>
-                <label class="field">Arguments example (JSON)<textarea id="model-tools-create-args" class="code">{"topic":"&lt;short topic&gt;"}</textarea></label>
-                <label class="field">Follow-up context<textarea id="model-tools-create-context">Custom model tool result. Use this result when composing the final answer.</textarea></label>
-                <label class="check"><input id="model-tools-create-enable" type="checkbox" checked> Enable after creation</label>
-                <div class="row"><button class="btn primary" id="model-tools-create" type="button" disabled>Create tool</button><span class="hint source-policy"></span></div>
-              </div>
-            </details>
           </div>
 
           <div class="card" id="tool-source-card">
@@ -280,20 +260,26 @@
               </div>
               <div class="row">
                 <button class="btn small" id="tool-source-validate" type="button">Validate</button>
-                <button class="btn small" id="tool-source-test" type="button">Test</button>
                 <button class="btn small primary" id="tool-source-save" type="button">Save source</button>
               </div>
             </div>
             <p class="hint" id="source-editing-policy"></p>
             <textarea id="tool-source-content" class="code source-editor" spellcheck="false" readonly placeholder="Tool source appears here."></textarea>
-            <div class="grid-2">
-              <label class="field">Test phrase (instant tools)<input id="tool-source-test-text" type="text" placeholder="Sample text"></label>
-              <label class="field">Test arguments (model tools, JSON)<textarea id="tool-source-test-args" class="code" rows="2">{}</textarea></label>
-            </div>
             <div class="result" id="tool-source-result-box" hidden>
               <div class="result-title" id="tool-source-result-title"></div>
               <pre class="output" id="tool-source-result"></pre>
             </div>
+            <details class="fold">
+              <summary>Create a tool</summary>
+              <div class="form">
+                <label class="field">Name<input id="tools-create-name" type="text" placeholder="my_tool"></label>
+                <label class="field">Use when…<input id="tools-create-description" type="text" placeholder="the user asks about my thing"></label>
+                <label class="field">Trigger (optional regular expression for an instant answer)<input id="tools-create-trigger" type="text" placeholder="\bmy thing\b"></label>
+                <label class="field">Response<textarea id="tools-create-response">The new tool is wired up. Replace this with your real behavior.</textarea></label>
+                <label class="check"><input id="tools-create-enable" type="checkbox" checked> Enable after creation</label>
+                <div class="row"><button class="btn primary" id="tools-create" type="button" disabled>Create tool</button><span class="hint source-policy"></span></div>
+              </div>
+            </details>
           </div>
 
           <div class="card">

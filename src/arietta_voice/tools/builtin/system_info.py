@@ -6,30 +6,28 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from arietta_voice.model_tools.base import ModelToolContext, ModelToolExecution
+from arietta_voice.tools.base import BaseTool, ToolContext, ToolResult
 
 
-class SystemInfoTool:
-    name = "get_system_info"
+class SystemInfoTool(BaseTool):
+    name = "system_info"
     description = (
         "you need a short report about the current machine, such as model, RAM, free disk space, "
         "or load average"
     )
-    arguments_example: dict[str, object] = {}
 
-    def __init__(self, project_root: Path) -> None:
-        self.project_root = project_root
-
-    def invoke(self, arguments: dict[str, object]) -> ModelToolExecution | None:
-        del arguments
-        report = build_system_report(self.project_root)
-        return ModelToolExecution(
-            followup_context=(
-                "System information requested by the assistant.\n"
-                f"Tool result: {report}\n"
-                "Use this tool result directly when answering and do not invent extra hardware details."
-            )
+    def run(self, arguments):
+        report = build_system_report(self.context.config.project_root)
+        return ToolResult(
+            content=(
+                f"System information: {report}\n"
+                "Use this directly and do not invent extra hardware details."
+            ),
         )
+
+
+def create_tool(context: ToolContext) -> SystemInfoTool:
+    return SystemInfoTool(context)
 
 
 def build_system_report(project_root: Path) -> str:
@@ -119,7 +117,3 @@ def _format_bytes(value: int) -> str:
     if rounded_gb >= 1:
         return f"{rounded_gb:.0f} GB"
     return f"{value / (1024**2):.0f} MB"
-
-
-def create_tool(context: ModelToolContext) -> SystemInfoTool:
-    return SystemInfoTool(context.config.project_root)

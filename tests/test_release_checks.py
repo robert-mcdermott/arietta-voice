@@ -11,6 +11,7 @@ from scripts.check_release import (
     check_artifacts,
     check_tracked,
     check_versions,
+    private_path,
 )
 
 
@@ -135,3 +136,16 @@ def test_wheel_may_carry_console_assets(tmp_path, asset):
 
 def test_distribution_directory_must_be_complete(tmp_path):
     assert check_artifacts(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize(
+    "name, private",
+    [
+        ("tools/README.md", False),
+        ("tools/example_dice.py", False),
+        ("tools/office_lights.py", True),
+        ("tools/nested/secret.py", True),
+    ],
+)
+def test_only_the_tool_readme_and_example_may_be_tracked(name, private):
+    assert private_path(name) is private

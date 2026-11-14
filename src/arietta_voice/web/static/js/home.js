@@ -245,7 +245,7 @@ function renderFacts(state) {
       : "Loads on first use";
   $("#metric-index").title = knowledge.directory;
   const enabled = (tools.enabled || []).length;
-  $("#metric-tools").textContent = `${enabled} instant tool${enabled === 1 ? "" : "s"}`;
+  $("#metric-tools").textContent = `${enabled} tool${enabled === 1 ? "" : "s"} on`;
   $("#metric-tools-sub").textContent = tools.error_count
     ? `${tools.error_count} with errors`
     : "No tool errors";

@@ -34,3 +34,8 @@ tmp/
 
 # Downloaded model weights, such as the optional MLX Kokoro model.
 /models/
+
+# Your own tools stay local; only the README and the example are tracked.
+/tools/*
+!/tools/README.md
+!/tools/example_dice.py

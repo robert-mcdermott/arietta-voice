@@ -23,9 +23,10 @@ from arietta_voice.logging_utils import EventLogger
 from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
-from arietta_voice.tool_admin import ModelToolAdmin, ToolAdmin
+from arietta_voice.tool_admin import ToolAdmin
+from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turns import CancellationToken
-from arietta_voice.web.schemas import ChatRequest, ModelToolCreateRequest, ToolCreateRequest
+from arietta_voice.web.schemas import ChatRequest, ToolCreateRequest
 from arietta_voice.worker import (
     InferenceWorker,
     WorkerBusy,
@@ -48,11 +49,6 @@ class AriettaApiService:
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.runtime_supervisor = RuntimeSupervisor(self.config, config_path=self.config_path)
         self.tool_admin = ToolAdmin(
-            self.config,
-            config_path=self.config_path,
-            knowledge_retriever=self.knowledge,
-        )
-        self.model_tool_admin = ModelToolAdmin(
             self.config,
             config_path=self.config_path,
             knowledge_retriever=self.knowledge,
@@ -139,11 +135,9 @@ class AriettaApiService:
                 "loaded": self.knowledge.is_loaded(),
             },
             "tools": {
-                "enabled": list(self.config.tools.enabled),
-                "loaded_count": None,
+                "enabled": tools["enabled"],
                 "inventory_mode": "static",
-                "error_count": len(tools["assistant_tools"]["errors"])
-                + len(tools["model_tools"]["errors"]),
+                "error_count": len(tools["errors"]),
             },
             "logs": {
                 "events_file": str(self.config.logging.events_file),
@@ -286,7 +280,6 @@ class AriettaApiService:
         self.worker.invalidate()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
-        self.model_tool_admin.knowledge_retriever = self.knowledge
         self.event_logger.log("api_knowledge_index", **payload)
         return payload
 
@@ -333,7 +326,6 @@ class AriettaApiService:
         self.worker.invalidate()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
-        self.model_tool_admin.knowledge_retriever = self.knowledge
         payload = {
             "path": path.relative_to(self.config.knowledge.directory).as_posix(),
             "created": created,
@@ -351,57 +343,41 @@ class AriettaApiService:
         self.worker.invalidate()
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.tool_admin.knowledge_retriever = self.knowledge
-        self.model_tool_admin.knowledge_retriever = self.knowledge
         payload = {"path": relative_path, "deleted": True}
         self.event_logger.log("api_knowledge_file_deleted", **payload)
         return payload
 
     def inspect_tools(self) -> dict[str, Any]:
-        assistant_tools = self.tool_admin.inventory()
         return {
-            "assistant_tools": assistant_tools,
-            "model_tools": self.model_tool_admin.inventory(),
+            **self.tool_admin.inventory(),
             "source_editing_enabled": self.config.admin.allow_source_editing,
         }
 
     def probe_tools(self, text: str) -> dict[str, Any]:
-        text = text.strip()
-        for tool_name in self.config.tools.enabled:
-            probe = self.tool_admin.probe_tool(tool_name, text)
-            if probe["matched"]:
-                return probe
-        return {
-            "matched": False,
-            "tool": None,
-            "content": None,
-            "bypass_model": None,
-            "context": None,
-        }
+        return self.tool_admin.probe(text)
 
     def set_enabled_tools(self, enabled: list[str]) -> dict[str, Any]:
         payload = self.tool_admin.set_enabled(enabled)
+        self.worker.invalidate()
         self.event_logger.log("api_tools_enabled_updated", enabled=payload["enabled"])
         return payload
 
-    def probe_tool(self, tool_name: str, text: str) -> dict[str, Any]:
-        return self.tool_admin.probe_tool(tool_name, text)
+    def test_tool(self, name: str, *, text=None, arguments=None) -> dict[str, Any]:
+        return self.tool_admin.test(name, text=text, arguments=arguments)
 
-    def validate_tool(self, tool_name: str) -> dict[str, Any]:
-        return self.tool_admin.validate_tool(tool_name)
+    def validate_tool(self, name: str) -> dict[str, Any]:
+        return self.tool_admin.validate(name)
 
     def create_tool(self, payload: ToolCreateRequest) -> dict[str, Any]:
-        result = self.tool_admin.create_tool(
-            module_name=payload.module_name,
-            trigger_phrase=payload.trigger_phrase,
+        result = self.tool_admin.create(
+            name=payload.name,
+            description=payload.description,
+            trigger=payload.trigger,
             response=payload.response,
             enable=payload.enable,
         )
-        self.event_logger.log(
-            "api_tool_created",
-            module_name=result["module_name"],
-            file=result["file"],
-            enabled=result["enabled"],
-        )
+        self.worker.invalidate()
+        self.event_logger.log("api_tool_created", name=result["name"], file=result["file"])
         return result
 
     def reload_tools(self) -> dict[str, Any]:
@@ -410,71 +386,24 @@ class AriettaApiService:
         self.event_logger.log("api_tools_reloaded", enabled=payload["enabled"])
         return payload
 
-    def read_tool_source(self, tool_name: str) -> dict[str, Any]:
-        return self.tool_admin.read_source(tool_name)
+    def read_tool_source(self, name: str) -> dict[str, Any]:
+        return self.tool_admin.read_source(name)
 
-    def write_tool_source(self, tool_name: str, content: str) -> dict[str, Any]:
-        payload = self.tool_admin.write_source(tool_name, content)
+    def write_tool_source(self, name: str, content: str) -> dict[str, Any]:
+        payload = self.tool_admin.write_source(name, content)
         self.worker.invalidate()
         self.event_logger.log(
             "api_tool_source_saved",
-            configured_name=payload["configured_name"],
+            name=payload["name"],
             file=payload["file"],
-            valid=payload["tool"].get("valid"),
+            validation=payload["tool"].get("validation"),
         )
         return payload
 
-    def set_enabled_model_tools(self, enabled: list[str]) -> dict[str, Any]:
-        payload = self.model_tool_admin.set_enabled(enabled)
-        self.event_logger.log("api_model_tools_enabled_updated", enabled=payload["enabled"])
-        return payload
-
-    def invoke_model_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        return self.model_tool_admin.invoke_tool(tool_name, arguments)
-
-    def validate_model_tool(self, tool_name: str) -> dict[str, Any]:
-        return self.model_tool_admin.validate_tool(tool_name)
-
-    def create_model_tool(self, payload: ModelToolCreateRequest) -> dict[str, Any]:
-        result = self.model_tool_admin.create_tool(
-            module_name=payload.module_name,
-            description=payload.description,
-            arguments_example=payload.arguments_example,
-            followup_context=payload.followup_context,
-            enable=payload.enable,
-        )
-        self.event_logger.log(
-            "api_model_tool_created",
-            module_name=result["module_name"],
-            file=result["file"],
-            enabled=result["enabled"],
-        )
-        return result
-
-    def reload_model_tools(self) -> dict[str, Any]:
-        self.worker.invalidate()
-        payload = self.model_tool_admin.reload()
-        self.event_logger.log("api_model_tools_reloaded", enabled=payload["enabled"])
-        return payload
-
-    def read_model_tool_source(self, tool_name: str) -> dict[str, Any]:
-        return self.model_tool_admin.read_source(tool_name)
-
-    def write_model_tool_source(self, tool_name: str, content: str) -> dict[str, Any]:
-        payload = self.model_tool_admin.write_source(tool_name, content)
-        self.worker.invalidate()
-        self.event_logger.log(
-            "api_model_tool_source_saved",
-            configured_name=payload["configured_name"],
-            file=payload["file"],
-            valid=payload["tool"].get("valid"),
-        )
-        return payload
-
-    def model_tool_instructions(self) -> dict[str, Any]:
+    def tool_instructions(self) -> dict[str, Any]:
         return {
-            "enabled": list(self.config.model_tools.enabled),
-            "instruction_text": self.model_tool_admin.instruction_text(),
+            "enabled": enabled_tool_names(self.config),
+            "instruction_text": self.tool_admin.instruction_text(),
         }
 
     def chat(self, request: ChatRequest) -> ChatResult:
@@ -489,8 +418,7 @@ class AriettaApiService:
         try:
             payload = request.model_dump(exclude={"request_id"})
             payload.update(
-                enabled_tools=self.config.tools.enabled,
-                enabled_model_tools=self.config.model_tools.enabled,
+                enabled_tools=tuple(enabled_tool_names(self.config)),
             )
             response = self.worker.call(
                 "chat", payload, timeout_s=self.config.runtime.turn_timeout_s, cancellation=token
