@@ -4,8 +4,17 @@ import { activityOnFirstPage, initActivity, loadActivity } from "./activity.js";
 import { chatPending, initChat, showChat } from "./chat.js";
 import { connectionsDirty, initConnections, loadConnections } from "./connections.js";
 import { $, $$, guard, setError } from "./core.js";
-import { loadContentLoggingFlag, loadOverview, pollRuntime, runtimeAction } from "./home.js";
+import {
+  loadContentLoggingFlag,
+  loadOverview,
+  pollRuntime,
+  runtimeAction,
+  runtimeEventsLive,
+  startRuntimeEvents,
+  stopRuntimeEvents,
+} from "./home.js";
 import { initKnowledge, knowledgeDirty, knowledgeEditing, loadKnowledgeFiles } from "./knowledge.js";
+import { initPersona, loadPersona, personaDirty } from "./persona.js";
 import { initSettings, loadDiagnostics, loadSettings, settingsDirty } from "./system.js";
 import { initTimers } from "./timers.js";
 import { initTools, loadTools, toolsBusy, toolSourceDirty } from "./tools.js";
@@ -14,6 +23,7 @@ const VIEWS = {
   home: ["Home", "What your assistant is doing right now."],
   chat: ["Chat", "Type to your assistant. Uses the same answers, knowledge and tools as voice."],
   knowledge: ["Knowledge", "Notes your assistant can draw on when it answers."],
+  persona: ["Persona", "Who your assistant is and what it remembers."],
   tools: ["Tools", "What your assistant can do beyond answering from its model."],
   connections: ["Connections", "MCP servers that give your assistant more tools."],
   activity: ["Activity", "A record of what the assistant heard, did and said."],
@@ -35,6 +45,7 @@ let viewLoading = false;
 async function loadView(view) {
   if (view === "chat") showChat();
   if (view === "knowledge") await loadKnowledgeFiles();
+  if (view === "persona") await loadPersona();
   if (view === "tools") await loadTools();
   if (view === "connections") await loadConnections();
   if (view === "activity") await loadActivity({ reset: true });
@@ -52,6 +63,8 @@ function switchView(view, { updateHash = true } = {}) {
     else button.removeAttribute("aria-current");
   });
   $$(".view").forEach((section) => section.classList.toggle("active", section.id === view));
+  if (view === "home" && !document.hidden) startRuntimeEvents();
+  else stopRuntimeEvents();
   $("#view-title").textContent = VIEWS[view][0];
   $("#view-sub").textContent = VIEWS[view][1];
   document.title = `${VIEWS[view][0]} · Arietta Voice`;
@@ -91,6 +104,7 @@ function init() {
   initTheme();
   initChat();
   initKnowledge();
+  initPersona();
   initTools();
   initConnections();
   initTimers();
@@ -127,20 +141,25 @@ function init() {
       knowledgeDirty() ||
       chatPending() ||
       settingsDirty() ||
-      connectionsDirty()
+      connectionsDirty() ||
+      personaDirty()
     ) {
       event.preventDefault();
       event.returnValue = "";
     }
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) return;
+    if (document.hidden) {
+      stopRuntimeEvents(); // Frees the server's connection while the tab is hidden.
+      return;
+    }
+    if (currentView === "home") startRuntimeEvents();
     guard(loadOverview)();
     refreshView();
   });
 
   setInterval(() => {
-    if (!document.hidden && currentView === "home") guard(pollRuntime)();
+    if (!document.hidden && currentView === "home" && !runtimeEventsLive()) guard(pollRuntime)();
   }, RUNTIME_POLL_MS);
   setInterval(() => {
     if (!document.hidden) guard(loadOverview)();

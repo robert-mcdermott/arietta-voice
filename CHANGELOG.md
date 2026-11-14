@@ -5,6 +5,16 @@ version policy and the release procedure.
 
 ## Unreleased
 
+### Added
+
+- A **Persona** page in the console: edit the persona the assistant is given
+  before every answer, restore the default, and edit the memory file. Saving
+  the default persona writes your own private copy (`SOUL.local.md`); the
+  shipped one never changes. Changes apply from the next answer.
+- The Home page's status is pushed by the server as it changes (server-sent
+  events, `/api/runtime/events`) instead of polled every 1.5 s, with polling
+  kept as the fallback while it connects. Hidden tabs close the connection.
+
 ## 0.2.0rc5 — 2026-11-14
 
 Fifth release candidate for 0.2.0: opt-in web search that says where the

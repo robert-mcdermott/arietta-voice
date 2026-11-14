@@ -30,6 +30,7 @@ from arietta_voice.mcp_servers import (
 )
 from arietta_voice.mcp_servers import probe as mcp_probe
 from arietta_voice.mcp_servers.servers import MAX_SERVERS, merge_secrets
+from arietta_voice.private_config import update_private_section, write_private_text
 from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
@@ -183,6 +184,26 @@ class AriettaApiService:
 
     def diagnostics(self, *, include_hardware: bool) -> dict[str, Any]:
         return run_startup_diagnostics(self.config, include_hardware=include_hardware)
+
+    def runtime_events(self, *, every_s: float = 0.25, keepalive_s: float = 15.0, limit_s=600.0):
+        """Server-sent events: the runtime status whenever it changes.
+
+        Ends after ``limit_s`` so a forgotten tab does not hold a thread for
+        ever; the browser reconnects on its own.
+        """
+        started = last_sent = time.monotonic()
+        previous = None
+        yield "retry: 2000\n\n"
+        while time.monotonic() - started < limit_s:
+            status = self.runtime_status()
+            encoded = json.dumps(status, sort_keys=True, default=str)
+            if encoded != previous:
+                previous, last_sent = encoded, time.monotonic()
+                yield f"data: {encoded}\n\n"
+            elif time.monotonic() - last_sent >= keepalive_s:
+                last_sent = time.monotonic()
+                yield ": keep-alive\n\n"
+            time.sleep(every_s)
 
     def runtime_status(self) -> dict[str, Any]:
         observed = read_runtime_status(self.config)
@@ -453,6 +474,56 @@ class AriettaApiService:
 
     def _base_config_path(self) -> Path:
         return self.config_path or self.config.project_root / "config" / "arietta_voice.toml"
+
+    # Persona and memory. The prompt reads both files on every turn, so a saved
+    # change applies from the next answer, by voice too, with no restart.
+
+    def _default_persona_path(self) -> Path:
+        return self._base_config_path().parent / "SOUL.md"
+
+    def _private_persona_path(self) -> Path:
+        return self._base_config_path().parent / "SOUL.local.md"
+
+    def persona(self) -> dict[str, Any]:
+        path = Path(self.config.prompts.soul_path)
+        default = self._default_persona_path()
+        memory = Path(self.config.prompts.memory_path)
+        return {
+            "file": str(path),
+            "private": path.resolve() != default.resolve(),
+            "content": path.read_text(encoding="utf-8") if path.is_file() else "",
+            "default": default.read_text(encoding="utf-8") if default.is_file() else "",
+            "memory": {
+                "enabled": bool(self.config.memory.enabled),
+                "file": str(memory),
+                "content": memory.read_text(encoding="utf-8") if memory.is_file() else "",
+            },
+        }
+
+    def save_persona(self, content: str) -> dict[str, Any]:
+        """Write the persona privately; the shipped default is never changed."""
+        path = Path(self.config.prompts.soul_path)
+        if path.resolve() == self._default_persona_path().resolve():
+            path = self._private_persona_path()
+            update_private_section(self._base_config_path(), "prompts", {"soul_path": path.name})
+            self.config.prompts.soul_path = path
+            self.prompt_manager.config.prompts.soul_path = path
+            self.worker.invalidate()  # The console's worker reads the new path on start.
+        write_private_text(path, content.strip() + "\n")
+        self.event_logger.log("api_persona_saved", chars=len(content))
+        return self.persona()
+
+    def reset_persona(self) -> dict[str, Any]:
+        default = self._default_persona_path()
+        if not default.is_file():
+            raise FileNotFoundError("The default persona file is missing")
+        return self.save_persona(default.read_text(encoding="utf-8"))
+
+    def save_memory(self, content: str) -> dict[str, Any]:
+        path = Path(self.config.prompts.memory_path)
+        write_private_text(path, content.strip() + "\n" if content.strip() else "")
+        self.event_logger.log("api_memory_saved", chars=len(content))
+        return self.persona()
 
     # Timers and reminders. The voice runtime announces them; the console lists,
     # adds and cancels them through the same file.

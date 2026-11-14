@@ -23,6 +23,7 @@ from arietta_voice.web.schemas import (
     McpImportRequest,
     McpServerRequest,
     SettingsUpdateRequest,
+    TextFileRequest,
     TimerCreateRequest,
     ToolCreateRequest,
     ToolEnabledRequest,
@@ -147,6 +148,40 @@ def create_app(
     @app.get("/api/runtime")
     def api_runtime(_user: str = Depends(require_admin)) -> dict[str, Any]:
         return svc().runtime_status()
+
+    @app.get("/api/runtime/events")
+    def api_runtime_events(_user: str = Depends(require_admin)) -> StreamingResponse:
+        # Pushed to the Home page as it changes, instead of polling every 1.5 s.
+        return StreamingResponse(
+            svc().runtime_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/persona")
+    def api_persona(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().persona()
+
+    @app.put("/api/persona")
+    def api_persona_save(
+        payload: TextFileRequest, _user: str = Depends(require_admin)
+    ) -> dict[str, Any]:
+        if not payload.content.strip():
+            raise HTTPException(status_code=400, detail="The persona must not be empty")
+        return svc().save_persona(payload.content)
+
+    @app.post("/api/persona/reset")
+    def api_persona_reset(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        try:
+            return svc().reset_persona()
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.put("/api/memory")
+    def api_memory_save(
+        payload: TextFileRequest, _user: str = Depends(require_admin)
+    ) -> dict[str, Any]:
+        return svc().save_memory(payload.content)
 
     @app.post("/api/runtime/start")
     def api_runtime_start(_user: str = Depends(require_admin)) -> dict[str, Any]:

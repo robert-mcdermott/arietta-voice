@@ -295,6 +295,36 @@ export async function loadOverview() {
   }
 }
 
+// The server pushes the runtime's status as it changes (server-sent events).
+// Polling covers the gaps: before it connects, and while it reconnects.
+const runtimeEvents = { source: null, live: false };
+
+export function startRuntimeEvents() {
+  if (runtimeEvents.source || typeof EventSource === "undefined") return;
+  const source = new EventSource("/api/runtime/events");
+  source.onmessage = (event) => {
+    runtimeEvents.live = true;
+    if (overview.loading || overview.actionPending || !overview.state) return;
+    const runtime = JSON.parse(event.data);
+    overview.state.runtime = runtime;
+    renderRuntime(runtime);
+  };
+  source.onerror = () => {
+    runtimeEvents.live = false; // The browser reconnects by itself.
+  };
+  runtimeEvents.source = source;
+}
+
+export function stopRuntimeEvents() {
+  if (runtimeEvents.source) runtimeEvents.source.close();
+  runtimeEvents.source = null;
+  runtimeEvents.live = false;
+}
+
+export function runtimeEventsLive() {
+  return runtimeEvents.live;
+}
+
 // A lighter poll for the hero: just the runtime heartbeat.
 export async function pollRuntime() {
   if (overview.loading || overview.actionPending || !overview.state) return;

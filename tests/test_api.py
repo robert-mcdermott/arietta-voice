@@ -1046,3 +1046,40 @@ def test_mcp_rename_drops_old_approvals_and_limits_hold(tmp_path: Path) -> None:
 
     too_many = client.post("/api/mcp/import", auth=AUTH, json={"text": json.dumps(many)})
     assert too_many.status_code == 400 and "At most" in too_many.json()["detail"]
+
+
+def test_persona_is_edited_privately_and_the_default_is_kept(tmp_path: Path) -> None:
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    default = (tmp_path / "config" / "SOUL.md").read_text()
+    shown = client.get("/api/persona", auth=AUTH).json()
+    assert shown["private"] is False and shown["content"] == default
+    saved = client.put("/api/persona", auth=AUTH, json={"content": "You are Ziggy."}).json()
+    assert saved["private"] is True and saved["content"] == "You are Ziggy.\n"
+    assert (tmp_path / "config" / "SOUL.md").read_text() == default  # Never changed.
+    private = tmp_path / "config" / "SOUL.local.md"
+    assert private.read_text() == "You are Ziggy.\n" and private.stat().st_mode & 0o777 == 0o600
+    assert load_config(config_path).prompts.soul_path == private
+    assert service.prompt_manager.system_prompt().startswith("You are Ziggy.")
+    assert client.put("/api/persona", auth=AUTH, json={"content": "  "}).status_code == 400
+    restored = client.post("/api/persona/reset", auth=AUTH).json()
+    assert restored["content"].strip() == default.strip() and restored["private"] is True
+
+
+def test_memory_file_can_be_edited(tmp_path: Path) -> None:
+    client = _client(_write_api_config(tmp_path))
+    saved = client.put("/api/memory", auth=AUTH, json={"content": "Likes tea."}).json()
+    assert saved["memory"]["content"] == "Likes tea.\n"
+    assert (tmp_path / "config" / "MEMORY.md").read_text() == "Likes tea.\n"
+
+
+def test_runtime_status_is_pushed_when_it_changes(tmp_path: Path) -> None:
+    import json
+
+    service = AriettaApiService(_write_api_config(tmp_path))
+    states = iter(["idle", "idle", "listening"])
+    service.runtime_status = lambda: {"state": next(states, "listening")}
+    events = list(service.runtime_events(every_s=0.001, keepalive_s=60, limit_s=0.05))
+    assert events[0].startswith("retry:")
+    data = [json.loads(e[len("data: ") :]) for e in events if e.startswith("data: ")]
+    assert data == [{"state": "idle"}, {"state": "listening"}]  # Only changes are sent.
