@@ -433,6 +433,13 @@ Cancellation can arrive before its chat request; the last 128 completed/cancelle
 IDs are retained to reject stale requests. Always generate a new ID per turn.
 Closing a browser tab alone does not request cancellation.
 
+`POST /api/chat/stream` takes the same body and returns the answer as
+server-sent events while it is generated: `{"kind": "clause", "text": ...}` for
+each clause (as voice would speak it), then `{"kind": "done", "result": ...}` or
+`{"kind": "error", "status": ..., "detail": ...}`. A busy worker or a reused
+request ID fails with the usual status before the stream starts. The console's
+Chat page uses it, so answers appear as they are written.
+
 Voice and web chat now use the same conversation service for prompts, history,
 tool policy and speech sanitization, while retaining separate worker processes.
 The speech handoff has fixed bounds: two text items of at most 12,000 characters

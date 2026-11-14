@@ -1,6 +1,6 @@
 // Chat: talk to the assistant by text through the same conversation service as voice.
 
-import { $, api, escapeHtml, guard, setError } from "./core.js";
+import { $, api, escapeHtml, guard, setError, streamEvents } from "./core.js";
 import { overview } from "./home.js";
 
 const chat = { history: [], pending: false, requestId: null };
@@ -20,6 +20,7 @@ function messageMeta(message) {
   if (message.meta.source === "tool") parts.push("Answered by an instant tool");
   if (message.meta.used_tool) parts.push(`Tool: ${message.meta.used_tool}`);
   if (message.meta.model_tool) parts.push(`Model tool: ${message.meta.model_tool}`);
+  if (message.meta.first != null) parts.push(`First words ${message.meta.first.toFixed(1)}s`);
   if (message.meta.seconds != null) parts.push(`${message.meta.seconds.toFixed(1)}s`);
   return parts.length
     ? `<div class="msg-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("<span>·</span>")}</div>`
@@ -34,12 +35,15 @@ function render() {
     return;
   }
   const messages = chat.history
+    .filter((message) => message.content)
     .map(
       (message) => `<div class="msg ${message.role === "user" ? "user" : "assistant"}">
         <div class="msg-body">${escapeHtml(message.content)}</div>${messageMeta(message)}</div>`,
     )
     .join("");
-  const typing = chat.pending
+  const last = chat.history[chat.history.length - 1];
+  const waiting = chat.pending && !(last?.role === "assistant" && last.content);
+  const typing = waiting
     ? `<div class="msg assistant"><div class="msg-body"><span class="typing" aria-label="Thinking"><span></span><span></span><span></span></span></div></div>`
     : "";
   log.innerHTML = messages + typing;
@@ -76,24 +80,41 @@ async function send() {
   $("#chat-status").textContent = "Thinking…";
   render();
   const started = performance.now();
+  // The answer appears clause by clause, as it would be spoken.
+  const reply = { role: "assistant", content: "", meta: null };
+  chat.history.push(reply);
   try {
-    const payload = await api("/api/chat", {
-      method: "POST",
-      body: JSON.stringify({ message, history, request_id: chat.requestId }),
-    });
-    chat.history.push({
-      role: "assistant",
-      content: payload.response,
-      meta: {
-        source: payload.source,
-        used_tool: payload.used_tool,
-        model_tool: payload.model_tool,
-        seconds: (performance.now() - started) / 1000,
+    let result = null;
+    await streamEvents(
+      "/api/chat/stream",
+      { message, history, request_id: chat.requestId },
+      (event) => {
+        if (event.kind === "clause") {
+          reply.content = reply.content ? `${reply.content} ${event.text}` : event.text;
+          if (!reply.firstAt) reply.firstAt = performance.now();
+          render();
+        } else if (event.kind === "done") {
+          result = event.result;
+        } else if (event.kind === "error") {
+          const error = new Error(`${event.detail} (${event.status})`);
+          error.status = event.status;
+          throw error;
+        }
       },
-    });
+    );
+    if (!result) throw new Error("The answer ended before it finished. Try again.");
+    reply.content = result.response;
+    reply.meta = {
+      source: result.source,
+      used_tool: result.used_tool,
+      model_tool: result.model_tool,
+      seconds: (performance.now() - started) / 1000,
+      first: reply.firstAt ? (reply.firstAt - started) / 1000 : null,
+    };
     chat.history = chat.history.slice(-40);
     $("#chat-status").textContent = IDLE_HINT;
   } catch (error) {
+    chat.history.pop(); // The partial answer.
     chat.history.pop();
     textarea.value = message;
     $("#chat-status").textContent = error.message;

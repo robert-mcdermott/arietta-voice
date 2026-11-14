@@ -3,21 +3,52 @@
 export const $ = (selector) => document.querySelector(selector);
 export const $$ = (selector) => [...document.querySelectorAll(selector)];
 
+export async function responseError(response) {
+  const body = await response.json().catch(() => ({}));
+  const detail = typeof body.detail === "string" ? body.detail : response.statusText;
+  const error = new Error(
+    response.status === 401
+      ? "Your session needs authentication. Reload this page to sign in."
+      : `${detail} (${response.status})`,
+  );
+  error.status = response.status;
+  return error;
+}
+
 export async function api(path, options = {}) {
   const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
   const response = await fetch(path, Object.assign({}, options, { headers }));
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const detail = typeof body.detail === "string" ? body.detail : response.statusText;
-    const error = new Error(
-      response.status === 401
-        ? "Your session needs authentication. Reload this page to sign in."
-        : `${detail} (${response.status})`,
-    );
-    error.status = response.status;
-    throw error;
-  }
+  if (!response.ok) throw await responseError(response);
   return response.json();
+}
+
+// POST and read server-sent events, calling onEvent for each until the stream ends.
+export async function streamEvents(path, body, onEvent) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await responseError(response);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const data = block
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => line.slice(6))
+        .join("\n");
+      if (data) onEvent(JSON.parse(data));
+    }
+    if (done) return;
+  }
 }
 
 export function escapeHtml(value) {
