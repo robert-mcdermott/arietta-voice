@@ -345,8 +345,88 @@ class BedrockChatModel:
             events.close()
 
 
+class OllamaChatModel:
+    """A model served by Ollama: a larger local model, or one of its cloud models.
+
+    Streams Ollama's /api/chat. Tools are described in the prompt and requested
+    as JSON, as with Bedrock. Whether anything leaves the Mac depends on the
+    model: an Ollama ":cloud" model runs on Ollama's servers.
+    """
+
+    provider = "ollama"
+    native_tool_calls = False
+
+    def __init__(self, model_name: str, *, url: str = "http://localhost:11434", timeout_s=60.0):
+        self.model_name = model_name
+        self.url = url.rstrip("/")
+        self.timeout_s = timeout_s
+
+    def ensure_loaded(self) -> None:
+        return None  # Ollama loads the model on the first request.
+
+    def is_loaded(self) -> bool:
+        return True
+
+    def generate(
+        self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False, tools=None
+    ):
+        return "".join(
+            event.text
+            for event in self.stream(messages, max_tokens=max_tokens, temperature=temperature)
+            if event.kind == "text"
+        )
+
+    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False, tools=None):
+        import json
+        import urllib.request
+
+        body = {
+            "model": self.model_name,
+            "messages": _plain_messages(messages),
+            "stream": True,
+            "think": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
+        }
+        request = urllib.request.Request(
+            f"{self.url}/api/chat",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        finished = False
+        with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+            for line in response:
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                if data.get("error"):
+                    raise RuntimeError(f"Ollama: {data['error']}")
+                text = (data.get("message") or {}).get("content") or ""
+                if text:
+                    yield ModelEvent("text", text)
+                if data.get("done"):
+                    finished = True
+                    break
+        if not finished:
+            raise RuntimeError("Incomplete Ollama stream")
+        yield ModelEvent("done")
+
+
+def _plain_messages(messages) -> list[dict[str, str]]:
+    """Messages as plain role and text: tool calls dropped, tool results as notes."""
+    plain = []
+    for message in messages:
+        role, content = message.get("role"), message.get("content")
+        if role == "tool":
+            plain.append({"role": "system", "content": f"Tool result:\n{content}"})
+        elif role in ("system", "user", "assistant") and isinstance(content, str) and content:
+            plain.append({"role": role, "content": content})
+    return plain
+
+
 def build_chat_model(config: ModelConfig) -> ChatModel:
     provider = (config.chat_provider or "local").strip().lower()
+    if provider == "ollama":
+        return OllamaChatModel(config.chat_model, url=config.ollama_url)
     if provider == "local":
         return GemmaChatModel(
             config.chat_model,

@@ -291,6 +291,7 @@ The main config sections are:
 - `[timers]`: where timers and reminders are kept, how often an unanswered one repeats, the snooze length and the alert tone
 - `[weather]`: your town or city and units for the optional weather tool
 - `[mcp]`: where MCP servers are listed, remembered approvals, and connection and call time limits
+- `[smarter_model]`: an optional bigger model, off by default, and when to hand it a question
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
@@ -848,6 +849,40 @@ with `"confirm"` in the file:
 shows Yes, Always and No buttons for the same question, and the Connections page
 lists remembered approvals with a button to be asked again.
 
+
+### A smarter model (optional)
+
+The default local model answers everyday and general-knowledge questions well
+(48 of 48 facts in [the answer check](evals/ANSWER_QUALITY.md)) and fits a
+16 GB Mac mini. For harder questions you can add a bigger model. It is off
+unless you turn it on and name the model, and a fresh install never uses one.
+In the console's Settings page ("Smarter model"), or in your private config:
+
+```toml
+[smarter_model]
+enabled = true
+provider = "ollama"          # or "bedrock"
+model = "gemma4:31b-cloud"   # any model Ollama serves
+when = "unsure"              # or "always"
+```
+
+With `when = "unsure"` the local model still answers first; only when it says
+it doesn't know does the assistant say "Let me think about that." and hand the
+question over. With `"always"`, every answer that needs no tool comes from the
+smarter model, which is slower. Tool use and answers drawn from a tool's result
+stay with the local model. If the smarter model cannot be reached, the local
+answer is used.
+
+**What leaves the Mac.** When the smarter model answers, it is given the
+conversation so far, the persona and any knowledge notes attached to the
+question. An Ollama `:cloud` model or Bedrock runs off this Mac, so that text
+goes there; a larger model you run in Ollama locally keeps it all on the Mac.
+Console chat shows "Answered by <model>" on its answers, and the activity log
+records which model answered, never what was said.
+
+On a bigger Mac you can also make an Ollama model the main one with
+`[models] chat_provider = "ollama"` and `chat_model = "<name>"` (it uses the
+prompted tool format, like Bedrock).
 
 ## Bedrock Integration
 

@@ -62,7 +62,7 @@ def test_changes_are_validated_saved_privately_and_applied(setup):
     assert config.timers.repeat_s == 45 and config.wake_word.phrases == ("bridget", "hey bridget")
     reloaded = load_config(base)
     assert reloaded.weather.location == "Portland, Maine"
-    assert settings.describe(reloaded, base)["groups"][3]["fields"][0]["private"] is True
+    assert field(settings.describe(reloaded, base), "timers", "repeat_s")["private"] is True
 
 
 @pytest.mark.parametrize(
@@ -79,6 +79,9 @@ def test_changes_are_validated_saved_privately_and_applied(setup):
         ({"models": {"chat_model": "other"}}, "cannot be changed here"),
         ({"admin": {"allow_source_editing": True}}, "cannot be changed here"),
         ({"timers": "fast"}, "must be an object"),
+        ({"smarter_model": {"enabled": True}}, "must name a model"),
+        ({"smarter_model": {"when": "sometimes"}}, "one of unsure, always"),
+        ({"models": {"ollama_url": "localhost:11434"}}, "must start with http"),
     ],
 )
 def test_bad_changes_are_refused_and_nothing_is_written(setup, changes, message):
@@ -87,3 +90,15 @@ def test_bad_changes_are_refused_and_nothing_is_written(setup, changes, message)
         settings.apply(config, base, changes)
     assert not local_config_path(base).exists()
     assert config.timers.repeat_s == default_config(base.parent.parent).timers.repeat_s
+
+
+def test_a_smarter_model_is_turned_on_only_with_a_model_named(setup):
+    config, base = setup
+    assert field(settings.describe(config, base), "smarter_model", "enabled")["value"] is False
+    settings.apply(
+        config,
+        base,
+        {"smarter_model": {"enabled": True, "model": "gemma4:31b-cloud", "when": "unsure"}},
+    )
+    reloaded = load_config(base)
+    assert reloaded.smarter_model.enabled and reloaded.smarter_model.model == "gemma4:31b-cloud"

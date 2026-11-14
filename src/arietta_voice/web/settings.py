@@ -66,6 +66,23 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
         ],
     ),
     (
+        "smarter",
+        "Smarter model (optional)",
+        [
+            Field("smarter_model", "enabled", "Use a smarter model", "boolean",
+                  "Off by default. When on, the questions it takes, with the conversation so far, "
+                  "go to wherever that model runs: off this Mac for an Ollama cloud model or Bedrock."),
+            Field("smarter_model", "model", "Model", "text",
+                  "Such as gemma4:31b-cloud, or a larger local Ollama model.", max_length=200),
+            Field("smarter_model", "provider", "Served by", "choice", choices=("ollama", "bedrock")),
+            Field("smarter_model", "when", "When to use it", "choice",
+                  "unsure: only when the local model says it doesn't know. "
+                  "always: every answer that needs no tool (slower, best answers).",
+                  choices=("unsure", "always")),
+            Field("models", "ollama_url", "Ollama address", "text", max_length=200),
+        ],
+    ),
+    (
         "timers",
         "Timers and reminders",
         [
