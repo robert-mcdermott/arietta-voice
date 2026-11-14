@@ -52,6 +52,8 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
             Field("audio", "voice", "Kokoro voice", "text", "Such as af_heart, af_bella or bm_george.", max_length=40),
             Field("audio", "tts_speed", "Speaking speed", "number", "1 is normal.", minimum=0.5, maximum=2.0),
             Field("audio", "chime_enabled", "Thinking chime", "boolean", "A soft tick while an answer is prepared."),
+            Field("audio", "streaming_stt", "Transcribe while you speak (experimental)", "boolean",
+                  "Answers start about 0.1 s sooner. Restart the voice runtime to apply."),
         ],
     ),
     (

@@ -39,6 +39,7 @@ from arietta_voice.prompts import sanitize_for_speech
 from arietta_voice.resume import ResumeWatch, TurnResumed
 from arietta_voice.runtime_status import RuntimeStatusPublisher
 from arietta_voice.streaming import speech_stream
+from arietta_voice.stt_feed import StreamFeed
 from arietta_voice.timers import (
     AlertScheduler,
     TimerStore,
@@ -54,6 +55,8 @@ from arietta_voice.turns import CancellationToken
 from arietta_voice.wake import WakeWordMatch, build_wake_word_detector
 from arietta_voice.worker import InferenceWorker, WorkerCancelled, WorkerTimeout
 
+# Calls that feed streaming transcription: they only queue audio in the worker.
+STREAM_CALL_TIMEOUT_S = 5.0
 GOODBYE_PATTERN = re.compile(
     r"(?:ok(?:ay)?[,.! ]+)?(?:thanks?[,.! ]+|thank you[,.! ]+)?"
     r"(?:goodbye|bye(?: bye)?|see you(?: later)?|talk to you later|"
@@ -105,6 +108,8 @@ class AriettaVoiceRuntime:
         self.wake_detector = build_wake_word_detector(config.wake_word)
         self.session = SessionContext()
         self._awaiting_answer = False  # The last answer asked "Should I …?".
+        # Experimental: transcribe while the user speaks ([audio].streaming_stt).
+        self._stt_feed = StreamFeed(self._stream_call) if config.audio.streaming_stt else None
         self.state = AssistantState.BOOTING
         self.startup_diagnostics: dict | None = None
         self.last_error: str | None = None
@@ -285,18 +290,34 @@ class AriettaVoiceRuntime:
         self._check_audio_health()
         self._publish_status()
 
+    def _stream_call(self, operation: str, payload=None):
+        # From the listening loop, between turns: quick, and never restarts the
+        # worker for an expected failure (the operations report it instead).
+        return self.worker.call(operation, payload, timeout_s=STREAM_CALL_TIMEOUT_S)
+
+    def _transcribe(self, audio: np.ndarray) -> str:
+        """The utterance's text: from the stream fed while it was spoken, if there is one."""
+        rest = self._stt_feed.take_rest(audio) if self._stt_feed is not None else None
+        if rest is not None:
+            text = self._infer("stt_stream_finish", rest)
+            if text is not None:
+                self.event_logger.log("streaming_transcription", samples=len(audio))
+                return text.strip()
+        return self._infer("transcribe", audio).strip()
+
     def _infer(self, operation: str, payload=None, *, cancellation=None):
         token = cancellation or self._turn_token
         if token is not None:
             token.check()
-        self.turn_stage = operation
+        # Finishing a streamed transcription is the transcription stage too.
+        self.turn_stage = "transcribe" if operation == "stt_stream_finish" else operation
         self._publish_status(force=True)
         foreground = (
             self._turn_thread_ident is None or threading.get_ident() == self._turn_thread_ident
         )
         if foreground:
             self._check_audio_health()
-            if operation == "transcribe":
+            if self.turn_stage == "transcribe":
                 capture_phase(self._turn_microphone, "transcribe")
         result = self.worker.call(
             operation,
@@ -734,7 +755,7 @@ class AriettaVoiceRuntime:
         keypress_monitor: RawKeypressMonitor,
     ) -> UtteranceResult:
         started_at = time.monotonic()
-        transcript = self._infer("transcribe", audio).strip()
+        transcript = self._transcribe(audio)
         stt_latency_ms = int((time.monotonic() - started_at) * 1000)
         self._turn_marks["stt_ms"] = stt_latency_ms
         self._check_resumed()  # Before the transcript is logged or acted on.
@@ -1160,6 +1181,8 @@ class AriettaVoiceRuntime:
                     discard_until_quiet = True
                     self.vad.reset()
                     continue
+                if self._stt_feed is not None:
+                    self._stt_feed.feed(buffer)
                 if is_speech:
                     last_speech_at = time.monotonic()
                     continue
@@ -1192,6 +1215,8 @@ class AriettaVoiceRuntime:
                     elif endpoint < 0.5:
                         silent_chunks = 0
                         continue
+                if self._stt_feed is not None:
+                    self._stt_feed.prepare(buffer)
                 result = self.process_utterance(
                     utterance,
                     microphone,

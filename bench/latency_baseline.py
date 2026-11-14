@@ -368,11 +368,14 @@ def run_child(
                 # Preserve the baseline's chat-stage total across incremental
                 # calls; it is now interleaved with TTS and playback.
                 stage = "chat" if operation in {"chat_start", "chat_next"} else operation
+                if operation == "stt_stream_finish":
+                    # What is left of a streamed transcription once speech ends.
+                    stage = "transcribe"
                 row["calls"].append((stage, start, end))
                 if operation == "tts_next" and value is not None:
                     row.setdefault("tts_ready", end)
                     row.setdefault("first_tts_chunk_ms", (end - start) * 1000)
-                if operation == "transcribe":
+                if stage == "transcribe" and isinstance(value, str):
 
                     def normalize(text):
                         return re.sub(r"\W+", " ", text.casefold()).strip()
@@ -526,6 +529,11 @@ def main():
         help="Offer tools as prompted JSON instead of the local model's native tool calls",
     )
     parser.add_argument(
+        "--streaming-stt",
+        action="store_true",
+        help="Transcribe while the speech plays in (the experimental [audio].streaming_stt)",
+    )
+    parser.add_argument(
         "--case-offset",
         type=int,
         default=0,
@@ -562,6 +570,8 @@ def main():
             config.tools.enabled = DEFAULT_ENABLED_TOOLS
         if args.prompted_tools:
             config.models.native_tool_calls = False
+        if args.streaming_stt:
+            config.audio.streaming_stt = True
         validate_config(config)
         if not config.audio.tts_enabled:
             parser.error("This baseline requires TTS enabled")
@@ -576,6 +586,7 @@ def main():
             tts_backend=config.audio.tts_backend,
             model_tools=list(config.tools.enabled),
             native_tool_calls=config.models.native_tool_calls,
+            streaming_stt=config.audio.streaming_stt,
             conversation_turns=args.conversation_turns,
             case_offset=args.case_offset,
             protocol="paced synthetic input; grouped conversation history; first output write, not acoustic onset",
