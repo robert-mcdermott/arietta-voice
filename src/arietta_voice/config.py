@@ -135,6 +135,9 @@ class ModelConfig:
     aws_session_token: str | None = None
     stt_language: str = "en"
     reuse_prompt_prefix: bool = True
+    # Declare tools through the model's own chat template (Gemma 4) instead of
+    # describing them in the prompt and asking for JSON. Bedrock always uses JSON.
+    native_tool_calls: bool = True
     temperature: float = 0.7
     max_tokens: int = 220
 
@@ -394,6 +397,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             reuse_prompt_prefix=bool(
                 models.get("reuse_prompt_prefix", base.models.reuse_prompt_prefix)
             ),
+            native_tool_calls=bool(models.get("native_tool_calls", base.models.native_tool_calls)),
             temperature=float(models.get("temperature", base.models.temperature)),
             max_tokens=int(models.get("max_tokens", base.models.max_tokens)),
         ),

@@ -30,6 +30,7 @@ class SetTimerTool(BaseTool):
     }
     aliases = {"length": "duration", "time": "duration", "minutes": "duration", "name": "label"}
     timeout_s = 5.0
+    speaks_for_itself = True
 
     def __init__(self, context=None, store=None) -> None:
         super().__init__(context)

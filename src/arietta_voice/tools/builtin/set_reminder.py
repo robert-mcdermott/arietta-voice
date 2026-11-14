@@ -39,6 +39,7 @@ class SetReminderTool(BaseTool):
         "due": "when",
     }
     timeout_s = 5.0
+    speaks_for_itself = True
 
     def __init__(self, context=None, store=None, clock=local_now) -> None:
         super().__init__(context)

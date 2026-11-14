@@ -87,6 +87,9 @@ stt_language = "en"
 # Local model only: reuse the already-processed start of each conversation prompt
 # (persona, tool instructions, earlier turns) so the first word arrives sooner.
 reuse_prompt_prefix = true
+# Local model only: offer tools through Gemma's own tool-calling format. It picks
+# the right tool far more often than the prompted JSON used with Bedrock.
+native_tool_calls = true
 temperature = 0.7
 max_tokens = 220
 

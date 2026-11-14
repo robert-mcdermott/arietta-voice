@@ -185,3 +185,16 @@ def test_prefix_reuse_can_be_disabled_in_configuration(monkeypatch, tmp_path):
     assert build_chat_model(config.models).reuse_prompt_prefix is True
     config.models.reuse_prompt_prefix = False
     assert build_chat_model(config.models).reuse_prompt_prefix is False
+
+
+def test_local_stream_declares_tools_through_the_chat_template(monkeypatch):
+    calls = []
+    _fake_mlx(monkeypatch, ["<|tool_call>call:t{}<tool_call|>"], calls)
+    model = _loaded_gemma()
+    tools = [{"type": "function", "function": {"name": "t", "description": "d"}}]
+    events = list(model.stream([{"role": "user", "content": "Hi"}], tools=tools))
+    assert events[0].text == "<|tool_call>call:t{}<tool_call|>"
+    assert model._processor.apply_chat_template.call_args.kwargs["tools"] == tools
+    list(model.stream([{"role": "user", "content": "Hi"}]))
+    assert "tools" not in model._processor.apply_chat_template.call_args.kwargs
+    assert model.native_tool_calls is True

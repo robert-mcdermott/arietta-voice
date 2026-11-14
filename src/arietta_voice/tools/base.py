@@ -64,6 +64,9 @@ class BaseTool:
     # Other names a model may use for an argument, such as {"note": "text"}.
     # Small models often guess a near miss; this accepts it instead of failing.
     aliases: ClassVar[dict[str, str]] = {}
+    # When the model calls this tool and the result has ``speak``, say that and
+    # do not ask the model again: faster, and it cannot misstate what happened.
+    speaks_for_itself: ClassVar[bool] = False
     # Changes something outside the assistant (a light, a message, a purchase).
     # The agent loop asks before running these.
     consequential: ClassVar[bool] = False

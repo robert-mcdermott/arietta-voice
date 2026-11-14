@@ -349,6 +349,7 @@ voice runtime and API to apply them.
 | `audio.endpoint_early_ms` | `250.0` | With Smart Turn on, also check for the end of a turn after this much silence and start on the answer at once if the model is confident, which saves about 0.4 s per turn. Until `silence_ms` has passed the assistant keeps listening; if you carry on, it discards that attempt and continues with the whole utterance. `0` waits for `silence_ms` every time. Ignored when it is not shorter than `silence_ms`. |
 | `audio.endpoint_early_threshold` | `0.7` | Smart Turn probability, 0.5–1, required to end the turn at the early check. The normal check after `silence_ms` still uses 0.5. |
 | `models.reuse_prompt_prefix` | `true` | Local model only. Reuses the processed start of each conversation prompt (persona, tool instructions, earlier turns), which cuts the wait for the first word. An answer can occasionally differ from what the same prompt would produce without reuse; set `false` to compare. |
+| `models.native_tool_calls` | `true` | Local model only. Offers tools through Gemma 4's own tool-calling format and lets it call up to three in a turn. It chose the right tool far more often than the prompted JSON format, which Bedrock still uses and `false` restores. |
 | `audio.tts_trim_silence` | `true` | Cut the silence each synthesised clip starts and ends with to 40 ms and 100 ms. MLX Kokoro pads clips with about 0.3 s before and 0.4 s after; ONNX Kokoro is already close to these margins. |
 | `audio.aec_delay_ms` | `0.0` | Additional measured acoustic/device delay, 0–500 ms, beyond reported output latency. No automatic calibration. |
 | `runtime.turn_timeout_s` | `60.0` | Shared budget for STT, chat/tools and speech generation/playback. Also limits web chat. Background memory gets its own budget, capped at 30 seconds. |
@@ -679,8 +680,12 @@ arguments and a `run` method. A tool can work in two ways, or both:
   request runs the tool at once, and if it returns `speak`, that is the answer;
   the model is not asked. Use this when the answer must be exact, like the time.
 - **Model call.** The model sees the tool's name, description and arguments,
-  and can call it once before answering, using the tool's `content`. Use this
-  when the model should decide whether it needs the tool, or which arguments.
+  and can call it before answering, using the tool's `content`. Use this when
+  the model should decide whether it needs the tool, or which arguments. The
+  local model calls tools natively (Gemma 4's own format) and may call up to
+  three in a turn; Bedrock gets one call through a prompted JSON format. With
+  `speaks_for_itself = True`, a tool's `speak` is the answer even when the model
+  called it, as the timer tools do.
 
 Arguments are checked against the schema before a tool runs. A tool that fails,
 times out or does not exist is reported to the model, which answers without it

@@ -368,6 +368,14 @@ Single-turn, the shipped tool list costs nothing over one offered tool:
 1,545 ms median first audio (chat 462 ms) against 1,583 ms (chat 496 ms) with
 `--model-tools`.
 
+**Native tool calls (November).** The local model now gets tools through
+Gemma 4's chat template instead of a prompted JSON format. Interleaved runs,
+30 warm muted turns each with the shipped tool list
+(`--default-tools` against `--default-tools --prompted-tools`): native 1,643
+and 1,610 ms median first audio (p95 2,987 and 2,974 ms), prompted 1,618 and
+1,619 ms (p95 3,866 and 3,484 ms). Runs made far apart are not comparable on a
+busy machine: two such runs had suggested native was 300 ms slower.
+
 ### Speech engine and silence trimming
 
 ONNX Kokoro's first chunk is model inference on the CPU, about 445 ms even for

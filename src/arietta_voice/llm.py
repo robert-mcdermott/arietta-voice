@@ -22,7 +22,12 @@ class ChatModel(Protocol):
 
     def is_loaded(self) -> bool: ...
 
-    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False): ...
+    # True when ``stream`` accepts ``tools`` and the model writes native tool calls.
+    native_tool_calls: bool
+
+    def stream(
+        self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False, tools=None
+    ): ...
 
     def generate(
         self,
@@ -33,8 +38,15 @@ class ChatModel(Protocol):
     ) -> str: ...
 
 
+# Gemma 4 opens a hidden reasoning channel with this token.
+REASONING_START = "<|channel>"
+
+
 class GemmaChatModel:
     provider = "local"
+    # Gemma 4's chat template declares tools and the model answers with
+    # <|tool_call>call:name{...}<tool_call|> (see model_tooling).
+    native_tool_calls = True
 
     def __init__(self, model_name: str, *, reuse_prompt_prefix: bool = True) -> None:
         self.model_name = model_name
@@ -81,7 +93,7 @@ class GemmaChatModel:
         )
         return result.text if hasattr(result, "text") else str(result)
 
-    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False):
+    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False, tools=None):
         """Yield text events; with reuse_prefix, skip prompt tokens shared with the last call.
 
         Persona, tool instructions and earlier turns repeat at the start of every
@@ -93,8 +105,9 @@ class GemmaChatModel:
         self.ensure_loaded()
         from mlx_vlm import stream_generate
 
+        template_options = {"tools": tools} if tools else {}
         prompt = self._processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            messages, tokenize=False, add_generation_prompt=True, **template_options
         )
         reuse_prefix = reuse_prefix and self.reuse_prompt_prefix
         options = {}
@@ -107,6 +120,16 @@ class GemmaChatModel:
             # Used when nothing can be reused; mlx-vlm swaps in the kept cache
             # when the prompt shares a prefix with the last one.
             options["prompt_cache"] = self._rewindable_cache()
+        if tools:
+            # With tools declared, Gemma 4 often reasons in a hidden channel before
+            # it answers, which took 10 to 20 seconds. Ruling out the token that
+            # opens the channel makes it answer or call a tool directly. (Starting
+            # its turn with an empty reasoning block did not work: it reasoned
+            # anyway, then closed the block.)
+            tokenizer = getattr(self._processor, "tokenizer", self._processor)
+            channel = tokenizer.convert_tokens_to_ids(REASONING_START)
+            if isinstance(channel, int) and channel >= 0:
+                options["logit_bias"] = {channel: -1e9}
         chunks = stream_generate(
             self._model,
             self._processor,
@@ -153,6 +176,8 @@ class GemmaChatModel:
 
 class BedrockChatModel:
     provider = "bedrock"
+    # Tools are described in the prompt and requested as JSON (model_tooling).
+    native_tool_calls = False
 
     def __init__(
         self,
@@ -233,7 +258,7 @@ class BedrockChatModel:
         text_parts = [block["text"] for block in content_blocks if "text" in block]
         return "\n".join(part.strip() for part in text_parts if part and part.strip()).strip()
 
-    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False):
+    def stream(self, messages, *, max_tokens=200, temperature=0.7, reuse_prefix=False, tools=None):
         # Prefix reuse is a local-model optimisation; the service manages its own caching.
         self.ensure_loaded()
         system, conversation = _bedrock_messages(messages)

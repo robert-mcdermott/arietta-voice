@@ -99,6 +99,18 @@ version policy and the release procedure.
 
 ### Added
 
+- Native tool calling for the local model. Tools are declared through Gemma 4's
+  own chat template instead of being described in the prompt with a JSON reply
+  format, and the model may call up to three tools in a turn, with each result
+  sent back as a tool message. In a real-model check it chose the right tool
+  for every request, including phrasings the prompted format missed ("Is
+  anything counting down right now?", "Scrap the tea countdown"). Words before a
+  call are spoken and the answer continues after it; Gemma's hidden reasoning
+  channel is ruled out, since it cost 10 to 20 seconds per answer. New setting
+  `models.native_tool_calls` (on); Bedrock keeps the prompted format.
+- Tools can set `speaks_for_itself`: when the model calls one and it returns
+  `speak`, that is the answer, without a second generation. The timer,
+  reminder and alarm tools do, so a model-called timer is confirmed exactly.
 - Timers, reminders and alarms. "Set a 10 minute pasta timer", "remind me to
   call Mom at 5:30", "wake me up at 7", "how much time is left?" and "cancel the
   pasta timer" are answered instantly by new built-in tools (`set_timer`,
