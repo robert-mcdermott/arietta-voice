@@ -120,12 +120,12 @@ speaker has finished, 180 ms transcribing, 480 ms generating and 490 ms on the
 first speech chunk. ONNX needs about 450 ms even for three words, so a shorter
 first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
 
-1. **Decide on MLX Kokoro as the default speech engine.** With trimming it
-   answered in 1.34 s against 1.72 s on ONNX. The dependency upgrade already
-   brings in mlx-audio; it would still add misaki (which declares support only
-   below Python 3.13, although uv installs it and it works), spaCy and an
-   English spaCy model. One 100-turn muted run had an output underflow. Gate it
-   on a live soak.
+1. **Decide on MLX Kokoro as the default speech engine.** It now installs
+   from the main project (`uv sync --group mlx-speech`) and answered in
+   1.28 s median against 1.59 s on ONNX, with a p95 of 2.18 s against 3.38 s.
+   It adds misaki (which declares support only below Python 3.13, although uv
+   installs it and it works), spaCy and an English spaCy model. One earlier
+   100-turn muted run had an output underflow. Gate it on a live soak.
 2. **Stream transcription during speech.** Moonshine's streaming mode leaves
    about 70 ms of work after the turn ends instead of about 170 ms. Getting
    that needs a way to feed audio to the inference worker while the user is

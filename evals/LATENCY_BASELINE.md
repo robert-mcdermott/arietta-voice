@@ -392,6 +392,23 @@ the transcript 70 ms median after the last audio (144 ms max), with the same
 accuracy. Each update blocked `add_audio` for up to about 160 ms, which is why
 streaming during speech needs its own feeding path to the worker.
 
+### MLX speech from the main install
+
+With the `mlx-speech` dependency group installed (mlx-audio 0.6.5 from the
+upgraded lock, misaki 0.9.4, spaCy 3.8.18), MLX Kokoro produced the first chunk
+of "Two plus two equals four." in 181 ms, still with about 300 ms of padding
+that trimming removes. ONNX speech produced byte-identical audio with and
+without the group installed. From that environment, `--model-tools`, 30 warm
+muted turns each:
+
+| Engine | Median first audio | p95 | First TTS chunk p50 |
+| --- | ---: | ---: | ---: |
+| ONNX | 1,590 ms | 3,375 ms | 498 ms |
+| MLX | 1,276 ms | 2,175 ms | 187 ms |
+
+Both passed every gate with no underflows. Active MLX memory was 5.29 GiB after
+the first and last turns; the allocator peak was 6.84 GiB.
+
 ### Limits
 
 Thirty turns per run, one run per condition, synthetic speech and a software

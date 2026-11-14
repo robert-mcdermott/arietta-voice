@@ -481,6 +481,41 @@ a delivered turn as failed. Diagnostics include counts and exception types,
 never queued conversation text or memory contents. Shutdown clears pending text,
 stops active work, then closes the inference worker.
 
+### Faster speech with MLX Kokoro (optional)
+
+ONNX Kokoro, the default, needs about 450 ms of CPU time before the first word
+of each answer. Kokoro on MLX uses the GPU and produces it in about 190 ms,
+which made answers 0.3 to 0.4 s quicker in the latency benchmark (1.28 s
+against 1.59 s median). It is not yet the default: one long benchmark run had
+an audio underflow, and it has not been through a live soak.
+
+To try it, install the extra packages and the model, then point your private
+config at the model directory:
+
+```bash
+uv sync --group mlx-speech
+uv run hf download mlx-community/Kokoro-82M-bf16 config.json kokoro-v1_0.safetensors voices/af_heart.safetensors --local-dir models/Kokoro-82M-bf16
+```
+
+```toml
+# config/arietta_voice.local.toml
+[audio]
+tts_backend = "mlx"
+mlx_kokoro_model = "../models/Kokoro-82M-bf16"
+```
+
+The directory name must contain `kokoro`, and the voice file must match
+`audio.voice`. A relative path resolves beside the config file. To return to
+ONNX, remove those two lines, or run once with `--tts-backend onnx`. Plain
+`uv sync` removes the extra packages again. MLX supports the American and
+British English voices only.
+
+The group installs misaki for pronunciation. misaki declares support only for
+Python below 3.13; uv installs it regardless and it works, but pip would refuse
+it. It also brings in `phonemizer-fork`, which installs over the same files as
+the `phonemizer` package ONNX Kokoro uses; ONNX speech was checked to produce
+identical audio with both installed.
+
 ### Token streaming and early speech
 
 The local MLX adapter and Bedrock adapter emit incremental text and completion

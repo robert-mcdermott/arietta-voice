@@ -35,7 +35,7 @@ def run_startup_diagnostics(config: AppConfig, *, include_hardware: bool = True)
 
             validate_trial(config.audio.mlx_kokoro_model, config.audio.voice)
             checks.append(
-                _check("tts_backend", True, "Experimental MLX dependencies and local assets found")
+                _check("tts_backend", True, "MLX speech packages and local model files found")
             )
         except ValueError as exc:
             checks.append(_check("tts_backend", False, str(exc)))

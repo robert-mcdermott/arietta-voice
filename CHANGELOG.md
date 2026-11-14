@@ -77,6 +77,11 @@ version policy and the release procedure.
 
 ### Added
 
+- Optional MLX Kokoro speech from the main install: `uv sync --group
+  mlx-speech`, download the model, and set `audio.tts_backend = "mlx"` (see
+  README). It no longer needs a separate trial environment or exact package
+  versions. In the latency benchmark it answered in 1.28 s median against
+  1.59 s with ONNX Kokoro. ONNX remains the default until a live soak passes.
 - A `turn_timing` event for each spoken microphone turn, with milliseconds
   from the end of speech to the end-of-turn decision, first audio and turn end,
   plus transcription time. It carries no conversation text. The latest values
