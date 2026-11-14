@@ -31,6 +31,7 @@ DEFAULT_ENABLED_TOOLS = (
     "set_alarm",
     "check_timers",
     "cancel_timer",
+    "calculate",
     # Looks up every request, so it comes after the tools that answer directly.
     "search_knowledge",
     "system_info",

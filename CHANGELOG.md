@@ -5,7 +5,16 @@ version policy and the release procedure.
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- A `calculate` tool for arithmetic, percentages, powers, roots and unit
+  conversions (length, weight, volume, speed, time and temperature), said in
+  words or digits: "what's seventeen times twenty three?", "15% of 80",
+  "convert 5 miles to kilometers", "how many cups are in a liter". Common
+  phrasings are answered instantly; the model can call it for word problems.
+  Expressions are evaluated from a parsed syntax tree of numbers and operators
+  only, with limits on size. Enabled by default; add it to a private
+  `[tools].enabled` list to use it there.
 
 ## 0.2.0rc1 — 2026-11-14
 

@@ -691,7 +691,13 @@ Arguments are checked against the schema before a tool runs. A tool that fails,
 times out or does not exist is reported to the model, which answers without it
 instead of the turn failing. The built-in tools are `assistant_identity`,
 `local_time`, `set_timer`, `set_reminder`, `set_alarm`, `check_timers`,
-`cancel_timer`, `search_knowledge` and `system_info`.
+`cancel_timer`, `calculate`, `search_knowledge` and `system_info`.
+
+`calculate` works out arithmetic and unit conversions exactly, since the small
+model gets sums wrong: "what's seventeen times twenty three?", "15% of 80",
+"square root of 2", "convert 5 miles to kilometers", "how many cups are in a
+liter". It evaluates a parsed expression of numbers and operators only, never
+arbitrary code.
 
 Configs from before tools were unified keep working: `[model_tools].enabled`
 is still read and added to `[tools].enabled`, and `knowledge_retrieval` means

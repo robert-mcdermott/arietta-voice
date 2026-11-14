@@ -133,6 +133,7 @@ enabled = [
   "set_alarm",
   "check_timers",
   "cancel_timer",
+  "calculate",
   "search_knowledge",
   "system_info",
 ]
