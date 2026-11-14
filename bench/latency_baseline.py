@@ -23,7 +23,7 @@ from types import SimpleNamespace
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from arietta_voice.config import load_config, validate_config
+from arietta_voice.config import DEFAULT_ENABLED_TOOLS, load_config, validate_config
 from arietta_voice.runtime_status import read_runtime_status
 from bench.hardware_validation import (
     _synthesize,
@@ -516,6 +516,11 @@ def main():
         help="Enable the system_info model tool so each turn takes the tool-planning path",
     )
     parser.add_argument(
+        "--default-tools",
+        action="store_true",
+        help="Enable the default tool list (timers, reminders and the rest), as shipped",
+    )
+    parser.add_argument(
         "--case-offset",
         type=int,
         default=0,
@@ -547,6 +552,9 @@ def main():
         if args.model_tools:
             # The questions still need no tool; this measures the cost of offering one.
             config.tools.enabled = ("system_info",)
+        if args.default_tools:
+            # The longer instructions the shipped tool list puts in every prompt.
+            config.tools.enabled = DEFAULT_ENABLED_TOOLS
         validate_config(config)
         if not config.audio.tts_enabled:
             parser.error("This baseline requires TTS enabled")

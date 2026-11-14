@@ -344,6 +344,30 @@ reuse and 2,303 ms without (chat generation 507 ms against 1,148 ms). Reuse
 stays on; making tool selection robust to such small differences belongs to
 the tool-calling work.
 
+**Past the 512-token sliding window (November).** Gemma 4's sliding-attention
+layers keep the last 512 tokens in a ring buffer. Once a prompt and its answer
+pass 512 tokens the ring has wrapped, and mlx-vlm refuses to rewind it to the
+shared prefix, so the next turn reprocessed the whole prompt. Conversations
+reached that after a few turns, and the full tool list with a persona puts the
+first prompt at about 500 tokens. The local model now gives those layers a plain
+cache; the model applies the same 512-token window through its attention mask,
+so attention is unchanged. Greedy answers matched the stock cache in 11 of 12
+prompts from 534 to 1,080 tokens (the twelfth differed late in a long answer).
+On a 573-token prompt, 558 tokens were reused and the first text came in
+0.42 s instead of 1.38 s.
+
+30 warm muted turns in four-turn conversations, with the shipped tool list
+(`--default-tools --conversation-turns 4`):
+
+| | First audio p50 | First audio p95 | Chat p50 | Chat p95 |
+|---|---|---|---|---|
+| Plain cache | 1,729 ms | 3,509 ms | 558 ms | 1,103 ms |
+| Ring buffer (before) | 1,907 ms | 4,397 ms | 717 ms | 1,971 ms |
+
+Single-turn, the shipped tool list costs nothing over one offered tool:
+1,545 ms median first audio (chat 462 ms) against 1,583 ms (chat 496 ms) with
+`--model-tools`.
+
 ### Speech engine and silence trimming
 
 ONNX Kokoro's first chunk is model inference on the CPU, about 445 ms even for
