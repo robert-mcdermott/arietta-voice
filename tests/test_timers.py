@@ -313,6 +313,13 @@ def registry(tmp_path):
     return ToolRegistry(config)
 
 
+def pin_clock(registry, now):
+    """Fix "now" for the tools and for the store's own check that a time is ahead."""
+    for name in ("set_reminder", "set_alarm"):
+        registry.tools[name].clock = lambda: now
+        registry.tools[name].store.clock = now.timestamp
+
+
 def answer(registry, text):
     hit = registry.fast_path(text)
     return None if hit is None else (hit.name, hit.result.speak)
@@ -340,7 +347,7 @@ def test_timers_are_set_instantly(registry, text, speak):
 
 def test_reminders_are_set_instantly(registry, monkeypatch):
     now = datetime(2026, 11, 14, 10, 0, tzinfo=ZONE)
-    registry.tools["set_reminder"].clock = lambda: now
+    pin_clock(registry, now)
     cases = {
         "Remind me to call my mom at 5:30 p.m.": "Okay, I'll remind you to call your mom at 5:30 PM.",
         "Remind me in 20 minutes to take the bread out.": (
@@ -471,9 +478,7 @@ def test_a_spoken_timer_request_never_reaches_the_model(tmp_path):
 
 @pytest.fixture
 def afternoon_registry(registry):
-    now = datetime(2026, 11, 14, 14, 0, tzinfo=ZONE)
-    registry.tools["set_alarm"].clock = lambda: now
-    registry.tools["set_reminder"].clock = lambda: now
+    pin_clock(registry, datetime(2026, 11, 14, 14, 0, tzinfo=ZONE))
     return registry
 
 
