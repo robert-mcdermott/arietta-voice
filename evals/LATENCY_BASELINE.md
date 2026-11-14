@@ -228,3 +228,71 @@ and recognition checks. The initial wake miss also makes onset/pre-roll and
 labeled wake testing useful follow-ups. Physical microphone/acoustic latency,
 interruption timing, representative recognition/answer quality, cold-boot/model
 downloads and long soaks remain separate measurements.
+
+## November 13, 2026: first Milestone 1 changes
+
+Same protocol, questions and shared fixtures as above, on the M4/32 GB Mac with
+the locked ONNX Kokoro stack. Each run is 30 warm turns (three per question)
+with muted output to the real device, run back to back on an otherwise idle
+machine. "Before" is `main` at `94fdd95`; "after" adds streamed tool planning,
+prompt-prefix reuse, the shorter first clause and per-turn timing. These are
+shorter runs than the 100-turn October baseline, and today's "before" median
+(2,483 ms) is the comparison point, not October's 2,362 ms.
+
+`--model-tools` offers the model one tool (`system_info`) on every turn. None of
+the questions needs it, so this measures what the default configuration pays for
+having tools available.
+
+Speech end to first reply write, milliseconds:
+
+| Configuration | Before p50 | After p50 | Change | Before p95 | After p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Default, no tools | 2,483 | 2,167 | −13% | 3,820 | 3,395 |
+| Default, `--model-tools` | 3,087 | 2,188 | −29% | 5,058 | 4,036 |
+
+Median stage times after the change, no tools: endpoint wait 709, transcription
+214, chat generation 491 (was 746), first TTS chunk 562. With a tool on offer,
+chat generation fell from 1,320 to 525 because a direct answer no longer waits
+for a separate planning generation. All four default runs passed every gate, with
+no output underflows, and the transcript matched its fixture in 24 of 30 turns
+both before and after.
+
+### Early end-of-turn check
+
+With `audio.endpoint_early_ms = 250`, the endpoint wait fell from about 708 ms
+to about 290 ms. On the eight single-sentence questions (24 turns):
+
+| Configuration | Before p50 | After p50 | Before p95 | After p95 |
+| --- | ---: | ---: | ---: | ---: |
+| No tools | 2,478 | 1,814 | 3,250 | 2,590 |
+| `--model-tools` | 3,045 | 1,781 | 3,778 | 2,487 |
+
+It also ended both two-sentence questions after their first sentence in all six
+turns of each run. Those fixtures pause for 346 and 375 ms between sentences,
+the first sentence is a complete question, and Smart Turn judged it finished.
+The check is therefore off by default. Whole-run medians from those runs
+(1,639 and 1,766 ms) are not valid, because a cut-off turn starts answering
+before the recorded end of speech.
+
+### Prompt-prefix reuse
+
+Checked directly against the model over six-turn conversations at temperature 0,
+comparing each prompt with and without reuse. On turns after the first, median
+time to the first text fell from 1,064 ms to 254 ms. Prompt processing runs at
+only about 190 tokens per second with this model build, which is why reuse
+matters. After a cancelled generation the cache is discarded and the next turn
+pays the full cost once.
+
+Answers were identical in 11 of 12 comparisons. The twelfth differed, and
+repeating the check without the repetition penalty still showed differences on
+the same sixth turn (2 of 12). In each case the cached answer was a correct
+reply and the uncached one was not better, but the cause was not established;
+set `models.reuse_prompt_prefix = false` to compare.
+
+### Limits
+
+Thirty turns per run, one run per condition, synthetic speech and a software
+timing boundary. Nothing here measures the acoustic path, interruption, a live
+microphone, or answer quality. The raw per-turn reports from these runs were not
+kept; only the figures above were recorded. The 1.0 s target is not met.
+

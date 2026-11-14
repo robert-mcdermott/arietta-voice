@@ -7,6 +7,13 @@ version policy and the release procedure.
 
 ### Changed
 
+- Faster first response. With model tools enabled, a direct answer is now
+  spoken as it is generated instead of after a complete, separate planning
+  generation; only a response that starts as a JSON tool request is held back.
+- The first spoken clause may end at a comma or dash once it is 25 characters
+  long, so speech can begin before a long opening sentence finishes.
+- The local chat model reuses the part of each conversation prompt it has
+  already processed (persona, tool instructions, earlier turns).
 - The web console is redesigned. It now has Home, Chat, Knowledge, Tools,
   Activity, System and Settings sections, light and dark themes that follow the
   system preference, and a layout that works at phone width. Home shows what the
@@ -38,6 +45,17 @@ version policy and the release procedure.
 - The unused image-input method on the local chat model.
 
 ### Added
+
+- A `turn_timing` event for each spoken microphone turn, with milliseconds
+  from the end of speech to the end-of-turn decision, first audio and turn end,
+  plus transcription time. It carries no conversation text. The latest values
+  are also in the runtime status under `reliability.last_turn_timing`.
+- `bench/latency_baseline.py --model-tools` measures the tool-planning path.
+- Optional early end-of-turn check, off by default. With
+  `audio.endpoint_early_ms` above 0, Smart Turn is also asked after that much
+  silence and the assistant answers at once when it is at least
+  `audio.endpoint_early_threshold` confident. It saves about 0.4 s per turn but
+  can end a turn at a pause between two sentences.
 
 - Isolated continuous live/load soak with paced synthetic input, real microphone
   capture/AEC and streamed speaker output, live checks before/after continuous load,

@@ -347,6 +347,9 @@ voice runtime and API to apply them.
 | `audio.max_recording_s` | `3600.0` | Maximum saved audio per `--record` run. Listening continues after the limit. |
 | `audio.playback_reference_s` | `4.0` | Rolling echo-cancellation reference, rather than the entire response. |
 | `audio.pre_roll_ms` | `200.0` | Up to 500 ms of local audio before detected speech; `0` disables it. Barge-in rounds up to a 32 ms capture chunk. Included in the utterance limit. |
+| `audio.endpoint_early_ms` | `0.0` | Off by default. With Smart Turn on and a value above 0 (for example `250`), also check for the end of a turn after that much silence and answer at once if the model is confident. Saves about 0.4 s per turn, but a pause between two sentences can end the turn after the first: in the benchmark both two-sentence questions (pauses near 350 ms) were cut there. Ignored when it is not shorter than `silence_ms`. |
+| `audio.endpoint_early_threshold` | `0.7` | Smart Turn probability, 0.5–1, required to end the turn at the early check. The normal check after `silence_ms` still uses 0.5. |
+| `models.reuse_prompt_prefix` | `true` | Local model only. Reuses the processed start of each conversation prompt (persona, tool instructions, earlier turns), which cuts the wait for the first word. An answer can occasionally differ from what the same prompt would produce without reuse; set `false` to compare. |
 | `audio.aec_delay_ms` | `0.0` | Additional measured acoustic/device delay, 0–500 ms, beyond reported output latency. No automatic calibration. |
 | `runtime.turn_timeout_s` | `60.0` | Shared budget for STT, chat/tools and speech generation/playback. Also limits web chat. Background memory gets its own budget, capped at 30 seconds. |
 | `runtime.endpoint_timeout_s` | `5.0` | Separate Smart Turn deadline for each endpoint check. |
@@ -495,11 +498,20 @@ settings. Cancellation closes the provider stream and speech generator, or
 terminates their worker when blocked. A later stream failure can leave a spoken
 fragment, but it never commits a partial answer or retries an external action.
 
-Tool planning remains buffered until the complete response has been parsed and
-the requested tool has executed. The final answer then streams; malformed or
-unavailable tool requests fail without speaking the payload. When model tools
-are enabled and the planner answers directly, that answer is already complete
-before speech begins. Deterministic tool replies are also already complete.
+When model tools are enabled, the first generation may be either a tool request
+or the answer itself, and it is streamed. A response that begins as JSON (plain
+or fenced) is a tool request: it stays buffered until it has been parsed and the
+tool has run, then the final answer streams. Anything else is a direct answer
+and is spoken as it arrives, with no second generation. Malformed or unavailable
+tool requests fail without speaking the payload. If a tool request appears after
+a direct answer has started, the turn stops; the sentence already spoken stays
+spoken. Deterministic tool replies are already complete. The first spoken clause
+may end at a comma or dash once it is 25 characters long, so speech can begin
+before a long opening sentence has finished.
+
+Each spoken microphone turn logs a `turn_timing` event with milliseconds from the
+end of speech: the wait to decide the turn had ended, transcription time, first
+audio and the whole turn. It contains no conversation text.
 The console Chat page shares this conversation policy but still displays one final
 response; this change does not introduce an HTTP streaming endpoint.
 
