@@ -190,7 +190,7 @@ class Echo(BaseTool):
     "arguments, problem",
     [
         ({}, "missing 'text'"),
-        ({"text": 5}, "must be text"),
+        ({"text": ["x"]}, "must be text"),
         ({"text": "x" * 11}, "too long"),
         ({"text": "x", "count": 4}, "at most 3"),
         ({"text": "x", "count": True}, "whole number"),
@@ -202,6 +202,29 @@ def test_invalid_arguments_are_rejected_before_the_tool_runs(arguments, problem)
     with pytest.raises(ToolError) as error:
         run_tool(Echo(), arguments)
     assert error.value.kind == "invalid_arguments" and problem in str(error.value)
+
+
+def test_numbers_are_accepted_as_text_and_aliases_as_names() -> None:
+    class Aliased(Echo):
+        aliases = {"message": "text"}
+
+    assert run_tool(Echo(), {"text": 5}).content == "5"
+    assert run_tool(Echo(), {"text": 2.5}).content == "2.5"
+    assert run_tool(Aliased(), {"message": "hi"}).content == "hi"
+    # The real name wins when both are sent.
+    with pytest.raises(ToolError, match="unexpected argument 'message'"):
+        run_tool(Aliased(), {"message": "hi", "text": "yo"})
+    with pytest.raises(ToolError, match="arguments must be an object"):
+        run_tool(Echo(), ["hi"])
+
+
+def test_aliases_must_name_declared_arguments() -> None:
+    class Broken(Echo):
+        aliases = {"message": "nothing"}
+
+    assert "aliases must map other names to declared arguments" in describe_problems(
+        Broken(), "echo"
+    )
 
 
 def test_trigger_captures_are_converted_to_declared_types() -> None:
@@ -280,9 +303,12 @@ def test_model_instructions_describe_arguments_from_the_schema(tmp_path) -> None
     assert "- name: assistant_identity" not in text  # Not model-callable.
     assert argument_example(Echo.parameters) == {
         "text": "<string>",
-        "count": "<integer, optional>",
-        "mode": "<a | b, optional>",
+        "count": "<integer>",
+        "mode": "a|b",
     }
+    assert argument_example(
+        {"type": "object", "properties": {"d": {"type": "string", "description": "x, such as 5"}}}
+    ) == {"d": "5"}
     config.tools.enabled = ("assistant_identity",)
     assert ToolRegistry(config).instruction_text() is None
 

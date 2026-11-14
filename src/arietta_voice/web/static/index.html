@@ -125,6 +125,32 @@
             <div class="fact"><dt>Tools</dt><dd><span id="metric-tools" class="fact-value">—</span><span id="metric-tools-sub" class="fact-sub">—</span></dd></div>
           </dl>
 
+          <div class="card" id="timers-card">
+            <div class="card-head">
+              <div>
+                <h3>Timers, reminders and alarms</h3>
+                <p class="hint" id="timers-hint">Say “set a timer for 10 minutes”, “remind me to call Mom at 5” or “wake me up at 7”. While one is going off, say “stop” or “snooze”.</p>
+              </div>
+              <button class="btn small danger" id="timers-stop" type="button" hidden>Stop alert</button>
+            </div>
+            <div id="timers-notice" class="notice warn" role="status" hidden></div>
+            <ul id="timers-list" class="timer-list" aria-live="polite"></ul>
+            <div class="timer-form">
+              <div class="segmented" role="group" aria-label="Add a">
+                <button type="button" class="seg active" data-kind="timer" aria-pressed="true">Timer</button>
+                <button type="button" class="seg" data-kind="reminder" aria-pressed="false">Reminder</button>
+                <button type="button" class="seg" data-kind="alarm" aria-pressed="false">Alarm</button>
+              </div>
+              <input id="timers-when" type="text" placeholder="10 minutes" aria-label="How long">
+              <input id="timers-label" type="text" placeholder="What for (optional)" aria-label="What for">
+              <button class="btn primary" id="timers-add" type="button">Add</button>
+            </div>
+            <details class="fold" id="timers-finished" hidden>
+              <summary id="timers-finished-title">Earlier today</summary>
+              <ul id="timers-finished-list" class="timer-list compact"></ul>
+            </details>
+          </div>
+
           <div class="card" id="turn-timing-card" hidden>
             <div class="card-head">
               <h3>Last turn</h3>

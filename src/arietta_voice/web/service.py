@@ -23,10 +23,19 @@ from arietta_voice.logging_utils import EventLogger
 from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
+from arietta_voice.timephrases import describe_when, parse_duration, parse_when
+from arietta_voice.timers import (
+    RINGING,
+    TimerStore,
+    alarm_name,
+    reminder_parts,
+    reminder_phrase,
+    timer_name,
+)
 from arietta_voice.tool_admin import ToolAdmin
 from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turns import CancellationToken
-from arietta_voice.web.schemas import ChatRequest, ToolCreateRequest
+from arietta_voice.web.schemas import ChatRequest, TimerCreateRequest, ToolCreateRequest
 from arietta_voice.worker import (
     InferenceWorker,
     WorkerBusy,
@@ -406,6 +415,61 @@ class AriettaApiService:
             "instruction_text": self.tool_admin.instruction_text(),
         }
 
+    # Timers and reminders. The voice runtime announces them; the console lists,
+    # adds and cancels them through the same file.
+
+    def timers(self) -> dict[str, Any]:
+        store = TimerStore(self.config.timers.path)
+        now = time.time()
+        alerts = store.load()
+        active = sorted((a for a in alerts if a.active), key=lambda a: a.due_at)
+        finished = sorted(
+            (a for a in alerts if not a.active), key=lambda a: a.finished_at or 0, reverse=True
+        )
+        return {
+            "now": now,
+            "active": [_alert_payload(alert, now) for alert in active],
+            "finished": [_alert_payload(alert, now) for alert in finished[:20]],
+            "runtime_running": bool(self.runtime_status().get("is_running")),
+            "tools_enabled": [
+                name
+                for name in enabled_tool_names(self.config)
+                if name
+                in ("set_timer", "set_reminder", "set_alarm", "check_timers", "cancel_timer")
+            ],
+        }
+
+    def add_timer(self, request: TimerCreateRequest) -> dict[str, Any]:
+        store = TimerStore(self.config.timers.path)
+        if request.kind == "timer":
+            seconds = parse_duration(request.duration)
+            if seconds is None:
+                raise ValueError("Say how long, such as 10 minutes or 1 hour 30 minutes")
+            alert = store.add_timer(seconds, request.label)
+        else:
+            now = datetime.now().astimezone()
+            when = parse_when(request.when, now)
+            if when is None:
+                raise ValueError("Say when, such as in 20 minutes, at 5 pm or tomorrow at 9")
+            if request.kind == "alarm":
+                alert = store.add_alarm(when.due, " ".join(request.label.split()))
+            else:
+                form, body = reminder_parts(request.label)
+                alert = store.add_reminder(body, when.due, form)
+        return {"added": _alert_payload(alert, time.time()), **self.timers()}
+
+    def cancel_timer(self, alert_id: str) -> dict[str, Any]:
+        cancelled = TimerStore(self.config.timers.path).cancel([alert_id])
+        if not cancelled:
+            raise FileNotFoundError(alert_id)
+        return {"cancelled": alert_id, **self.timers()}
+
+    def stop_ringing(self) -> dict[str, Any]:
+        store = TimerStore(self.config.timers.path)
+        ringing = [alert.id for alert in store.active() if alert.status == RINGING]
+        stopped = store.cancel(ringing, outcome="dismissed") if ringing else []
+        return {"stopped": [alert.id for alert in stopped], **self.timers()}
+
     def chat(self, request: ChatRequest) -> ChatResult:
         token = CancellationToken()
         request_id = request.request_id or uuid.uuid4().hex
@@ -518,6 +582,28 @@ class AriettaApiService:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _alert_payload(alert, now: float) -> dict[str, Any]:
+    due = datetime.fromtimestamp(alert.due_at).astimezone()
+    return {
+        "id": alert.id,
+        "kind": alert.kind,
+        "status": alert.status,
+        "label": alert.label,
+        "name": {
+            "timer": timer_name,
+            "alarm": alarm_name,
+        }.get(alert.kind, reminder_phrase)(alert),
+        "duration_s": alert.duration_s,
+        "due_at": alert.due_at,
+        "due_iso": due.isoformat(timespec="seconds"),
+        "due_text": describe_when(due, datetime.fromtimestamp(now).astimezone()),
+        "remaining_s": max(0.0, alert.due_at - now),
+        "rings": alert.rings,
+        "outcome": alert.outcome,
+        "finished_at": alert.finished_at,
+    }
 
 
 def _knowledge_match_payload(match: Any) -> dict[str, Any]:

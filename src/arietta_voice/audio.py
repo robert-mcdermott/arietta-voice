@@ -60,6 +60,22 @@ def make_chime(duration: float = 30.0, tick_every: float = 1.5) -> np.ndarray:
     return buffer
 
 
+def make_alert_tone(sample_rate: int = CHIME_SR) -> np.ndarray:
+    """A bright rising three-note figure, played twice, before an alert is spoken."""
+
+    def tone(freq: float, duration: float, amplitude: float = 0.5) -> np.ndarray:
+        count = int(duration * sample_rate)
+        timeline = np.arange(count, dtype=np.float32) / sample_rate
+        envelope = np.minimum(1.0, timeline / 0.008) * np.exp(-timeline * 6.0)
+        return (amplitude * np.sin(2 * np.pi * freq * timeline) * envelope).astype(np.float32)
+
+    def gap(duration: float) -> np.ndarray:
+        return np.zeros(int(duration * sample_rate), dtype=np.float32)
+
+    figure = [tone(784, 0.16), gap(0.02), tone(988, 0.16), gap(0.02), tone(1319, 0.32)]
+    return np.concatenate([*figure, gap(0.18), *figure, gap(0.25)]).astype(np.float32)
+
+
 class ChimePlayer:
     def __init__(self, enabled: bool, device=None) -> None:
         self.sound = make_chime() if enabled else None

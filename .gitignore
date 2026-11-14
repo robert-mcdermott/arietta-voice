@@ -11,6 +11,8 @@ wheels/
 
 # Local runtime artifacts
 logs/
+# Timers and reminders, and other state kept between runs.
+/state/
 .knowledge_index/
 config/MEMORY.md
 /config/*.local.toml

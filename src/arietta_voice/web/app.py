@@ -18,6 +18,7 @@ from arietta_voice.web.schemas import (
     ChatRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
+    TimerCreateRequest,
     ToolCreateRequest,
     ToolEnabledRequest,
     ToolProbeRequest,
@@ -295,6 +296,36 @@ def create_app(
         _user: str = Depends(require_admin),
     ) -> dict[str, Any]:
         return svc().validate_tool(tool_name)
+
+    @app.get("/api/timers")
+    def api_timers(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().timers()
+
+    @app.post("/api/timers")
+    def api_add_timer(
+        payload: TimerCreateRequest,
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().add_timer(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/api/timers/stop")
+    def api_stop_timers(_user: str = Depends(require_admin)) -> dict[str, Any]:
+        return svc().stop_ringing()
+
+    @app.post("/api/timers/{alert_id}/cancel")
+    def api_cancel_timer(
+        alert_id: str = ApiPath(pattern=r"^[0-9a-f]{8}$"),
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            return svc().cancel_timer(alert_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="No active timer or reminder"
+            ) from exc
 
     @app.post("/api/knowledge/search")
     def api_knowledge_search(

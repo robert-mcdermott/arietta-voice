@@ -6,6 +6,7 @@ import { $, $$, guard, setError } from "./core.js";
 import { loadContentLoggingFlag, loadOverview, pollRuntime, runtimeAction } from "./home.js";
 import { initKnowledge, knowledgeDirty, knowledgeEditing, loadKnowledgeFiles } from "./knowledge.js";
 import { loadDiagnostics, loadSettings } from "./system.js";
+import { initTimers } from "./timers.js";
 import { initTools, loadTools, toolsBusy, toolSourceDirty } from "./tools.js";
 
 const VIEWS = {
@@ -88,6 +89,7 @@ function init() {
   initChat();
   initKnowledge();
   initTools();
+  initTimers();
   initActivity();
 
   $$(".nav-button").forEach((button) =>

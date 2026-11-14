@@ -26,6 +26,12 @@ DEFAULT_WAKE_WORDS = ("bridget",)
 DEFAULT_ENABLED_TOOLS = (
     "assistant_identity",
     "local_time",
+    "set_timer",
+    "set_reminder",
+    "set_alarm",
+    "check_timers",
+    "cancel_timer",
+    # Looks up every request, so it comes after the tools that answer directly.
     "search_knowledge",
     "system_info",
 )
@@ -199,6 +205,19 @@ class RuntimeConfig:
 
 
 @dataclass(slots=True)
+class TimersConfig:
+    # Kept between restarts and shared with the console. Private: not tracked by Git.
+    path: Path = Path("state/timers.json")
+    # A timer or reminder that goes off is said again this often until you
+    # answer it ("stop", "okay", "snooze"), at most max_repeats more times.
+    repeat_s: float = 30.0
+    max_repeats: int = 4
+    snooze_minutes: float = 5.0
+    # A short tone before the announcement.
+    alert_tone: bool = True
+
+
+@dataclass(slots=True)
 class AppConfig:
     project_root: Path
     assistant: AssistantProfile
@@ -213,6 +232,7 @@ class AppConfig:
     model_tools: ModelToolsConfig
     admin: AdminConfig = field(default_factory=AdminConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    timers: TimersConfig = field(default_factory=TimersConfig)
 
 
 def default_config(project_root: Path | None = None) -> AppConfig:
@@ -240,6 +260,7 @@ def default_config(project_root: Path | None = None) -> AppConfig:
         ),
         tools=ToolsConfig(directory=root / "tools"),
         model_tools=ModelToolsConfig(),
+        timers=TimersConfig(path=root / "state" / "timers.json"),
     )
 
 
@@ -279,6 +300,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     model_tools = raw.get("model_tools", {})
     admin = raw.get("admin", {})
     runtime = raw.get("runtime", {})
+    timers = raw.get("timers", {})
 
     config = AppConfig(
         project_root=base.project_root,
@@ -432,6 +454,13 @@ def load_config(path: Path | None = None) -> AppConfig:
                 allow_empty=True,
             ),
         ),
+        timers=TimersConfig(
+            path=_resolve_path(base_dir, timers.get("path", base.timers.path)),
+            repeat_s=float(timers.get("repeat_s", base.timers.repeat_s)),
+            max_repeats=int(timers.get("max_repeats", base.timers.max_repeats)),
+            snooze_minutes=float(timers.get("snooze_minutes", base.timers.snooze_minutes)),
+            alert_tone=bool(timers.get("alert_tone", base.timers.alert_tone)),
+        ),
     )
     return validate_config(config)
 
@@ -567,6 +596,9 @@ def validate_config(config: AppConfig) -> AppConfig:
     number("knowledge.min_score", config.knowledge.min_score, 0)
     number("knowledge.hybrid_alpha", config.knowledge.hybrid_alpha, 0, 1)
     number("knowledge.min_vector_score", config.knowledge.min_vector_score, -1, 1)
+    number("timers.repeat_s", config.timers.repeat_s, 5, 600)
+    require(0 <= config.timers.max_repeats <= 20, "timers.max_repeats must be between 0 and 20")
+    number("timers.snooze_minutes", config.timers.snooze_minutes, 1, 120)
     return config
 
 

@@ -20,6 +20,7 @@ from arietta_voice.audio import (
     UtteranceBuffer,
     capture_phase,
     discard_capture,
+    make_alert_tone,
     play_tts_stream,
     play_tts_stream_passive,
 )
@@ -38,6 +39,14 @@ from arietta_voice.prompts import sanitize_for_speech
 from arietta_voice.resume import ResumeWatch, TurnResumed
 from arietta_voice.runtime_status import RuntimeStatusPublisher
 from arietta_voice.streaming import speech_stream
+from arietta_voice.timers import (
+    AlertScheduler,
+    TimerStore,
+    announcement,
+    is_stop_command,
+    snooze_reply,
+    snooze_request,
+)
 from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turn_detection import SileroVoiceActivityDetector
 from arietta_voice.turns import CancellationToken
@@ -110,6 +119,14 @@ class AriettaVoiceRuntime:
         self.selected_input = self.selected_output = None
         self.output_device = None
         self.status_publisher = RuntimeStatusPublisher(config)
+        # Timers and reminders are set by tools in the worker and by the console;
+        # the listening loop announces them when they are due.
+        self.alerts = AlertScheduler(
+            TimerStore(config.timers.path),
+            repeat_s=config.timers.repeat_s,
+            max_repeats=config.timers.max_repeats,
+        )
+        self.alerts_announced = 0
 
     def set_state(self, state: AssistantState) -> None:
         if self.state == state:
@@ -329,6 +346,100 @@ class AriettaVoiceRuntime:
         finally:
             await stream.aclose()
 
+    async def _alert_stream(self, text: str):
+        """Speech for an alert, led by the alert tone at the speech's sample rate."""
+        stream = self._tts_stream(text)
+        tone = self.config.timers.alert_tone
+        try:
+            async for samples, rate in stream:
+                if tone and isinstance(samples, np.ndarray):
+                    tone = False
+                    yield make_alert_tone(rate), rate
+                yield samples, rate
+        finally:
+            await stream.aclose()
+
+    def _idle_state(self) -> AssistantState:
+        if self.session.active or not self.config.wake_word.enabled:
+            return AssistantState.LISTENING
+        return AssistantState.WAITING_FOR_WAKE
+
+    def announce_alerts(self, alerts, microphone, keypress_monitor) -> UtteranceResult:
+        """Say timers and reminders that are due, between turns.
+
+        Barge-in works as it does for answers: speech over the alert is kept
+        and becomes the next turn, which is how "stop" or "snooze" interrupts.
+        """
+        text = announcement(alerts, time.time())
+        self.alerts.rang(alerts)
+        self.alerts_announced += 1
+        self.event_logger.log(
+            "alert",
+            count=len(alerts),
+            kinds=sorted({alert.kind for alert in alerts}),
+            repeat=any(alert.rings for alert in alerts),
+            content={"text": text},
+        )
+        self._turn_token = CancellationToken()
+        self._turn_keys = keypress_monitor
+        self._turn_thread_ident = threading.get_ident()
+        self._turn_microphone = microphone
+        self.turn_started_at = time.monotonic()
+        self._turn_deadline = self.turn_started_at + self.config.runtime.turn_timeout_s
+        try:
+            self.memory_jobs.suspend()
+            self._record_response(text)
+            buffered = self._deliver_response(
+                text,
+                microphone=microphone,
+                keypress_monitor=keypress_monitor,
+                next_state=self._idle_state(),
+                stream=self._alert_stream(text) if self.config.audio.tts_enabled else None,
+            )
+            if self._turn_token.cancelled and not buffered:
+                self.alerts.dismiss("dismissed")  # A key press stops it.
+            return UtteranceResult(buffered_chunks=buffered)
+        except DEVICE_ERRORS:
+            self.cancel_turn()
+            raise
+        except Exception as exc:
+            if isinstance(exc, WorkerCancelled):
+                self.alerts.dismiss("dismissed")  # A key press before the speech started.
+            else:
+                self.event_logger.log("alert_failed", error_type=type(exc).__name__)
+                self.logger.warning("Could not announce an alert (%s)", type(exc).__name__)
+            for cleanup in (self.chime_player.stop, microphone.drain, self.vad.reset):
+                try:
+                    cleanup()
+                except Exception:
+                    self.logger.warning("Cleanup after a failed alert did not finish")
+            self._update_display_speech(0, False)
+            self.set_state(self._idle_state())
+            return UtteranceResult(buffered_chunks=[])
+        finally:
+            self._turn_token = self._turn_keys = self._turn_thread_ident = None
+            self._turn_microphone = None
+            self.turn_started_at = self._turn_deadline = None
+            self.turn_stage = "idle"
+            capture_phase(microphone, "listening")
+            self._publish_status(force=True)
+
+    def _alert_reply(self, transcript: str) -> str | None:
+        """While an alert is ringing, "stop" and "snooze" are answered here."""
+        if not transcript or not self.alerts.ringing():
+            return None
+        if is_stop_command(transcript):
+            self.alerts.dismiss("dismissed")
+            self.event_logger.log("alert_answered", action="stop")
+            return "Okay."
+        seconds = snooze_request(transcript)
+        if seconds is None:
+            return None
+        seconds = seconds or self.config.timers.snooze_minutes * 60
+        self.alerts.snooze(seconds)
+        self.event_logger.log("alert_answered", action="snooze", seconds=round(seconds))
+        return snooze_reply(seconds)
+
     def _speak_blocking(self, text: str) -> None:
         if not self.config.audio.tts_enabled:
             return
@@ -519,7 +630,11 @@ class AriettaVoiceRuntime:
 
         end_session_requested = False
         delivered = False
-        if not transcript:
+        was_ringing = bool(transcript) and bool(self.alerts.ringing())
+        alert_reply = self._alert_reply(transcript) if was_ringing else None
+        if alert_reply is not None:
+            response = alert_reply
+        elif not transcript:
             response = "I didn't catch that. Could you repeat it?"
         elif GOODBYE_PATTERN.fullmatch(transcript.strip().replace("’", "'")):
             response = self.next_goodbye()
@@ -542,8 +657,12 @@ class AriettaVoiceRuntime:
                 keypress_monitor=keypress_monitor,
                 next_state=AssistantState.LISTENING,
             )
+        if was_ringing and alert_reply is None:
+            # Talking to the assistant while it rings means the alert was heard.
+            self.alerts.dismiss("acknowledged")
         if (
             transcript
+            and alert_reply is None
             and not end_session_requested
             and not (self._turn_token is not None and self._turn_token.cancelled)
         ):
@@ -599,6 +718,20 @@ class AriettaVoiceRuntime:
             if not transcript:
                 self.set_state(AssistantState.WAITING_FOR_WAKE)
                 return UtteranceResult(buffered_chunks=[])
+            # While an alert rings, "stop" or "snooze" needs no wake word.
+            # Nothing else is answered without one.
+            reply = self._alert_reply(transcript)
+            if reply is not None:
+                self._log_transcript(transcript, stt_latency_ms)
+                self.last_user_transcript = transcript
+                return UtteranceResult(
+                    buffered_chunks=self._deliver_response(
+                        reply,
+                        microphone=microphone,
+                        keypress_monitor=keypress_monitor,
+                        next_state=AssistantState.WAITING_FOR_WAKE,
+                    )
+                )
             wake_match = self.wake_detector.match(transcript)
             if wake_match is None:
                 self.last_user_transcript = ""
@@ -938,6 +1071,25 @@ class AriettaVoiceRuntime:
                 buffer.clear()
                 clear_pre_roll()
                 silent_chunks = 0
+            # Alerts wait while someone is speaking, and go between turns.
+            due = self.alerts.due() if not buffer.samples and not discard_until_quiet else None
+            if due:
+                result = self.announce_alerts(due, microphone, keypress_monitor)
+                buffer.clear()
+                clear_pre_roll()
+                if not result.buffered_chunks:
+                    microphone.drain()
+                for buffered in result.buffered_chunks:  # Speech over the alert.
+                    if not buffer.append(buffered):
+                        buffer.clear()
+                        discard_until_quiet = True
+                        break
+                if result.buffered_chunks:
+                    last_speech_at = time.monotonic()
+                observed_drops = microphone.dropped_chunks + microphone.input_overflows
+                silent_chunks = 0
+                self.vad.reset()
+                continue
             chunk = microphone.get(timeout=0.1)
             if chunk is None or len(chunk) != self.config.audio.chunk_samples:
                 if chunk is not None:

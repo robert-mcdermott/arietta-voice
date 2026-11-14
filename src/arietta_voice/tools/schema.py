@@ -59,7 +59,11 @@ def validate_arguments(schema: dict[str, Any], arguments: Any) -> list[str]:
 
 
 def coerce_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
-    """Convert trigger captures, which are always text, to the declared types."""
+    """Convert trigger captures, which are always text, to the declared types.
+
+    A number where text is expected becomes text too ({"duration": 10}), since
+    models often send one.
+    """
     properties = schema.get("properties", {})
     converted = {}
     for name, value in arguments.items():
@@ -69,6 +73,10 @@ def coerce_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> dict[
                 value = int(value)
             elif kind == "number" and isinstance(value, str):
                 value = float(value)
+            elif (
+                kind == "string" and isinstance(value, (int, float)) and not isinstance(value, bool)
+            ):
+                value = f"{value:g}"
         except ValueError:
             pass  # Left as text; validation reports it.
         converted[name] = value

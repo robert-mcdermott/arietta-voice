@@ -8,6 +8,7 @@ recursive-include scripts *.py
 prune config
 prune knowledge
 prune logs
+prune state
 prune .knowledge_index
 prune tmp
 prune models

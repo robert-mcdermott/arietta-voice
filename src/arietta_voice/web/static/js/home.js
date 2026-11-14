@@ -2,6 +2,7 @@
 
 import { $, api, clockTime, describeEvent, escapeHtml, relativeTime, toast } from "./core.js";
 import { renderSystem } from "./system.js";
+import { renderTimers } from "./timers.js";
 
 export const overview = {
   state: null,
@@ -275,16 +276,18 @@ export async function loadOverview() {
   if (overview.loading) return;
   overview.loading = true;
   try {
-    const [health, state, logs] = await Promise.all([
+    const [health, state, logs, timers] = await Promise.all([
       api("/api/health"),
       api("/api/state"),
       api("/api/logs?limit=7"),
+      api("/api/timers"),
     ]);
     overview.state = state;
     setHealth(health);
     renderFacts(state);
     renderRuntime(state.runtime);
     renderRecentEvents(logs.items || []);
+    renderTimers(timers);
     renderSystem(state);
     $("#poll-status").textContent = `Updated ${clockTime()}`;
   } finally {

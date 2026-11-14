@@ -61,6 +61,9 @@ class BaseTool:
     triggers: ClassVar[tuple[str, ...]] = ()
     model_callable: ClassVar[bool] = True
     timeout_s: ClassVar[float] = 10.0
+    # Other names a model may use for an argument, such as {"note": "text"}.
+    # Small models often guess a near miss; this accepts it instead of failing.
+    aliases: ClassVar[dict[str, str]] = {}
     # Changes something outside the assistant (a light, a message, a purchase).
     # The agent loop asks before running these.
     consequential: ClassVar[bool] = False
