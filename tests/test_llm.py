@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from arietta_voice.config import ModelConfig
 from arietta_voice.llm import BedrockChatModel, GemmaChatModel, _bedrock_messages, build_chat_model
 
@@ -225,3 +227,46 @@ def test_a_repeated_prompt_still_reuses_the_cache(monkeypatch):
     assert state.find_prefix_length([1, 2, 9, 9]) == 2  # Diverges: unchanged.
     assert state.find_prefix_length([1, 2, 3, 4, 5, 6, 7, 8]) == 6  # Longer: unchanged.
     assert state.find_prefix_length([]) == 0
+
+
+def test_gemma_per_layer_inputs_follow_each_forward_pass():
+    # mlx-vlm sliced precomputed per-layer inputs at the cache's absolute offset,
+    # which is wrong once a cached prefix is reused; the model must compute them
+    # from each pass's own tokens instead.
+    from types import SimpleNamespace
+
+    from arietta_voice.llm import _align_per_layer_inputs
+
+    calls = []
+
+    def get_input_embeddings(input_ids, pixel_values=None, **kwargs):
+        calls.append(input_ids)
+        return SimpleNamespace(inputs_embeds="embeds", per_layer_inputs="precomputed")
+
+    model = SimpleNamespace(get_input_embeddings=get_input_embeddings)
+    _align_per_layer_inputs(model)
+    features = model.get_input_embeddings("ids", None, mask=None)
+    assert features.inputs_embeds == "embeds" and features.per_layer_inputs is None
+    assert calls == ["ids"]
+    wrapped = model.get_input_embeddings
+    _align_per_layer_inputs(model)  # Loading twice wraps once.
+    assert model.get_input_embeddings is wrapped
+    _align_per_layer_inputs(SimpleNamespace())  # Models without the hook are left alone.
+
+
+def test_repetition_penalty_is_a_setting(monkeypatch, tmp_path):
+    from arietta_voice.config import default_config, validate_config
+    from arietta_voice.llm import build_chat_model
+
+    calls = []
+    _fake_mlx(monkeypatch, ["Answer."], calls)
+    model = _loaded_gemma(repetition_penalty=1.05)
+    list(model.stream([{"role": "user", "content": "Synthetic"}]))
+    assert calls[0]["repetition_penalty"] == 1.05
+    config = default_config(tmp_path)
+    assert config.models.repetition_penalty == 1.2
+    config.models.repetition_penalty = 1.1
+    assert build_chat_model(config.models).repetition_penalty == 1.1
+    config.models.repetition_penalty = 0.5
+    with pytest.raises(ValueError, match="repetition_penalty"):
+        validate_config(config)

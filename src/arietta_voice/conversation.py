@@ -595,8 +595,9 @@ def _run_for_model(tools, name, arguments):
         )
     if not result.content.strip():
         return (
-            f"The {name} tool found nothing for that request. If the answer depends on it, "
-            "say you are not sure instead of inventing details.",
+            f"The {name} tool found nothing for that request. If the question is general "
+            "knowledge, answer from what you know; if the answer depends on the tool, say "
+            "briefly that you could not find it.",
             result,
         )
     return result.content, result

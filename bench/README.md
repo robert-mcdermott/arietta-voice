@@ -8,6 +8,7 @@ knowledge. Run them from the repository root.
 | --- | --- | --- |
 | `latency_baseline.py` | Stage timings over 100 warm turns. The standing benchmark: rerun it after every pipeline change. | [Latency baseline](../evals/LATENCY_BASELINE.md) |
 | `hardware_validation.py` | Real-model smoke test, live microphone/speaker checks and a bounded soak. Includes the forced-gap playback mode from `forced_gap_validation.py`. | [Hardware validation](../evals/HARDWARE_VALIDATION.md) |
+| `answer_quality.py` | How often the chat model declines or gets an ordinary question wrong, through the same path as voice. Silent; isolated unless `--config` is given. | [Answer quality](../evals/ANSWER_QUALITY.md) |
 | `live_load_soak.py` | Long synthetic-input, live-output soak with audio fault gates. | [Live/load soak](../evals/LIVE_LOAD_SOAK.md) |
 | `host_state.py` | Read-only CPU, thermal, power and memory-pressure sampling shared by the harnesses. | — |
 

@@ -376,3 +376,14 @@ def test_a_matcher_that_raises_is_skipped_not_fatal(tmp_path, monkeypatch) -> No
     config.tools.enabled = ("fragile", "local_time")
     hit = ToolRegistry(config).fast_path("what time is it")
     assert hit.name == "local_time"
+
+
+def test_knowledge_notes_never_tell_the_model_to_refuse(tmp_path) -> None:
+    # Notes are found for most requests, often unrelated. Telling the model to
+    # be unsure whenever they did not answer made it refuse ordinary questions.
+    config, retriever = knowledge_config(tmp_path)
+    registry = ToolRegistry(config, knowledge_retriever=retriever)
+    content = registry.fast_path("Where can I get something to eat?").result.content
+    assert "may have nothing to do with the question" in content
+    assert "answer from your own knowledge" in content
+    assert "not sure" not in content

@@ -194,6 +194,10 @@ def test_the_model_can_call_it_with_an_expression():
     assert run_tool(tool, {"expression": "5 miles to km"}).speak == (
         "5 miles is about 8.05 kilometers."
     )
-    refused = run_tool(tool, {"expression": "__import__('os')"})
-    assert refused.speak == "That isn't an expression I can work out."
+    # Not arithmetic: never evaluated, and nothing is said, so the model answers.
+    for text in ("__import__('os')", "the hardest natural substance"):
+        refused = run_tool(tool, {"expression": text})
+        assert refused.speak is None and "not arithmetic" in refused.content
+    # A real sum that cannot be done still says why.
+    assert run_tool(tool, {"expression": "10 / 0"}).speak == "You can't divide by zero."
     assert tool.speaks_for_itself

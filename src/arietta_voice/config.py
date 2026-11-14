@@ -220,6 +220,8 @@ class ModelConfig:
     native_tool_calls: bool = True
     temperature: float = 0.7
     max_tokens: int = 220
+    # Discourages the local model from repeating the last few words it wrote.
+    repetition_penalty: float = 1.2
 
 
 @dataclass(slots=True)
@@ -525,6 +527,9 @@ def load_config(path: Path | None = None) -> AppConfig:
             native_tool_calls=bool(models.get("native_tool_calls", base.models.native_tool_calls)),
             temperature=float(models.get("temperature", base.models.temperature)),
             max_tokens=int(models.get("max_tokens", base.models.max_tokens)),
+            repetition_penalty=float(
+                models.get("repetition_penalty", base.models.repetition_penalty)
+            ),
         ),
         prompts=PromptConfig(
             soul_path=_resolve_path(base_dir, prompts.get("soul_path", base.prompts.soul_path)),
@@ -713,6 +718,7 @@ def validate_config(config: AppConfig) -> AppConfig:
     require(bool(config.models.chat_model.strip()), "models.chat_model must not be blank")
     require(bool(config.models.stt_language.strip()), "models.stt_language must not be blank")
     number("models.temperature", config.models.temperature, 0, 2)
+    number("models.repetition_penalty", config.models.repetition_penalty, 1, 2)
     require(config.models.max_tokens > 0, "models.max_tokens must be > 0")
     require(config.memory.consolidate_every_turns > 0, "memory.consolidate_every_turns must be > 0")
     require(config.logging.max_bytes >= 1024, "logging.max_bytes must be >= 1024")

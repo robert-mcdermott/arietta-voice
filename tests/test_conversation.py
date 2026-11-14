@@ -279,3 +279,16 @@ def test_invalid_tool_payload_never_reaches_speech(tmp_path, monkeypatch):
     service = ConversationService(config, generate=lambda *a, **kw: '{"tool_call": broken')
     with pytest.raises(ValueError, match="planning"):
         next(service.stream(message="Synthetic"))
+
+
+def test_an_empty_tool_result_lets_general_questions_be_answered(tmp_path) -> None:
+    from arietta_voice.conversation import _run_for_model
+    from arietta_voice.tools import ToolResult
+
+    class Empty:
+        def run(self, name, arguments):
+            return ToolResult()
+
+    content, result = _run_for_model(Empty(), "search_knowledge", {"query": "spiders"})
+    assert "general knowledge, answer from what you know" in content
+    assert result is not None

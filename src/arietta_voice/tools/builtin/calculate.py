@@ -45,6 +45,13 @@ class CalculateTool(BaseTool):
         try:
             value = evaluate(parsed.python if parsed else text)
         except MathError as error:
+            if parsed is None:
+                # Not arithmetic at all (the model sent "hardest natural substance"):
+                # say nothing, so the model answers the question itself.
+                return ToolResult(
+                    content="That is not arithmetic or a unit conversion. Answer the question "
+                    "from what you know, without this tool."
+                )
             return ToolResult(content=f"Could not work that out: {error}.", speak=f"{error}.")
         result = say_number(value)
         answer = f"{parsed.spoken} is {result}." if parsed else f"That's {result}."
