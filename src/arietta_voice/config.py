@@ -175,6 +175,9 @@ class WakeWordConfig:
     acknowledgement: str = "Yes?"
     session_timeout_s: float = 20.0
     allow_inline_commands: bool = True
+    # Off: after each answer the next request needs the wake word again, unless
+    # the assistant just asked something. For rooms with a TV or other people.
+    follow_ups: bool = True
 
 
 @dataclass(slots=True)
@@ -511,6 +514,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             allow_inline_commands=bool(
                 wake_word.get("allow_inline_commands", base.wake_word.allow_inline_commands)
             ),
+            follow_ups=bool(wake_word.get("follow_ups", base.wake_word.follow_ups)),
         ),
         audio=AudioConfig(
             sample_rate=int(audio.get("sample_rate", base.audio.sample_rate)),

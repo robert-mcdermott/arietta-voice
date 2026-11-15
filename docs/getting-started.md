@@ -104,6 +104,7 @@ Notes:
 - `phrases` can contain more than one wake phrase.
 - The current wake-word backend is transcript-based, so the phrase needs to be spoken near the start of the utterance.
 - `session_timeout_s` controls how long Arietta keeps listening for follow-up questions after activation.
+- `follow_ups = false` makes every request need the wake word, which helps in a room with a TV or other people talking: anything said without it is ignored, except the answer to a question the assistant just asked ("Should I …?"). The conversation is still remembered until `session_timeout_s` passes, so "Bridget, and tomorrow?" keeps its context. Also in the console's Settings page.
 
 Example with multiple wake phrases:
 

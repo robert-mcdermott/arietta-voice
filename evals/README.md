@@ -24,7 +24,7 @@ both suites. To investigate one case, use e.g.
 
 ## What these checks establish
 
-[`cases.json`](cases.json) contains 48 stable, named cases using invented text
+[`cases.json`](cases.json) contains 49 stable, named cases using invented text
 and documents. Every case is a blocking assertion; the pass target is 100%.
 There are no live API calls, microphone recordings, model downloads, API keys,
 user knowledge files, or performance thresholds in this corpus.
@@ -35,7 +35,7 @@ user knowledge files, or performance thresholds in this corpus.
 | Prompts (6) | Persona, memory opt-in, context ordering, complete history pairs, current message once |
 | Memory (8) | NONE/empty/non-bullet output, durable facts, exact sentinel matching, disabled writes |
 | Tool policy (10) | Malformed/unknown/disabled requests cannot execute; one-call limit; no failure retries |
-| Sessions (5 sequences) | Ambient speech, acknowledgement, inline commands, follow-ups, direct farewells, failure recovery |
+| Sessions (6 sequences) | Ambient speech, acknowledgement, inline commands, follow-ups (and, with them off, the wake word for each request except an answer to a question), direct farewells, failure recovery |
 | Keyword retrieval (6) | Expected first source and no match for synthetic absent facts/small talk |
 | Prompt injection (5 payloads, [`test_injection.py`](test_injection.py)) | Tool, MCP (results and errors) and web text reaches the model marked as data; a tool call written inside a result never runs; an action an injected text asks for still needs a spoken yes |
 

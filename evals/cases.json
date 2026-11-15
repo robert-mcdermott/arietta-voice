@@ -333,6 +333,47 @@
           "turns": 1
         }
       ]
+    },
+    {
+      "id": "follow-ups-off-ignores-room-speech",
+      "follow_ups": false,
+      "steps": [
+        {
+          "text": "Bridget, Where is the telescope?",
+          "state": "waiting_for_wake",
+          "active": true,
+          "turns": 1,
+          "command": "Where is the telescope?"
+        },
+        {
+          "text": "And now the weather for tonight.",
+          "state": "waiting_for_wake",
+          "active": true,
+          "turns": 1
+        },
+        {
+          "text": "Bridget, and the workshop?",
+          "state": "waiting_for_wake",
+          "active": true,
+          "turns": 2,
+          "command": "and the workshop?"
+        },
+        {
+          "text": "Bridget, Borrow some tools.",
+          "reply": "Do you mean the woodworking tools?",
+          "state": "listening",
+          "active": true,
+          "turns": 3,
+          "command": "Borrow some tools."
+        },
+        {
+          "text": "Yes, those.",
+          "state": "waiting_for_wake",
+          "active": true,
+          "turns": 4,
+          "command": "Yes, those."
+        }
+      ]
     }
   ],
   "retrieval": {

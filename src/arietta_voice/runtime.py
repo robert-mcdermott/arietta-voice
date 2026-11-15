@@ -108,6 +108,9 @@ class AriettaVoiceRuntime:
         self.wake_detector = build_wake_word_detector(config.wake_word)
         self.session = SessionContext()
         self._awaiting_answer = False  # The last answer asked "Should I …?".
+        # With follow-ups off, the next request in this conversation needs the
+        # wake word again; the conversation itself is kept until it times out.
+        self._needs_wake = False
         # Experimental: transcribe while the user speaks ([audio].streaming_stt).
         self._stt_feed = StreamFeed(self._stream_call) if config.audio.streaming_stt else None
         self.state = AssistantState.BOOTING
@@ -194,6 +197,7 @@ class AriettaVoiceRuntime:
         self.session.active = False
         self.session.history.clear()
         self._awaiting_answer = False
+        self._needs_wake = False
         self.session.turn_count = 0
         self.session.activated_at = 0.0
         self.session.last_activity_at = 0.0
@@ -390,9 +394,20 @@ class AriettaVoiceRuntime:
             await stream.aclose()
 
     def _idle_state(self) -> AssistantState:
-        if self.session.active or not self.config.wake_word.enabled:
+        if not self.config.wake_word.enabled:
+            return AssistantState.LISTENING
+        if self.session.active and not self._needs_wake:
             return AssistantState.LISTENING
         return AssistantState.WAITING_FOR_WAKE
+
+    def _after_answer(self, response: str) -> None:
+        """With follow-ups off, wait for the wake word again unless the answer asked something."""
+        if self.config.wake_word.follow_ups or not self.config.wake_word.enabled:
+            return
+        asked = self._awaiting_answer or response.rstrip().endswith("?")
+        self._needs_wake = not asked
+        if self._needs_wake:
+            self.set_state(AssistantState.WAITING_FOR_WAKE)
 
     def announce_alerts(self, alerts, microphone, keypress_monitor) -> UtteranceResult:
         """Say timers and reminders that are due, between turns.
@@ -716,6 +731,8 @@ class AriettaVoiceRuntime:
             if not buffered_chunks:
                 self._remember_turn(transcript, response)
         self._touch_session()
+        if not end_session_requested:
+            self._after_answer(response)
         return UtteranceResult(
             buffered_chunks=buffered_chunks,
             end_session_requested=end_session_requested,
@@ -732,7 +749,12 @@ class AriettaVoiceRuntime:
             phrase=wake_match.phrase,
             inline_command=bool(wake_match.prompt_text),
         )
-        self._open_session(wake_match)
+        if self.session.active:
+            # Follow-ups off: the wake word again, in the same conversation.
+            self._needs_wake = False
+            self.set_state(AssistantState.LISTENING)
+        else:
+            self._open_session(wake_match)
 
         if wake_match.prompt_text and self.config.wake_word.allow_inline_commands:
             self.last_user_transcript = wake_match.prompt_text
@@ -760,7 +782,7 @@ class AriettaVoiceRuntime:
         self._turn_marks["stt_ms"] = stt_latency_ms
         self._check_resumed()  # Before the transcript is logged or acted on.
 
-        if not self.session.active and self.config.wake_word.enabled:
+        if (not self.session.active or self._needs_wake) and self.config.wake_word.enabled:
             if not transcript:
                 self.set_state(AssistantState.WAITING_FOR_WAKE)
                 return UtteranceResult(buffered_chunks=[])
@@ -837,11 +859,7 @@ class AriettaVoiceRuntime:
             self.event_logger.log("turn_resumed", stage=self.turn_stage)
             self._update_display_speech(0, False)
             self._touch_session()
-            self.set_state(
-                AssistantState.LISTENING
-                if self.session.active or not self.config.wake_word.enabled
-                else AssistantState.WAITING_FOR_WAKE
-            )
+            self.set_state(self._idle_state())
             return UtteranceResult(buffered_chunks=list(watch.chunks), resumed=True)
         except WorkerCancelled:
             self.chime_player.stop()
@@ -849,11 +867,7 @@ class AriettaVoiceRuntime:
             self.vad.reset()
             self._update_display_speech(0, False)
             self._touch_session()
-            self.set_state(
-                AssistantState.LISTENING
-                if self.session.active or not self.config.wake_word.enabled
-                else AssistantState.WAITING_FOR_WAKE
-            )
+            self.set_state(self._idle_state())
             return UtteranceResult(buffered_chunks=[])
         except Exception as exc:
             self._recover(exc, microphone)
@@ -903,11 +917,7 @@ class AriettaVoiceRuntime:
                 "That turn failed. Please check any external action before trying again."
             )
         self._touch_session()
-        self.set_state(
-            AssistantState.LISTENING
-            if self.session.active or not self.config.wake_word.enabled
-            else AssistantState.WAITING_FOR_WAKE
-        )
+        self.set_state(self._idle_state())
 
     def reliability_snapshot(self) -> dict:
         started_at = self.turn_started_at
