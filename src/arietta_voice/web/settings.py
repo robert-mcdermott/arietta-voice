@@ -41,6 +41,9 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
             Field("wake_word", "phrases", "Wake phrases", "list", "Comma-separated, such as bridget, hey bridget."),
             Field("wake_word", "session_timeout_s", "Conversation timeout (seconds)", "number",
                   "How long a conversation stays open after the last exchange.", minimum=5, maximum=300),
+            Field("wake_word", "follow_ups", "Follow-ups without the wake word", "boolean",
+                  "Off: say the wake word for every request, as in a room with a TV. "
+                  "Answers to the assistant's own questions still need no wake word."),
             Field("assistant", "max_history_turns", "Turns remembered in a conversation", "integer",
                   minimum=0, maximum=20),
         ],

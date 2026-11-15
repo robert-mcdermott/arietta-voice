@@ -1007,3 +1007,25 @@ def test_the_answer_to_a_confirmation_waits_for_the_full_silence_window(runtime)
     runtime._log_tool_result({"source": "model", "confirmation": {"tool": "x"}})
     runtime.reset_session()
     assert runtime._awaiting_answer is False
+
+
+@pytest.mark.parametrize(
+    ("follow_ups", "awaiting", "response", "needs_wake"),
+    [
+        (True, False, "It opens at noon.", False),
+        (False, False, "It opens at noon.", True),
+        (False, False, "Do you mean the north door?", False),  # It asked something.
+        (False, True, "Should I turn off the office lights?", False),  # A confirmation.
+    ],
+)
+def test_with_follow_ups_off_the_next_request_needs_the_wake_word(
+    runtime, follow_ups, awaiting, response, needs_wake
+) -> None:
+    runtime.config.wake_word.follow_ups = follow_ups
+    runtime._open_session(None)
+    runtime._awaiting_answer = awaiting
+    runtime._after_answer(response)
+    assert runtime._needs_wake is needs_wake
+    expected = "waiting_for_wake" if needs_wake else "listening"
+    assert runtime._idle_state().value == expected
+    assert runtime.session.active  # The conversation itself is kept.

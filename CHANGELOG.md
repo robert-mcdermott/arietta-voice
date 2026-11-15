@@ -7,6 +7,13 @@ version policy and the release procedure.
 
 ### Added
 
+- `[wake_word].follow_ups` (default on; also in Settings → Assistant). Off,
+  every request needs the wake word, so a TV or another conversation in the
+  room is not answered and cannot keep the conversation open; an answer to
+  something the assistant just asked ("Should I …?", or any reply ending in a
+  question) still needs none. The conversation is remembered until
+  `session_timeout_s` passes. An interim answer to the known issue in 0.2.0.
+
 - Prompt-injection evaluations. `evals/test_injection.py` runs five injected
   payloads (an instruction to ignore earlier ones, a claimed approval, a
   written-out tool call, a fake system prompt, a request to send data away)

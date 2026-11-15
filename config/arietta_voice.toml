@@ -23,6 +23,10 @@ phrases = ["bridget"]
 acknowledgement = "Yes?"
 session_timeout_s = 20.0
 allow_inline_commands = true
+# false: every request needs the wake word, as in a room with a TV, except the
+# answer to something the assistant just asked. The conversation is still
+# remembered until session_timeout_s passes.
+follow_ups = true
 
 [audio]
 # Empty = OS default when connecting. Use an exact name or HOST::NAME from `devices`.

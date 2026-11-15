@@ -144,7 +144,7 @@ class ScriptedWorker:
         if operation == "transcribe":
             return self.step["text"]
         if operation == "chat":
-            return {"response": "Synthetic answer", "source": "model"}
+            return {"response": self.step.get("reply", "Synthetic answer"), "source": "model"}
         raise AssertionError(f"Unexpected operation: {operation}")
 
 
@@ -155,6 +155,7 @@ def test_runtime_session_contract(case, tmp_path, monkeypatch):
     config.audio.smart_turn_enabled = False
     config.memory.enabled = False
     config.wake_word.enabled = case.get("wake_enabled", True)
+    config.wake_word.follow_ups = case.get("follow_ups", True)
     monkeypatch.setattr("arietta_voice.runtime.SileroVoiceActivityDetector", lambda *args: Mock())
     monkeypatch.setattr("arietta_voice.runtime.ChimePlayer", lambda *args: Mock())
     worker = ScriptedWorker()

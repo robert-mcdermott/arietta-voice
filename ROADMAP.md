@@ -259,7 +259,9 @@ owner can see and remove it, and the retrieval target is met.
    available as the fallback. This also stops transcribing all room speech.
    Until then, after a wake any speech counts as a request until 20 s pass
    without any, so a TV in the room can be answered and keep the session open
-   (a known issue in `0.2.0`).
+   (a known issue in `0.2.0`). Interim: `[wake_word].follow_ups = false`
+   requires the wake word for every request except an answer to the
+   assistant's own question.
 2. `arietta-voice init`, packaged starter assets, a generated LaunchAgent, and
    a tested upgrade and rollback path.
 3. A browser voice client (WebRTC) so the assistant can be used from the
