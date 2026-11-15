@@ -22,6 +22,8 @@ jobs:
       TRANSFORMERS_OFFLINE: "1"
       AWS_EC2_METADATA_DISABLED: "true"
       PYTHONUTF8: "1"
+      # The console's browser tests use the runner's Chrome; fail if it is missing.
+      ARIETTA_REQUIRE_BROWSER: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
