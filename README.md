@@ -503,8 +503,10 @@ stops active work, then closes the inference worker.
 ONNX Kokoro, the default, needs about 450 ms of CPU time before the first word
 of each answer. Kokoro on MLX uses the GPU and produces it in about 190 ms,
 which made answers 0.3 to 0.4 s quicker in the latency benchmark (1.28 s
-against 1.59 s median). It is not yet the default: one long benchmark run had
-an audio underflow, and it has not been through a live soak.
+against 1.59 s median). It is not yet the default: an earlier long benchmark
+run had an audio underflow, and it has not been through a live soak. A 100-turn
+run on November 14, together with transcription while you speak, passed every
+gate, at 1.27 s median and 2.36 s p95 to first audio.
 
 To try it, install the extra packages and the model, then point your private
 config at the model directory:
