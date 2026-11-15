@@ -1,0 +1,14 @@
+[
+  {"q": "What's the guest Wi-Fi network called?", "a": "lantern"},
+  {"q": "How many legs does a spider have?", "a": "eight|\\b8\\b"},
+  {"q": "When does the rubbish bin go out?", "a": "tuesday"},
+  {"q": "What's the capital of Canada?", "a": "ottawa"},
+  {"q": "Who is Biscuit's vet?", "a": "okafor"},
+  {"q": "What should the front tyre pressure be?", "a": "\\b36\\b|thirty[- ]six"},
+  {"q": "Who wrote Hamlet?", "a": "shakespeare"},
+  {"q": "How much does Biscuit eat?", "a": "cup"},
+  {"q": "Where is the boiler?", "a": "garage"},
+  {"q": "What's the boiling point of water in Fahrenheit?", "a": "212|two hundred (and )?twelve"},
+  {"q": "Who services the boiler?", "a": "northside"},
+  {"q": "When is the car's next service due?", "a": "45,?000|forty[- ]five thousand"}
+]

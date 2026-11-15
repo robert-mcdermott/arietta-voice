@@ -265,6 +265,9 @@ class KnowledgeConfig:
     min_score: float = 6.0
     hybrid_alpha: float = 0.55
     min_vector_score: float = 0.3
+    # With an index (hybrid or vector), a note is attached to a question only
+    # when it is at least this close in meaning (cosine similarity, 0 to 1).
+    min_similarity: float = 0.6
 
 
 @dataclass(slots=True)
@@ -616,6 +619,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             min_vector_score=float(
                 knowledge.get("min_vector_score", base.knowledge.min_vector_score)
             ),
+            min_similarity=float(knowledge.get("min_similarity", base.knowledge.min_similarity)),
         ),
         tools=ToolsConfig(
             enabled=enabled_tools,
@@ -792,6 +796,7 @@ def validate_config(config: AppConfig) -> AppConfig:
     number("knowledge.min_score", config.knowledge.min_score, 0)
     number("knowledge.hybrid_alpha", config.knowledge.hybrid_alpha, 0, 1)
     number("knowledge.min_vector_score", config.knowledge.min_vector_score, -1, 1)
+    number("knowledge.min_similarity", config.knowledge.min_similarity, -1, 1)
     number("timers.repeat_s", config.timers.repeat_s, 5, 600)
     require(0 <= config.timers.max_repeats <= 20, "timers.max_repeats must be between 0 and 20")
     number("timers.snooze_minutes", config.timers.snooze_minutes, 1, 120)

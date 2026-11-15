@@ -85,6 +85,9 @@ class InferenceEngine:
             service.warm_tools()  # MCP servers connect while the models load.
             service._llm = build_chat_model(self.config.models)
             service._llm.ensure_loaded()
+            build_index = getattr(service.knowledge, "build_index_if_needed", None)
+            if build_index is not None:
+                build_index()  # Notes edited since the last start are indexed now.
             service.knowledge.preload()
             if self.config.audio.smart_turn_enabled:
                 self.endpoint().ensure_loaded()

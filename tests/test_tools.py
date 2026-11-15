@@ -384,6 +384,9 @@ def test_knowledge_notes_never_tell_the_model_to_refuse(tmp_path) -> None:
     config, retriever = knowledge_config(tmp_path)
     registry = ToolRegistry(config, knowledge_retriever=retriever)
     content = registry.fast_path("Where can I get something to eat?").result.content
-    assert "may have nothing to do with the question" in content
-    assert "answer from your own knowledge" in content
-    assert "not sure" not in content
+    assert "may be unrelated" in content
+    # How to use them is in the system prompt, which is reused every turn.
+    from arietta_voice.knowledge import NOTES_RULE
+
+    assert "answer from your own knowledge" in NOTES_RULE
+    assert "not sure" not in content and "not sure" not in NOTES_RULE

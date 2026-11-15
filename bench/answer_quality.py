@@ -11,8 +11,14 @@ the two public starter notes and the default tools) and never reads private
 settings or knowledge. Pass --config to measure a particular setup, such as
 your own private one.
 
+Each question is asked on its own unless --conversation groups them, carrying
+the history as voice does. With made-up household notes, that measures answers
+from notes in the middle of a conversation:
+
 uv run --locked bench/answer_quality.py --rounds 2
 uv run --locked bench/answer_quality.py --config config/arietta_voice.toml --questions mine.json
+uv run --locked bench/answer_quality.py --notes evals/fixture_notes \\
+    --questions evals/notes_questions.json --conversation 6 --rounds 2
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ if not __package__:
 
 ROOT = Path(__file__).resolve().parents[1]
 QUESTIONS = ROOT / "evals" / "answer_questions.json"
+PUBLIC_NOTES = tuple(ROOT / "knowledge" / name for name in ("README.md", "getting-started.md"))
 
 
 def is_refusal(answer: str) -> bool:
@@ -47,29 +54,41 @@ def is_correct(answer: str, expected: str | None) -> bool | None:
     return bool(re.search(expected, answer, re.IGNORECASE))
 
 
+def _median(values) -> float | None:
+    values = [value for value in values if value is not None]
+    return round(statistics.median(values), 2) if values else None
+
+
 def summarize(rows: list[dict]) -> dict:
     facts = [row for row in rows if row["correct"] is not None]
-    firsts = [row["first_s"] for row in rows if row["first_s"] is not None]
-    return {
+    summary = {
         "answers": len(rows),
         "refused": sum(row["refused"] for row in rows),
         "facts": len(facts),
         "facts_right": sum(row["correct"] for row in facts),
-        "median_first_s": round(statistics.median(firsts), 2) if firsts else None,
+        "median_first_s": _median(row["first_s"] for row in rows),
         "smarter_answers": sum(1 for row in rows if row.get("smarter")),
     }
+    if any(row.get("notes") for row in rows):
+        summary["median_first_with_notes_s"] = _median(
+            row["first_s"] for row in rows if row.get("notes")
+        )
+        summary["median_first_without_notes_s"] = _median(
+            row["first_s"] for row in rows if not row.get("notes")
+        )
+    return summary
 
 
-def isolated_config(directory: Path):
-    """The shipped setup in a scratch folder: tracked persona and public notes only."""
+def isolated_config(directory: Path, notes=PUBLIC_NOTES):
+    """The shipped setup in a scratch folder: tracked persona and public or made-up notes."""
     from arietta_voice.config import default_config, validate_config
 
     config = default_config(directory)
     config.prompts.soul_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(ROOT / "config" / "SOUL.md", config.prompts.soul_path)
     config.knowledge.directory.mkdir(parents=True, exist_ok=True)
-    for name in ("README.md", "getting-started.md"):
-        shutil.copy(ROOT / "knowledge" / name, config.knowledge.directory / name)
+    for path in notes:
+        shutil.copy(path, config.knowledge.directory / path.name)
     config.memory.enabled = False
     config.logging.content_enabled = False
     return validate_config(config)
@@ -87,7 +106,20 @@ def main() -> int:
     )
     parser.add_argument("--smarter-provider", default="ollama", choices=("ollama", "bedrock"))
     parser.add_argument("--smarter-when", default="unsure", choices=("unsure", "always"))
+    parser.add_argument(
+        "--notes", type=Path, help="a folder of Markdown notes to use instead of the public ones"
+    )
+    parser.add_argument(
+        "--conversation",
+        type=int,
+        default=1,
+        help="ask this many questions in a row in one conversation, with history",
+    )
     args = parser.parse_args()
+    if args.notes is not None and args.config is not None:
+        parser.error("--notes applies only to the isolated setup, not with --config")
+    if not 1 <= args.conversation <= 20:
+        parser.error("--conversation must be 1..20")
 
     from arietta_voice.config import load_config
     from arietta_voice.conversation import ConversationService
@@ -95,7 +127,8 @@ def main() -> int:
     scratch = None
     if args.config is None:
         scratch = tempfile.TemporaryDirectory(prefix="answer-quality-")
-        config = isolated_config(Path(scratch.name))
+        notes = PUBLIC_NOTES if args.notes is None else tuple(sorted(args.notes.glob("*.md")))
+        config = isolated_config(Path(scratch.name), notes)
     else:
         config = load_config(args.config)
     config.mcp.enabled = False  # Measure the model, not whatever servers are connected.
@@ -109,9 +142,13 @@ def main() -> int:
     list(service.stream(message="Hello", use_tools=not args.no_tools))  # Load and warm up.
     rows = []
     for _ in range(args.rounds):
-        for item in questions:
+        history: list[dict] = []
+        for index, item in enumerate(questions):
+            if index % args.conversation == 0:
+                history = []  # A new conversation.
             started, first, events = time.monotonic(), None, []
-            for event in service.stream(message=item["q"], use_tools=not args.no_tools):
+            stream = service.stream(message=item["q"], history=history, use_tools=not args.no_tools)
+            for event in stream:
                 if event["kind"] == "clause" and first is None:
                     first = round(time.monotonic() - started, 2)
                 events.append(event)
@@ -125,9 +162,15 @@ def main() -> int:
                     "correct": is_correct(answer, item.get("a")),
                     "first_s": first,
                     "tool": result.get("model_tool") or result.get("used_tool"),
+                    "notes": result.get("used_tool") == "search_knowledge",
+                    "history_turns": len(history) // 2,
                     "smarter": result.get("smarter"),
                 }
             )
+            history += [
+                {"role": "user", "content": item["q"]},
+                {"role": "assistant", "content": answer},
+            ]
     summary = summarize(rows)
     print(json.dumps(summary))
     for row in rows:
