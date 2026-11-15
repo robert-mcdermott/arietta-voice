@@ -515,3 +515,59 @@ stop it after two clauses, then ask a third question:
 word for word the answer given when nothing was stopped. One of five differed
 from the from-scratch answer after 67 characters, as it did with nothing
 stopped: the known effect of processing a prompt in two pieces, described above.
+
+## Experiment: reading the question while it is spoken
+
+The model reads new prompt text at about 4 ms a token on the M4. After the
+speaker stops, it still has to read the question and, for questions about the
+notes, about 300 tokens of notes, about 1.3 s. With transcription during speech
+(`[audio].streaming_stt`), most of the question is known before the speaker
+finishes. The idea: find the notes for the partial question and have the model
+read the prompt so far while the speaker is still talking, so that only the last
+words are left at the end.
+
+Time box: one working day, November 14, 2026.
+
+**Decision rule, written before measuring.** First an upper bound, offline,
+without the voice pipeline: for each question, with one earlier turn in the
+history, have the model read the prompt for the question minus its last two
+words (about 0.6 s of speech), with the notes found for that partial question,
+then time the first clause for the full question. Compare with the same turn
+without the early reading. Build the real path only if all of these hold:
+
+1. Questions with notes: the median first clause is at least 300 ms sooner,
+   on both the made-up notes and the owner's notes.
+2. All questions together: at least 100 ms sooner at the median.
+3. The partial question finds the same notes as the full one for at least
+   80% of the questions with notes.
+4. The early reading takes no longer than the speech it overlaps plus the
+   end-of-turn wait (about 0.9 s), so it can finish before the turn starts.
+5. Answers are as correct as without it.
+
+Otherwise, record the result and keep the current path.
+
+**Result: rejected; the current path stays.** M4/32 GB, default local stack,
+text only (no speech recognition or synthesis), one earlier turn in the
+history, first clause after the full question:
+
+| | Made-up notes (12 questions) | Owner's setup (8 about the notes, 12 general) |
+| --- | ---: | ---: |
+| Same notes from the partial question | 3 of 8 | 0 of 8 |
+| Questions with notes, without / with early reading | 0.80 s / 0.72 s | 1.46 s / 1.43 s |
+| All questions, without / with | 0.74 s / 0.62 s | 0.74 s / 0.74 s |
+| Early reading, longest | 0.37 s | 1.14 s |
+| Answers right, without / with | 12 / 12 | 20 / 20 |
+
+Rules 1 and 3 fail on both sets, and rule 2 on the owner's. When the partial
+question did find the same notes, the gain was large (1.36 s to 0.84 s on one
+made-up question), but it rarely does: spoken questions are short, the last two
+words often carry the subject ("Who is Biscuit's | vet?"), and on the owner's
+notes the partial question always ranked the three notes differently, so the
+prompts parted at the first note. Without notes, the question itself is only
+about 15 tokens, which the model reads in about 60 ms, too little to be worth
+another path through the inference worker during speech.
+
+What would still cut the cost of notes is fewer tokens per note: the labels
+around each note and its length (`snippet_char_limit`, 420 characters). Fewer
+notes are not an option; with two instead of three, two answers on the owner's
+notes went wrong.
