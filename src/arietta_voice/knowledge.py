@@ -95,14 +95,18 @@ class KnowledgeSearchResult:
     matches: tuple[KnowledgeMatch, ...]
 
     def prompt_context(self) -> str:
+        """The notes as the model reads them: one line each, "[1] Title — Section: text".
+
+        The text is the note's own; only the labels around it are short. The
+        model reads about 4 ms a token on an M4, and the former four label lines
+        per note (with the file path) were about a quarter of the block.
+        """
         lines = [NOTES_HEADING]  # How to use them is in the system prompt (NOTES_RULE).
         for index, match in enumerate(self.matches, start=1):
-            lines.append(f"[Snippet {index}]")
-            lines.append(f"Source: {match.source_path.as_posix()}")
-            lines.append(f"Title: {match.title}")
-            if match.section_title:
-                lines.append(f"Section: {match.section_title}")
-            lines.append(f"Content: {match.snippet}")
+            heading = match.title
+            if match.section_title and match.section_title != match.title:
+                heading = f"{match.title} — {match.section_title}"
+            lines.append(f"[{index}] {heading}: {match.snippet}")
         return "\n".join(lines)
 
 

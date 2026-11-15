@@ -431,3 +431,17 @@ def test_an_index_that_cannot_be_built_leaves_keyword_search(tmp_path, monkeypat
     retriever = KnowledgeRetriever(config)
     assert not retriever.build_index_if_needed()
     assert retriever.search("conference rooms second floor")
+
+
+def test_notes_reach_the_model_as_one_short_line_each(tmp_path) -> None:
+    # The note's own text, whole; only the labels around it are short.
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "it-service-desk-and-support.md").write_text(
+        "---\ntitle: Service desk\n---\n\n## Hours\nOpen weekdays from 8 to 6, by phone or chat.\n"
+    )
+    config = KnowledgeConfig(backend="keyword", directory=knowledge_dir, min_score=1.0)
+    text = KnowledgeRetriever(config).search("service desk hours").prompt_context()
+    lines = text.splitlines()
+    assert lines[1] == "[1] Service desk — Hours: Open weekdays from 8 to 6, by phone or chat."
+    assert "it-service-desk-and-support.md" not in text and "Source:" not in text

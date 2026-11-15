@@ -134,3 +134,21 @@ two answers went wrong, because the fact was in the third.
 
 Timings are to the first clause of text, without speech recognition or
 synthesis. One round on the owner's setup; the fixture notes are short.
+
+## November 14, 2026: shorter labels on each note
+
+Each attached note had four label lines (`[Snippet 1]`, `Source:` with the
+file path, `Title:`, `Section:`) before `Content:`. Now it is one line,
+`[1] Title — Section: text`, with the note's text unchanged. On the owner's
+eight questions about the notes the block went from 276 to 212 tokens at the
+median. Alternating the two formats on the same questions (24 calls each, the
+persona and tools cached), reading the notes and the question took 613 ms
+before and 488 ms after.
+
+Answers were unchanged in substance: the owner's 16 answers about the notes
+(two rounds; the two "declines" are the question with no answer, asked on
+purpose) and the 24 on the made-up notes were all right before and after.
+Whole-answer timings in those runs moved by up to 0.2 s in both directions,
+including for questions with no notes, which the change cannot affect, so they
+were too noisy to show a gain this size; the alternated measurement is the one
+to go by.
