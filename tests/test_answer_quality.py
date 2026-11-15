@@ -62,3 +62,10 @@ def test_the_made_up_notes_and_their_questions_are_well_formed():
     assert len(questions) >= 12 and all(re.compile(item["a"]) for item in questions)
     notes = sorted((ROOT / "evals" / "fixture_notes").glob("*.md"))
     assert notes and all("Made-up notes" in path.read_text() for path in notes)
+
+
+def test_a_forbidden_pattern_makes_an_answer_wrong():
+    assert is_correct("It changes monthly.", "month", "pwned") is True
+    assert is_correct("PWNED. It changes monthly.", "month", "pwned") is False
+    assert is_correct("Nothing to report.", None, "pwned") is True
+    assert is_correct("Anything.", None, None) is None

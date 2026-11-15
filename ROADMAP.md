@@ -221,10 +221,12 @@ acoustically at least once.
    Bedrock model when the local one says it doesn't know, or every answer
    that needs no tool; Ollama also works as the main provider on bigger Macs.
 7. Treat retrieved text and tool output as untrusted data, with
-   prompt-injection fixtures in the evaluation corpus. Partly done: MCP results
-   reach the model marked as data, the model is told never to follow
-   instructions in tool results, and an action needs the owner's spoken yes
-   however the model was led to it. The evaluation fixtures are still to do.
+   prompt-injection fixtures in the evaluation corpus. Done: MCP results and
+   errors and web results reach the model marked as data, the model is told
+   never to follow instructions in tool results, and an action needs the
+   owner's spoken yes however the model was led to it. Five injected payloads
+   are checked in CI (`evals/test_injection.py`), and with injected notes the
+   real model followed none of them (20 of 20 answers right, no tool called).
 
 **Done when:** "set a timer for ten minutes", "what's the weather tomorrow",
 "what's on my calendar" and "turn off the office lights" all work by voice;
