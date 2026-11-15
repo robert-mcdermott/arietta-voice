@@ -39,6 +39,7 @@ def test_wake_contract(case, tmp_path):
 @cases("prompts")
 def test_prompt_contract(case, tmp_path):
     config = default_config(tmp_path)
+    config.knowledge.enabled = False  # The notes rule is checked in tests/test_prompts.py.
     config.prompts.soul_path.parent.mkdir(parents=True)
     config.prompts.soul_path.write_text(case["soul"])
     config.prompts.memory_path.write_text(case["memory"])
@@ -56,10 +57,12 @@ def test_prompt_contract(case, tmp_path):
     system = "\n\n".join(filter(None, [case["soul"], case["memory"] if case["enabled"] else ""]))
     if system:
         expected.append({"role": "system", "content": system})
-    if case["context"]:
-        expected.append({"role": "system", "content": case["context"]})
     retained = original[-case["limit"] * 2 :] if case["limit"] else []
     expected.extend({"role": turn.role, "content": turn.content} for turn in retained)
+    # This question's notes come after the history, so the start of the prompt
+    # stays the same from turn to turn and is reused.
+    if case["context"]:
+        expected.append({"role": "system", "content": case["context"]})
     expected.append({"role": "user", "content": "Current synthetic question"})
     assert messages == expected
     assert history == original

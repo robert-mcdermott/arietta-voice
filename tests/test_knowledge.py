@@ -345,3 +345,79 @@ Use Okta self-service password reset to regain access.
 
     assert result is None
     assert fake_embedder.query_calls == 0
+
+
+class AngleEmbedder:
+    """Notes about the gym point one way; anything else points 60 degrees off (cosine 0.5)."""
+
+    model_name = "fake-angle"
+
+    def embed_documents(self, texts):
+        return np.vstack([self._embed(text) for text in texts])
+
+    def embed_query(self, text):
+        return self._embed(text)
+
+    def _embed(self, text):
+        if "gym" in text.lower():
+            return np.array([1.0, 0.0], dtype=np.float32)
+        return np.array([0.5, np.sqrt(0.75)], dtype=np.float32)
+
+
+def rooms_config(tmp_path: Path, monkeypatch, **options) -> KnowledgeConfig:
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "rooms.md").write_text(
+        "# Conference rooms\nThe conference rooms are on the second floor, by the lifts."
+    )
+    monkeypatch.setattr(
+        "arietta_voice.knowledge._create_text_embedder", lambda config: AngleEmbedder()
+    )
+    return KnowledgeConfig(
+        backend="hybrid",
+        directory=knowledge_dir,
+        index_directory=tmp_path / "index",
+        embedding_model="fake-angle",
+        **options,
+    )
+
+
+def test_hybrid_search_attaches_only_notes_close_in_meaning(tmp_path, monkeypatch) -> None:
+    # "Which floor is the gym on?" shares "floor" with the rooms note but is about
+    # something else; reading that note would only slow the answer.
+    config = rooms_config(tmp_path, monkeypatch)
+    build_knowledge_index(config)
+    retriever = KnowledgeRetriever(config)
+    assert retriever.search("Which floor is the gym on?") is None  # Cosine 0.5.
+    config.min_similarity = 0.4
+    assert KnowledgeRetriever(config).search("Which floor is the gym on?")
+
+
+def test_hybrid_search_without_an_index_uses_the_keyword_bar(tmp_path, monkeypatch) -> None:
+    config = rooms_config(tmp_path, monkeypatch, min_score=1000.0)
+    assert KnowledgeRetriever(config).search("conference rooms second floor") is None
+    config.min_score = 1.0
+    assert KnowledgeRetriever(config).search("conference rooms second floor")
+
+
+def test_a_missing_or_outdated_index_is_built_at_startup(tmp_path, monkeypatch) -> None:
+    config = rooms_config(tmp_path, monkeypatch, min_similarity=0.4)
+    retriever = KnowledgeRetriever(config)
+    assert retriever.build_index_if_needed()
+    assert not retriever.build_index_if_needed()  # Up to date.
+    (config.directory / "rooms.md").write_text("# Conference rooms\nNow on the third floor.")
+    assert retriever.build_index_if_needed()
+    keyword = KnowledgeConfig(backend="keyword", directory=config.directory)
+    assert not KnowledgeRetriever(keyword).build_index_if_needed()
+
+
+def test_an_index_that_cannot_be_built_leaves_keyword_search(tmp_path, monkeypatch) -> None:
+    config = rooms_config(tmp_path, monkeypatch, min_score=1.0)
+
+    def no_model(config):
+        raise OSError("model not downloaded")
+
+    monkeypatch.setattr("arietta_voice.knowledge._create_text_embedder", no_model)
+    retriever = KnowledgeRetriever(config)
+    assert not retriever.build_index_if_needed()
+    assert retriever.search("conference rooms second floor")

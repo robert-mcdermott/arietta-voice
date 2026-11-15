@@ -5,6 +5,25 @@ version policy and the release procedure.
 
 ## Unreleased
 
+### Changed
+
+- Answers that use your notes start sooner, and other questions no longer
+  carry unrelated notes. Notes now go after the conversation so far, next to
+  the question, so the model reuses the start of the prompt instead of reading
+  the whole conversation again, and the instruction on how to use notes is in
+  the system prompt. With hybrid or vector search a note must now be close in
+  meaning to be attached (`[knowledge].min_similarity`, default 0.6); before,
+  nearly every question got up to three notes. On the owner's setup, general
+  questions in a conversation went from 1.21 s to 0.66 s to the first clause
+  (p95 2.89 s to 1.09 s), with every fact still right. See
+  [Answer quality](evals/ANSWER_QUALITY.md#november-14-2026-notes-in-a-conversation).
+- A missing or outdated knowledge index is built when the voice assistant
+  starts. An index from before the format change was silently ignored, which
+  left hybrid search matching by keyword only.
+- `bench/answer_quality.py --conversation N` asks questions in a row with
+  history, and `--notes DIR` uses other notes, such as the made-up
+  `evals/fixture_notes/`.
+
 ## 0.2.0 — 2026-11-14
 
 The first tagged release: everything since the 0.1.0 baseline, released as

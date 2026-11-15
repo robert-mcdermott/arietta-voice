@@ -210,17 +210,24 @@ Retrieval skips hidden/underscore-prefixed files and directories, and symbolic
 links that resolve outside the configured knowledge directory. Keep searchable
 articles inside that directory.
 
-After upgrading from the original mean-pooled BGE implementation, rebuild any
-semantic index with:
+For `hybrid` and `vector`, the voice assistant builds a missing or outdated
+semantic index when it starts, so notes edited since the last start are
+indexed then. To rebuild it yourself, use the console's Knowledge page or:
 
 ```bash
 uv run arietta-voice knowledge-index
 ```
 
-The corrected embedding pipeline uses normalized CLS embeddings and index
-version 2. Old indexes are rejected even if the source articles are unchanged.
-Until rebuilt, `hybrid` uses keyword matches and `vector` returns no matches.
-Restart a running runtime/API after rebuilding to reload its index.
+The embedding pipeline uses normalized CLS embeddings and index version 2;
+older indexes are rejected even if the source articles are unchanged. While an
+index is out of date, `hybrid` uses keyword matches and `vector` returns no
+matches. Restart a running runtime/API after rebuilding to reload its index.
+
+Notes are attached to a question only when they look relevant: by meaning with
+an index (`min_similarity`, default 0.6, on a 0 to 1 scale), otherwise by
+keyword score (`min_score`). Each attached note costs the model time to read,
+about a second for three on an M4 Mac, so a lower `min_similarity` finds more
+but slows answers to unrelated questions.
 
 ### Option 1: `keyword`
 
@@ -251,6 +258,7 @@ index_directory = "../.knowledge_index"
 embedding_model = "BAAI/bge-small-en-v1.5"
 hybrid_alpha = 0.55
 min_vector_score = 0.3
+min_similarity = 0.6
 ```
 
 Use `hybrid` when:
@@ -274,7 +282,7 @@ How it works:
 backend = "vector"
 index_directory = "../.knowledge_index"
 embedding_model = "BAAI/bge-small-en-v1.5"
-min_vector_score = 0.3
+min_similarity = 0.6
 ```
 
 Use `vector` when:
@@ -293,9 +301,8 @@ How it works:
 
 ## 5. Build Or Refresh The Knowledge Index
 
-You only need to build the index for `hybrid` or `vector`.
-
-Run:
+You only need the index for `hybrid` or `vector`. The assistant builds it when
+it starts if it is missing or out of date; to build it now, run:
 
 ```bash
 uv run arietta-voice knowledge-index

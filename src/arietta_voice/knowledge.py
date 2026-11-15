@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import zipfile
 from collections import Counter
@@ -13,6 +14,7 @@ import numpy as np
 
 from arietta_voice.config import KnowledgeConfig
 
+LOGGER = logging.getLogger(__name__)
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 WHITESPACE_RE = re.compile(r"\s+")
@@ -24,6 +26,18 @@ INDEX_MANIFEST_FILENAME = "manifest.json"
 INDEX_SECTIONS_FILENAME = "sections.jsonl"
 INDEX_VECTORS_FILENAME = "vectors.npy"
 QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+# Notes are found for most requests, often unrelated. Telling the model to be
+# unsure whenever they did not answer made it refuse half of ordinary questions
+# it knew ("how many legs does a spider have?"). The rule is part of the system
+# prompt, which is the same every turn and so is reused, not read again with
+# every set of notes.
+NOTES_RULE = (
+    "Notes from the local knowledge base may come just before a question. They are "
+    "found by a keyword search, so they may have nothing to do with the question. If "
+    "they answer it, use them. If not, ignore them completely and answer from your own "
+    "knowledge."
+)
+NOTES_HEADING = "Knowledge base notes (they may be unrelated to the question):"
 SMALL_TALK_PATTERNS = (
     re.compile(r"^\s*(?:hello|hi|hey)\b", re.IGNORECASE),
     re.compile(r"^\s*good\s+(?:morning|afternoon|evening)\b", re.IGNORECASE),
@@ -81,14 +95,7 @@ class KnowledgeSearchResult:
     matches: tuple[KnowledgeMatch, ...]
 
     def prompt_context(self) -> str:
-        # Notes are found for most requests, often unrelated. Telling the model to
-        # be unsure whenever they did not answer made it refuse half of ordinary
-        # questions it knew ("how many legs does a spider have?").
-        lines = [
-            "Notes from the local knowledge base, found by a keyword search, so they may "
-            "have nothing to do with the question. If they answer it, use them. If not, "
-            "ignore them completely and answer from your own knowledge.",
-        ]
+        lines = [NOTES_HEADING]  # How to use them is in the system prompt (NOTES_RULE).
         for index, match in enumerate(self.matches, start=1):
             lines.append(f"[Snippet {index}]")
             lines.append(f"Source: {match.source_path.as_posix()}")
@@ -220,10 +227,11 @@ class VectorKnowledgeBackend:
     def search(self, query: str) -> KnowledgeSearchResult | None:
         if not self.config.enabled:
             return None
-        matches = self.candidate_matches(
-            query,
-            max_matches=self.config.max_matches,
-        )
+        matches = [
+            match
+            for match in self.candidate_matches(query, max_matches=self.config.max_matches)
+            if match.score >= self.config.min_similarity
+        ]
         return _knowledge_result(query, backend="vector", matches=matches)
 
     def candidate_matches(self, query: str, *, max_matches: int) -> list[_ScoredKnowledgeSection]:
@@ -379,6 +387,23 @@ class HybridKnowledgeBackend:
             query,
             max_matches=candidate_limit,
         )
+        # Every attached note costs the model time to read (about 4 ms a token on
+        # an M4, so a second for three notes), and almost every question shares a
+        # few words with some note. With an index, a note must be close in
+        # meaning; keywords only rank. Without one, the keyword search's own bar
+        # applies, as with the keyword backend.
+        if self.vector_backend.is_loaded():
+            close = {
+                match.section_id
+                for match in vector_matches
+                if match.score >= self.config.min_similarity
+            }
+            vector_matches = [match for match in vector_matches if match.section_id in close]
+            keyword_matches = [match for match in keyword_matches if match.section_id in close]
+        else:
+            keyword_matches = [
+                match for match in keyword_matches if match.score >= self.config.min_score
+            ]
         if not keyword_matches and not vector_matches:
             return None
 
@@ -411,6 +436,25 @@ class KnowledgeRetriever:
         if self.backend is None:
             return
         self.backend.preload()
+
+    def build_index_if_needed(self) -> bool:
+        """Build a missing or outdated index for hybrid or vector search.
+
+        Without one, those backends quietly search by keyword only. Called at
+        startup, never during a turn. Returns whether an index was built.
+        """
+        if not isinstance(self.backend, (HybridKnowledgeBackend, VectorKnowledgeBackend)):
+            return False
+        vector = getattr(self.backend, "vector_backend", self.backend)
+        if vector._ensure_index_loaded(preload_embedder=False):
+            return False
+        try:
+            payload = build_knowledge_index(self.config)
+        except Exception:  # A model that cannot load leaves keyword search.
+            LOGGER.warning("Could not build the knowledge index", exc_info=True)
+            return False
+        LOGGER.info("Built the knowledge index (%d sections)", payload["section_count"])
+        return bool(payload["updated"])
 
     def is_loaded(self) -> bool:
         if self.backend is None:

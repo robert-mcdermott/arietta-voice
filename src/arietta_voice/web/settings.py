@@ -125,7 +125,8 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
             Field("logging", "content_enabled", "Log conversation text", "boolean",
                   "Off keeps what you say out of logs and the console's status."),
             Field("knowledge", "backend", "Knowledge search", "choice",
-                  "Hybrid and vector need the index built.", choices=("keyword", "hybrid", "vector")),
+                  "Hybrid and vector also match by meaning; their index is built at startup.",
+                  choices=("keyword", "hybrid", "vector")),
         ],
     ),
 ]  # fmt: skip

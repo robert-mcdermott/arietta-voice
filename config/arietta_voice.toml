@@ -154,6 +154,11 @@ snippet_char_limit = 420
 min_score = 6.0
 hybrid_alpha = 0.55
 min_vector_score = 0.3
+# Hybrid and vector search: a note is attached to a question only when it is at
+# least this close in meaning (0 to 1). Unrelated notes cost the model time to
+# read, about a second for three of them. The index is built when the
+# assistant starts, or from the console's Knowledge page.
+min_similarity = 0.6
 
 [tools]
 # Built-in tools, then any of your own. Requests are checked against each tool's
