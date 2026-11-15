@@ -168,7 +168,7 @@ def test_local_stream_reuses_one_prefix_cache_across_conversation_turns(monkeypa
     assert model._prefix_cache is calls[0]["prompt_cache_state"]
 
 
-def test_stopped_local_generation_discards_the_prefix_cache(monkeypatch):
+def test_a_stopped_first_generation_starts_the_cache_afresh(monkeypatch):
     calls = []
     _fake_mlx(monkeypatch, ["First", " second"], calls)
     model = _loaded_gemma()
@@ -176,12 +176,67 @@ def test_stopped_local_generation_discards_the_prefix_cache(monkeypatch):
 
     stream = model.stream(messages, reuse_prefix=True)
     assert next(stream).text == "First"
-    stream.close()  # Cancelled mid-answer: the cache no longer matches its record.
+    stream.close()  # Stopped before any prompt was recorded: nothing to keep.
     assert model._prefix_cache is None
 
     list(model.stream(messages, reuse_prefix=True))
     assert calls[1]["prompt_cache_state"] is not calls[0]["prompt_cache_state"]
     assert model._prefix_cache is calls[1]["prompt_cache_state"]
+
+
+def test_a_stopped_generation_keeps_the_cache_for_its_prompt(monkeypatch):
+    # An interruption or a resumed turn stops the answer part way. Dropping the
+    # cache then made the next turn read the whole prompt again (2.5 s, not 0.5).
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    calls = []
+    state_type = _fake_mlx(monkeypatch, [], calls)
+    state_type.cache = None
+
+    def update(self, token_ids, cache):
+        self.token_ids, self.cache = list(token_ids), cache
+
+    state_type.update = update
+
+    def stream_generate(model, processor, prompt, **options):
+        # Like mlx-vlm: reuse the kept cache for a shared prefix, else the fresh
+        # one; record tokens and cache only when the generation finishes.
+        state, ids = options["prompt_cache_state"], [ord(c) for c in prompt]
+        reused, cache = 0, options["prompt_cache"]
+        if state.cache is not None:
+            reused = state.find_prefix_length(ids)
+            cache = state.cache if reused else cache
+        calls.append({"cache": cache, "reused": reused})
+        for text in ("One", " two"):
+            yield SimpleNamespace(text=text, cached_tokens=reused)
+        state.update([*ids, 0, 0], cache)
+
+    sys.modules["mlx_vlm"].stream_generate = stream_generate
+    model = _loaded_gemma()
+    model._processor.apply_chat_template = Mock(side_effect=lambda m, **k: m[-1]["content"])
+
+    def ask(text, stop=False):
+        stream = model.stream([{"role": "user", "content": text}], reuse_prefix=True)
+        if stop:
+            next(stream)
+            stream.close()
+        else:
+            list(stream)
+
+    ask("abc")  # The first answer finishes: its tokens are recorded.
+    ask("abcdef", stop=True)  # Reuses "abc", then is stopped.
+    state = model._prefix_cache
+    assert state is not None and state.token_ids == [ord(c) for c in "abcdef"]
+    assert state.cache is calls[1]["cache"]
+    ask("abcdefgh")
+    assert calls[2]["reused"] == 6 and calls[2]["cache"] is calls[1]["cache"]
+
+    # Stopped with nothing reused: the prompt went into the fresh cache.
+    ask("xyz", stop=True)
+    assert model._prefix_cache.cache is calls[3]["cache"] is not calls[1]["cache"]
+    assert model._prefix_cache.token_ids == [ord(c) for c in "xyz"]
 
 
 def test_prefix_reuse_can_be_disabled_in_configuration(monkeypatch, tmp_path):

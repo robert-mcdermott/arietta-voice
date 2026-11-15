@@ -17,6 +17,11 @@ version policy and the release procedure.
   questions in a conversation went from 1.21 s to 0.66 s to the first clause
   (p95 2.89 s to 1.09 s), with every fact still right. See
   [Answer quality](evals/ANSWER_QUALITY.md#november-14-2026-notes-in-a-conversation).
+- The turn after an interrupted answer starts as fast as any other. Stopping
+  an answer part way (interrupting it, carrying on speaking after the early
+  end-of-turn check, or a hand-over to the smarter model) dropped the model's
+  cached prompt, so the next answer took about 2.5 s to its first clause
+  instead of 0.8 s. The cache is now kept for the stopped prompt.
 - A missing or outdated knowledge index is built when the voice assistant
   starts. An index from before the format change was silently ignored, which
   left hybrid search matching by keyword only.
