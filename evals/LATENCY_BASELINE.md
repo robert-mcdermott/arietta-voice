@@ -571,3 +571,25 @@ What would still cut the cost of notes is fewer tokens per note: the labels
 around each note and its length (`snippet_char_limit`, 420 characters). Fewer
 notes are not an option; with two instead of three, two answers on the owner's
 notes went wrong.
+
+## November 14, 2026: rerun after the notes and cache changes
+
+The standing benchmark after the notes and stopped-cache changes (`main` at
+`64a20fa`, the same pipeline code as `060daad`), `--turns 30 --model-tools`,
+ONNX speech, muted, M4/32 GB: every gate passed (no underflows, no worker
+restarts, no content logged).
+
+| | Median | p95 |
+| --- | ---: | ---: |
+| End of speech to first audio | 1,651 ms | 3,539 ms |
+| End of speech to work starting | 290 ms | 328 ms |
+| Transcription | 180 ms | 322 ms |
+| Chat, to the first clause | 523 ms | 935 ms |
+| First speech chunk | 519 ms | 1,792 ms |
+
+Unchanged within run-to-run variation from the last ONNX run (1,590 ms and
+3,375 ms). The benchmark asks one question per conversation with knowledge off
+and stops no answers, so neither change applies to it; their effect is in
+[Answer quality](ANSWER_QUALITY.md#november-14-2026-notes-in-a-conversation)
+and in the stopped-cache section above. The p95 is the ONNX speech engine's
+first chunk, which item 1 of Milestone 1 (MLX speech as the default) addresses.
