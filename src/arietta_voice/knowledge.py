@@ -391,8 +391,9 @@ class HybridKnowledgeBackend:
         # an M4, so a second for three notes), and almost every question shares a
         # few words with some note. With an index, a note must be close in
         # meaning; keywords only rank. Without one, the keyword search's own bar
-        # applies, as with the keyword backend.
-        if self.vector_backend.is_loaded():
+        # applies, as with the keyword backend, and also when the question was
+        # not searched by meaning ("Hi, what's the Wi-Fi called?").
+        if _should_attempt_semantic_search(query) and self.vector_backend.is_loaded():
             close = {
                 match.section_id
                 for match in vector_matches

@@ -169,7 +169,9 @@ The active session stays open until:
 Once a session is active, Arietta Voice answers turns in this order:
 
 1. instant answers from tool triggers
-2. prompt assembly with optional tool context
+2. prompt assembly: persona and history first, then this question's notes or
+   tool context, then the question, so the start of the prompt stays the same
+   from turn to turn and the model's cache of it is reused
 3. chat generation, streamed
 4. optional single tool call requested by the model
 5. final chat response
@@ -445,7 +447,7 @@ sequenceDiagram
         KB->>VEC: semantic candidate search when index is valid
         KW-->>KB: lexical candidates
         VEC-->>KB: vector candidates
-        KB-->>KB: merge and rerank
+        KB-->>KB: keep only sections close in meaning (min_similarity), merge and rerank
     end
     KB-->>Tools: top matching snippets
     Tools-->>Runtime: ToolResponse(context=...)

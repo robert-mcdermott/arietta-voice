@@ -393,6 +393,16 @@ def test_hybrid_search_attaches_only_notes_close_in_meaning(tmp_path, monkeypatc
     assert KnowledgeRetriever(config).search("Which floor is the gym on?")
 
 
+def test_a_question_opening_with_a_greeting_still_gets_keyword_notes(tmp_path, monkeypatch):
+    # Greetings skip the search by meaning; the keyword bar must still apply.
+    config = rooms_config(tmp_path, monkeypatch, min_score=1.0)
+    build_knowledge_index(config)
+    retriever = KnowledgeRetriever(config)
+    retriever.preload()  # As at startup: the index is loaded.
+    result = retriever.search("Hi, where are the conference rooms?")
+    assert result is not None and result.matches[0].title == "Conference rooms"
+
+
 def test_hybrid_search_without_an_index_uses_the_keyword_bar(tmp_path, monkeypatch) -> None:
     config = rooms_config(tmp_path, monkeypatch, min_score=1000.0)
     assert KnowledgeRetriever(config).search("conference rooms second floor") is None
