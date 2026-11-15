@@ -26,6 +26,14 @@ version policy and the release procedure.
   questions in a conversation went from 1.21 s to 0.66 s to the first clause
   (p95 2.89 s to 1.09 s), with every fact still right. See
   [Answer quality](evals/ANSWER_QUALITY.md#november-14-2026-notes-in-a-conversation).
+- Long note sections are searched and attached in chunks of at most 420
+  characters (`snippet_char_limit`), cut between sentences and list items.
+  Before, only the first 420 characters of a section ever reached the model,
+  so later facts could not be found; 58 of the owner's 151 sections were
+  longer. On questions about facts past that point, made-up notes went from
+  26 to 36 of 36 answers right and the owner's from 10 to 16 of 20, with
+  general questions still getting no notes. The knowledge index format is now
+  version 3; it is rebuilt automatically at the next start.
 - Each attached note reaches the model as one line, "[1] Title — Section:
   text", instead of four label lines with the file path. The note's text is
   unchanged and nothing on disk changes; on the owner's notes the block is a
@@ -43,6 +51,9 @@ version policy and the release procedure.
   the speaker is still talking. A question missing its last words rarely finds
   the same notes, so the gain did not carry over (see
   [the latency report](evals/LATENCY_BASELINE.md#experiment-reading-the-question-while-it-is-spoken)).
+- `evals/test_recall.py`: questions about the made-up notes must find the
+  answer among the three attached notes (recall@3 at least 90%) with keyword
+  search, in CI.
 - `bench/answer_quality.py --conversation N` asks questions in a row with
   history, and `--notes DIR` uses other notes, such as the made-up
   `evals/fixture_notes/`.

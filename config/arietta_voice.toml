@@ -150,6 +150,8 @@ directory = "../knowledge"
 index_directory = "../.knowledge_index"
 embedding_model = "BAAI/bge-small-en-v1.5"
 max_matches = 3
+# Long sections are searched and attached in chunks of at most this many
+# characters, cut between sentences and list items.
 snippet_char_limit = 420
 min_score = 6.0
 hybrid_alpha = 0.55

@@ -1,14 +1,20 @@
 [
-  {"q": "What's the guest Wi-Fi network called?", "a": "lantern"},
+  {"q": "What's the guest Wi-Fi network called?", "a": "lantern", "notes": true},
   {"q": "How many legs does a spider have?", "a": "eight|\\b8\\b"},
-  {"q": "When does the rubbish bin go out?", "a": "tuesday"},
+  {"q": "When does the rubbish bin go out?", "a": "tuesday", "notes": true},
   {"q": "What's the capital of Canada?", "a": "ottawa"},
-  {"q": "Who is Biscuit's vet?", "a": "okafor"},
-  {"q": "What should the front tyre pressure be?", "a": "\\b36\\b|thirty[- ]six"},
+  {"q": "Who is Biscuit's vet?", "a": "okafor", "notes": true},
+  {"q": "What should the front tyre pressure be?", "a": "\\b36\\b|thirty[- ]six", "notes": true},
   {"q": "Who wrote Hamlet?", "a": "shakespeare"},
-  {"q": "How much does Biscuit eat?", "a": "cup"},
-  {"q": "Where is the boiler?", "a": "garage"},
+  {"q": "How much does Biscuit eat?", "a": "cup", "notes": true},
+  {"q": "Where is the boiler?", "a": "garage", "notes": true},
   {"q": "What's the boiling point of water in Fahrenheit?", "a": "212|two hundred (and )?twelve"},
-  {"q": "Who services the boiler?", "a": "northside"},
-  {"q": "When is the car's next service due?", "a": "45,?000|forty[- ]five thousand"}
+  {"q": "Who services the boiler?", "a": "northside", "notes": true},
+  {"q": "When is the car's next service due?", "a": "45,?000|forty[- ]five thousand", "notes": true},
+  {"q": "What do I do if the hot water runs cold?", "a": "reset", "notes": true},
+  {"q": "Where is the emergency gas shutoff valve?", "a": "yellow panel|back door", "notes": true},
+  {"q": "Which company monitors the alarm?", "a": "brightline", "notes": true},
+  {"q": "When does the garden irrigation run?", "a": "5 ?am|five", "notes": true},
+  {"q": "When is the garden waste bin collected?", "a": "first friday", "notes": true},
+  {"q": "How often should the compost heap be turned?", "a": "two weeks|fortnight|every 2", "notes": true}
 ]

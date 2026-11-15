@@ -152,3 +152,29 @@ Whole-answer timings in those runs moved by up to 0.2 s in both directions,
 including for questions with no notes, which the change cannot affect, so they
 were too noisy to show a gain this size; the alternated measurement is the one
 to go by.
+
+## November 14, 2026: long sections in chunks
+
+Only the first 420 characters of each note section reached the model, so a
+fact further down could not be found however the question was asked. 58 of the
+owner's 151 sections were longer (median 622 characters, up to 2,300). Long
+sections are now split into chunks of at most 420 characters at sentence and
+list-item boundaries, and each chunk is searched and attached on its own;
+sections that fit are unchanged. The owner's notes became 243 chunks.
+
+| Questions (two rounds) | Before | After |
+| --- | ---: | ---: |
+| Made-up notes, incl. six facts past the cut ([`house-manual.md`](fixture_notes/house-manual.md)) | 26 of 36 | 36 of 36 |
+| Owner's facts past the cut (10 questions, private) | 10 of 20 | 16 of 20 |
+| Owner's original notes questions | 16 of 16 | 15 of 16 |
+| Owner's 40 general questions, six at a time (one round) | — | 24 of 24 facts, no notes attached |
+
+The one original miss was the service desk email copied as "It issd@…"; for
+that question the notes and prompt are identical before and after (its
+sections are short), and asked ten more times it was right 9 of 10 at the
+default temperature and 10 of 10 at temperature 0, against 10 and 10 before:
+sampling, not the change. The four remaining misses past the cut were answers
+from other relevant chunks ("the Steam Plant has grab and go" for "where can I
+get coffee and grab-and-go items?"), not wrong facts. `evals/test_recall.py`
+checks in CI that the made-up notes' questions find their answer among the
+three attached notes.
