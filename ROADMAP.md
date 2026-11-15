@@ -42,7 +42,7 @@ The October work built a strong foundation and then stalled inside it.
   Markdown knowledge search and system info. The first real integration was
   scheduled for the fourth of five phases.
 - **Nothing shipped.** The version was still an untagged `0.1.0` with a large
-  unreleased changelog. (Since then: `0.2.0rc7` is tagged; see Milestone 0.)
+  unreleased changelog. (Since then: `0.2.0` is released; see Milestone 0.)
 
 ## How this roadmap works
 
@@ -72,10 +72,11 @@ The console track below runs alongside milestones 0–3.
 1. Park the Kokoro question: ONNX stays the default, MLX stays opt-in, and no
    further comparison runs until Milestone 1 names TTS as the bottleneck.
 2. Run one 30-minute soak on the default ONNX stack. If it passes the existing
-   audio gate, release. If not, fix that failure only.
-3. Tag `0.2.0` from the current unreleased changelog. `0.2.0rc1` to
-   `0.2.0rc7` are tagged (November 14); the final tag follows the soak in
-   item 2.
+   audio gate, release. If not, fix that failure only. Deferred by the owner
+   on November 14: a TV in the room was heard as requests, which would
+   invalidate the run. It moves to Milestone 1, item 5.
+3. Tag `0.2.0` from the current unreleased changelog. Done: `0.2.0rc1` to
+   `0.2.0rc7` and then `0.2.0` were tagged on November 14.
 4. Reorganize the repository (see [Repository layout](#repository-layout)).
 5. Add `ruff` formatting and linting to CI and reformat the dense October code.
 
@@ -148,7 +149,8 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    The prompted JSON format was fragile with the 4-bit Gemma; native calls
    chose the right tool in every check.
 5. **A live-microphone session** covering the early check, resuming and the
-   deferred chime. Everything above was measured with synthetic speech.
+   deferred chime. Everything above was measured with synthetic speech. Run
+   the 30-minute audible soak deferred from Milestone 0 in the same quiet room.
 
 **Done when:** the standing benchmark meets the target over 100 warm turns with
 no increase in false cutoffs, and interruption latency has been measured
@@ -232,6 +234,9 @@ owner can see and remove it, and the retrieval target is met.
 1. Acoustic wake word behind the existing detector seam, with a custom-trained
    phrase and a measured false-activation rate. Transcript matching stays
    available as the fallback. This also stops transcribing all room speech.
+   Until then, after a wake any speech counts as a request until 20 s pass
+   without any, so a TV in the room can be answered and keep the session open
+   (a known issue in `0.2.0`).
 2. `arietta-voice init`, packaged starter assets, a generated LaunchAgent, and
    a tested upgrade and rollback path.
 3. A browser voice client (WebRTC) so the assistant can be used from the
