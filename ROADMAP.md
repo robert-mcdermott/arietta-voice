@@ -284,8 +284,10 @@ Still to do:
 
 - Push status updates over server-sent events instead of polling — done for
   the runtime status on Home.
-- Browser smoke tests in CI. (Static checks run now: imports match exports,
-  looked-up element ids exist in the page, and every module parses.)
+- Browser smoke tests in CI — done: every page is opened in Chrome through
+  Playwright against a scratch console and must load with no script error,
+  failed request or error banner; navigation and the theme switch are
+  exercised too.
 
 **C2 — with Milestones 2–3**
 

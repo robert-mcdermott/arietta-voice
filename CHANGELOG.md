@@ -5,6 +5,15 @@ version policy and the release procedure.
 
 ## Unreleased
 
+### Added
+
+- Browser tests of the console (`tests/test_console_browser.py`): every page
+  is opened in Chrome through Playwright against a scratch setup and must load
+  with no script error, failed request or error banner, and the navigation
+  and theme switch are clicked through. They run in CI on the runner's Chrome
+  and are skipped locally without Chrome. New dev dependency: `playwright`
+  1.65.2.
+
 ### Changed
 
 - Answers that use your notes start sooner, and other questions no longer
