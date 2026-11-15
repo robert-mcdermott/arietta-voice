@@ -111,10 +111,10 @@ alters real model output.
    separate decision: starter assets and first-run setup need packaging work
    before a standalone end-user installation is fully supported.
 
-The first tags are `v0.2.0rc1` to `v0.2.0rc7` (November 14, 2026), release
-candidates for `0.2.0`. No historical release date is inferred from the pre-existing `0.1.0`
-declaration. To finish `0.2.0` after the soak, set the version with
-`uvx uv@0.12.10 version 0.2.0`, rename the changelog section, and tag as above.
+The first tags are `v0.2.0rc1` to `v0.2.0rc7`, release candidates, and then
+`v0.2.0` (all November 14, 2026). No historical release date is inferred from
+the pre-existing `0.1.0` declaration. The 30-minute audible soak planned for
+`0.2.0` was deferred and moved to Milestone 1 in the roadmap.
 
 ## CI and remaining release automation
 

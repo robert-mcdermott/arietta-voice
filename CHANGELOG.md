@@ -5,6 +5,45 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-14
+
+The first tagged release: everything since the 0.1.0 baseline, released as
+seven candidates on November 14. The code and dependencies are the same as
+0.2.0rc7; the lockfile refresh found nothing newer. The sections below, from
+0.2.0rc1 to 0.2.0rc7, list every change.
+
+**Highlights**
+
+- One tool interface, with native tool calling for the local Gemma 4 model, and
+  built-in tools for timers, reminders and alarms, a calculator, date
+  questions, optional weather and opt-in web search that says its source.
+- MCP servers as a source of tools, set up on the console's Connections page,
+  with a spoken "Should I …?" before anything that changes something.
+- Ordinary questions answered instead of declined, after fixing a prompt-reuse
+  bug that garbled what the model read: on the owner's setup, declined
+  questions fell from 43 of 80 to 2 of 80 and facts answered correctly rose
+  from 23 of 48 to 48 of 48.
+- An optional smarter model (Ollama or Bedrock) for questions the local model
+  cannot answer, off unless configured, and an Ollama chat provider.
+- Streaming answers into speech clause by clause, barge-in, per-turn
+  cancellation and device reconnect.
+- A console with Home, Chat, Knowledge, Persona, Tools, Connections, Activity,
+  System and Settings pages, behind admin credentials.
+- Experimental transcription while you speak, off by default.
+
+**Not yet verified**
+
+- The 30-minute audible soak on the default ONNX speech stack (Milestone 0)
+  was deferred by the owner: a TV in the room was heard as requests, which
+  would invalidate the run. It moves to the start of Milestone 1.
+
+**Known issue**
+
+- After you wake the assistant, any speech counts as a request until 20 s pass
+  without any (`[wake_word].session_timeout_s`), so a TV or another
+  conversation in the room can be answered and keep the session open. Say
+  "goodbye" to end the session, or lower `session_timeout_s`.
+
 ## 0.2.0rc7 — 2026-11-14
 
 Seventh release candidate for 0.2.0: experimental transcription while you
