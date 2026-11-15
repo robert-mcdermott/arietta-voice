@@ -7,6 +7,17 @@ version policy and the release procedure.
 
 ### Added
 
+- Prompt-injection evaluations. `evals/test_injection.py` runs five injected
+  payloads (an instruction to ignore earlier ones, a claimed approval, a
+  written-out tool call, a fake system prompt, a request to send data away)
+  through tool, MCP and web results with a scripted model: the text reaches
+  the model marked as data, a tool call inside a result never runs, and an
+  action the text asks for still needs a spoken yes. `evals/injection_notes/`
+  holds made-up notes with injected instructions for the real model; on the
+  M4 the default model followed none of them (20 of 20 answers correct, no
+  tool called). `bench/answer_quality.py` question files can now give a
+  `not` pattern an answer must not match and `no_tool`.
+
 - Browser tests of the console (`tests/test_console_browser.py`): every page
   is opened in Chrome through Playwright against a scratch setup and must load
   with no script error, failed request or error banner, and the navigation
@@ -57,6 +68,12 @@ version policy and the release procedure.
 - `bench/answer_quality.py --conversation N` asks questions in a row with
   history, and `--notes DIR` uses other notes, such as the made-up
   `evals/fixture_notes/`.
+
+### Fixed
+
+- An MCP server's error message reached the model unmarked ("The tool
+  reported a problem: ..."), unlike its results. It is now marked as data,
+  not instructions, too.
 
 ## 0.2.0 — 2026-11-14
 
