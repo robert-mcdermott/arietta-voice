@@ -136,7 +136,9 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    1.28 s median against 1.59 s on ONNX, with a p95 of 2.18 s against 3.38 s.
    It adds misaki (which declares support only below Python 3.13, although uv
    installs it and it works), spaCy and an English spaCy model. One earlier
-   100-turn muted run had an output underflow. Gate it on a live soak.
+   100-turn muted run had an output underflow; a new one, with streaming
+   transcription too, passed every gate at 1,269 ms median and 2,361 ms p95
+   (November 14). Gate it on a live soak.
 2. **Stream transcription during speech.** Built as an experimental setting,
    off by default (`[audio].streaming_stt`): in the muted benchmark the
    transcription after speech fell from 160 ms to 85 ms at the median and first
@@ -167,6 +169,8 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    fewer tokens, about 125 ms), and long sections now come in chunks, so the
    part that matches is sent rather than a section's first 420 characters
    (Milestone 3, item 3).
+
+`0.3.0rc1` (November 14) carries the work above for the owner's live checks.
 
 **Done when:** the standing benchmark meets the target over 100 warm turns with
 no increase in false cutoffs, and interruption latency has been measured

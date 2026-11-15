@@ -112,7 +112,7 @@ alters real model output.
    before a standalone end-user installation is fully supported.
 
 The first tags are `v0.2.0rc1` to `v0.2.0rc7`, release candidates, and then
-`v0.2.0` (all November 14, 2026). No historical release date is inferred from
+`v0.2.0` (all November 14, 2026), followed by `v0.3.0rc1` the same day. No historical release date is inferred from
 the pre-existing `0.1.0` declaration. The 30-minute audible soak planned for
 `0.2.0` was deferred and moved to Milestone 1 in the roadmap.
 

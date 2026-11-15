@@ -593,3 +593,25 @@ and stops no answers, so neither change applies to it; their effect is in
 [Answer quality](ANSWER_QUALITY.md#november-14-2026-notes-in-a-conversation)
 and in the stopped-cache section above. The p95 is the ONNX speech engine's
 first chunk, which item 1 of Milestone 1 (MLX speech as the default) addresses.
+
+## November 14, 2026: the likely default, 100 turns
+
+MLX Kokoro speech (`--tts-backend mlx`, with the `mlx-speech` group) and
+transcription during speech (`--streaming-stt`), the two settings Milestone 1
+would make the default, over 100 warm muted turns with `--model-tools`, M4/32
+GB, `main` at `ea6e95b`. Every gate passed, including no output underflows,
+the fault an earlier 100-turn MLX run had.
+
+| | Median | p95 |
+| --- | ---: | ---: |
+| End of speech to first audio | 1,269 ms | 2,361 ms |
+| End of speech to work starting | 295 ms | 330 ms |
+| Transcription (what is left at the end) | 105 ms | 318 ms |
+| Chat, to the first clause | 534 ms | 953 ms |
+| First speech chunk | 213 ms | 625 ms |
+
+Against the default (ONNX speech, no streaming; 1,651 ms and 3,539 ms over 30
+turns earlier today) that is 0.38 s sooner at the median and 1.18 s at the p95,
+but still above the target of 1.0 s and 1.6 s. The largest remaining part is
+the model's first clause. Both settings stay off by default until the live
+soak and microphone checks pass (Milestone 1, items 1, 2 and 5).
