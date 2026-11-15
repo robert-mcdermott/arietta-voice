@@ -5,6 +5,15 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.3.0rc1 — 2026-11-14
+
+First release candidate for 0.3.0 (Milestone 1, "Feels instant"): answers
+from notes are faster and find facts anywhere in a note, the turn after an
+interruption is as fast as any other, rooms with a TV get a wake-word-every-time
+setting, and prompt injection has its own evaluations. No dependency changes.
+The milestone's target is not met with the default speech engine yet, and the
+live checks are still to come.
+
 ### Added
 
 - `[wake_word].follow_ups` (default on; also in Settings → Assistant). Off,
@@ -13,7 +22,6 @@ version policy and the release procedure.
   something the assistant just asked ("Should I …?", or any reply ending in a
   question) still needs none. The conversation is remembered until
   `session_timeout_s` passes. An interim answer to the known issue in 0.2.0.
-
 - Prompt-injection evaluations. `evals/test_injection.py` runs five injected
   payloads (an instruction to ignore earlier ones, a claimed approval, a
   written-out tool call, a fake system prompt, a request to send data away)
@@ -24,7 +32,6 @@ version policy and the release procedure.
   M4 the default model followed none of them (20 of 20 answers correct, no
   tool called). `bench/answer_quality.py` question files can now give a
   `not` pattern an answer must not match and `no_tool`.
-
 - Browser tests of the console (`tests/test_console_browser.py`): every page
   is opened in Chrome through Playwright against a scratch setup and must load
   with no script error, failed request or error banner, and the navigation
