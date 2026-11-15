@@ -143,9 +143,13 @@ class GemmaChatModel:
             repetition_penalty=self.repetition_penalty,
             **options,
         )
+        if reuse_prefix:
+            self._prefix_cache.prompt_ids = None
         finished = False
+        last = None
         try:
             for chunk in chunks:
+                last = chunk
                 # mlx-vlm emits incremental detokenizer segments, including its
                 # final flush. These are not cumulative response strings.
                 if chunk.text:
@@ -155,9 +159,27 @@ class GemmaChatModel:
         finally:
             chunks.close()
             if reuse_prefix and not finished:
-                # A stopped generation has advanced the cache past the tokens
-                # recorded for it. Start clean rather than reuse a mismatch.
-                self._prefix_cache = None
+                self._keep_stopped_cache(last, options["prompt_cache"])
+
+    def _keep_stopped_cache(self, last, fresh_cache) -> None:
+        """Keep the cache of a generation stopped part way (an interruption, a resume).
+
+        mlx-vlm records a cache's tokens only when a generation finishes, so a
+        stopped one left the cache ahead of its record, and it was dropped: the
+        next turn read the whole prompt again, about 2.5 s instead of 0.5 s.
+        The cache holds this prompt and some of its answer. Recording just the
+        prompt is enough, since the next generation trims the cache back to the
+        part it shares, by the cache's own length.
+        """
+        state = self._prefix_cache
+        prompt_ids = getattr(state, "prompt_ids", None)
+        if state is None or last is None or prompt_ids is None:
+            self._prefix_cache = None  # Nothing known about the cache: start clean.
+            return
+        # The kept cache was used when part of the prompt was reused; otherwise
+        # the prompt went into the fresh cache passed in.
+        used = state.cache if getattr(last, "cached_tokens", 0) else fresh_cache
+        state.update(prompt_ids, used)
 
     def _rewindable_cache(self) -> list:
         """The model's cache, with plain caches in place of sliding-window ring buffers.
@@ -219,7 +241,10 @@ def _repeat_safe_prefix_state():
     from mlx_vlm.generate import PromptCacheState
 
     class RepeatSafePromptCacheState(PromptCacheState):
+        prompt_ids: list | None = None  # This generation's prompt, if it is stopped.
+
         def find_prefix_length(self, new_ids: list) -> int:
+            self.prompt_ids = list(new_ids)
             return min(super().find_prefix_length(new_ids), max(len(new_ids) - 1, 0))
 
     return RepeatSafePromptCacheState()

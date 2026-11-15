@@ -489,3 +489,29 @@ Separately, reuse after a *different* prompt still changes the wording of some
 greedy answers (2 of 5 questions, with or without the repetition penalty),
 because the prompt is processed in two pieces instead of one; every answer was
 correct and fluent either way, and this was already the case before.
+
+## November 14, 2026: the cache after a stopped answer
+
+mlx-vlm records which tokens its cache holds only when a generation finishes.
+An answer stopped part way (the speaker interrupts, resumes after the early
+end-of-turn check, or the optional smarter model takes over) left the cache
+ahead of its record, so it was dropped and the next turn read the whole prompt
+again. Now the stopped prompt is recorded as what the cache holds; the next
+generation trims the extra answer tokens off by the cache's own length, as it
+does for any shared prefix.
+
+Measured on the M4/32 GB Mac with the shipped persona and default tools, at
+temperature 0, five conversations: answer one question, start a long answer and
+stop it after two clauses, then ask a third question:
+
+| Third question, first clause | Median | Range |
+| --- | ---: | ---: |
+| Before (cache dropped) | 2.52 s | 2.35–3.01 s |
+| After | 0.82 s | 0.54–1.68 s |
+| Same prompts, nothing stopped | 1.19 s | 0.71–1.83 s |
+| From scratch | 4.64 s | 4.27–5.00 s |
+
+"Before" ran three of the five conversations. Every answer after a stop was
+word for word the answer given when nothing was stopped. One of five differed
+from the from-scratch answer after 67 characters, as it did with nothing
+stopped: the known effect of processing a prompt in two pieces, described above.

@@ -148,9 +148,10 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    takes up to about 160 ms. The gates in
    [the Moonshine experiment](docs/archive/experiments/MOONSHINE_EXPERIMENT.md#promotion-gates)
    still apply.
-3. **Keep the prompt cache across a discarded attempt.** Only matters when the
-   speaker resumes after answer generation has begun; resuming during
-   transcription, the common case in the benchmark, keeps the cache.
+3. **Keep the prompt cache across a discarded attempt** — done. A stopped
+   answer (an interruption, a resumed turn, a hand-over to the smarter model)
+   had dropped the cache, so the next turn read the whole prompt again: 2.5 s
+   to the first clause instead of 0.8 s.
 4. **Native tool calling** — done for the local model (Milestone 2, item 2).
    The prompted JSON format was fragile with the 4-bit Gemma; native calls
    chose the right tool in every check.

@@ -412,9 +412,9 @@ class ConversationService:
     def _wants_a_tool(self, tools, messages, temperature) -> bool:
         """Whether the local model would start this turn with a tool call.
 
-        Generates only its first few tokens, which finish normally and so keep
-        the cached prompt; stopping a whole answer part way would discard it
-        and make every turn start from scratch.
+        Generates only its first few tokens rather than starting a whole answer
+        and stopping it, which costs less and leaves the cached prompt as it
+        would be after any finished turn.
         """
         events = self._llm_stream(
             _with_rules(messages, NATIVE_TOOL_RULES),
