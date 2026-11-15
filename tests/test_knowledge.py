@@ -445,3 +445,56 @@ def test_notes_reach_the_model_as_one_short_line_each(tmp_path) -> None:
     lines = text.splitlines()
     assert lines[1] == "[1] Service desk — Hours: Open weekdays from 8 to 6, by phone or chat."
     assert "it-service-desk-and-support.md" not in text and "Source:" not in text
+
+
+def test_a_section_that_fits_stays_whole() -> None:
+    from arietta_voice.knowledge import _chunk_text
+
+    assert _chunk_text("  Short   section\ntext.  ", 420) == ["Short section text."]
+    assert _chunk_text("   ", 420) == []
+
+
+def test_long_sections_are_cut_between_sentences_and_list_items() -> None:
+    from arietta_voice.knowledge import _chunk_text, _clean_text
+
+    prose = " ".join(f"Sentence {n} talks to Dr. Okafor about item {n}." for n in range(30))
+    chunks = _chunk_text(prose, 120)
+    assert all(len(chunk) <= 120 for chunk in chunks)
+    assert all(chunk.endswith(".") and not chunk.endswith("Dr.") for chunk in chunks)
+    assert " ".join(chunks) == _clean_text(prose)  # Nothing lost or reordered.
+
+    listing = "Contacts:\n" + "\n".join(
+        f"- Person {n}, desk {n}\n  on floor {n}" for n in range(20)
+    )
+    chunks = _chunk_text(listing, 80)
+    assert all(len(chunk) <= 80 for chunk in chunks)
+    assert any("- Person 7, desk 7 on floor 7" in chunk for chunk in chunks)  # Items stay whole.
+
+    word_soup = " ".join(["word"] * 200)  # One sentence longer than a chunk.
+    assert all(len(chunk) <= 50 for chunk in _chunk_text(word_soup, 50))
+
+
+def test_a_fact_past_the_first_chunk_can_be_found(tmp_path) -> None:
+    # Before, only the first 420 characters of a section were ever attached.
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    filler = " ".join("The hallway lights are on a timer." for _ in range(15))
+    (knowledge_dir / "house.md").write_text(
+        f"# House\n\n## Utilities\n{filler} The water meter is under the porch steps.\n"
+    )
+    config = KnowledgeConfig(backend="keyword", directory=knowledge_dir, min_score=1.0)
+    result = KnowledgeRetriever(config).search("where is the water meter")
+    assert result is not None
+    assert "under the porch steps" in result.matches[0].snippet
+    assert all(len(match.snippet) <= config.snippet_char_limit for match in result.matches)
+
+
+def test_chunk_ids_are_stable_and_unique(tmp_path) -> None:
+    from arietta_voice.knowledge import _load_sections
+
+    knowledge_dir = tmp_path / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "same.md").write_text("# Same\n\n" + "Repeat this line. " * 60)
+    first = [s.section_id for s in _load_sections(knowledge_dir, snippet_char_limit=100)]
+    again = [s.section_id for s in _load_sections(knowledge_dir, snippet_char_limit=100)]
+    assert first == again and len(set(first)) == len(first) > 1

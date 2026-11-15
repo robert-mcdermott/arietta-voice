@@ -163,11 +163,10 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    ([result](evals/LATENCY_BASELINE.md#experiment-reading-the-question-while-it-is-spoken)).
    A question missing its last two words found the same notes as the full one
    for 3 of 8 made-up questions and none of the owner's, so the early reading
-   rarely carried over. Next for questions with notes: fewer tokens per note.
-   The labels are done (a quarter fewer tokens, about 125 ms). What remains is
-   sending the part of each section that matches the question instead of its
-   first 420 characters, which would also reach facts past that cut (63 of
-   the owner's 152 sections are longer); it must not cost answer quality.
+   rarely carried over. Fewer tokens per note: the labels are done (a quarter
+   fewer tokens, about 125 ms), and long sections now come in chunks, so the
+   part that matches is sent rather than a section's first 420 characters
+   (Milestone 3, item 3).
 
 **Done when:** the standing benchmark meets the target over 100 warm turns with
 no increase in false cutoffs, and interruption latency has been measured
@@ -240,7 +239,12 @@ disabled tools never execute; an interrupted action never runs twice.
 3. Knowledge retrieval: bounded chunks with stable source IDs, atomic index
    generations, and a 50-question synthetic recall set. Target recall@3 of at
    least 90% on answerable questions, with an explicit "I don't know" on
-   unanswerable ones.
+   unanswerable ones. Bounded chunks with stable IDs are done: long sections
+   are split at sentence and list boundaries, so facts past the first 420
+   characters can be found (on the owner's notes, questions about them went
+   from 10 to 16 of 20 right). The recall set has 14 answerable questions so
+   far, checked in CI with keyword search; atomic index generations are still
+   to do.
 4. Return source references with answers.
 
 **Done when:** the assistant recalls a fact stated in a previous session, the

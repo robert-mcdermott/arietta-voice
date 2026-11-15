@@ -218,10 +218,16 @@ indexed then. To rebuild it yourself, use the console's Knowledge page or:
 uv run arietta-voice knowledge-index
 ```
 
-The embedding pipeline uses normalized CLS embeddings and index version 2;
-older indexes are rejected even if the source articles are unchanged. While an
+The embedding pipeline uses normalized CLS embeddings and index version 3,
+which stores long sections as chunks; older indexes are rejected even if the
+source articles are unchanged, and rebuilt at the next start. While an
 index is out of date, `hybrid` uses keyword matches and `vector` returns no
 matches. Restart a running runtime/API after rebuilding to reload its index.
+
+Each section of an article is searched on its own. A section longer than
+`snippet_char_limit` (420 characters) is split into chunks of at most that
+length, cut between sentences and list items, so every part of it can be
+found and attached; your files are never changed.
 
 Notes are attached to a question only when they look relevant: by meaning with
 an index (`min_similarity`, default 0.6, on a 0 to 1 scale), otherwise by

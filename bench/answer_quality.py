@@ -139,6 +139,7 @@ def main() -> int:
         config.smarter_model.when = args.smarter_when
     questions = json.loads(args.questions.read_text(encoding="utf-8"))
     service = ConversationService(config)
+    service.knowledge.build_index_if_needed()  # As the assistant does when it starts.
     list(service.stream(message="Hello", use_tools=not args.no_tools))  # Load and warm up.
     rows = []
     for _ in range(args.rounds):

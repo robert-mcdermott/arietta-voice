@@ -20,7 +20,7 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 WHITESPACE_RE = re.compile(r"\s+")
 SUPPORTED_EXTENSIONS = {".md", ".markdown", ".txt"}
 IGNORED_FILENAMES = {"README.md"}
-INDEX_VERSION = 2
+INDEX_VERSION = 3  # 3: long sections are indexed in chunks.
 EMBEDDING_POOLING = "cls-normalized"
 INDEX_MANIFEST_FILENAME = "manifest.json"
 INDEX_SECTIONS_FILENAME = "sections.jsonl"
@@ -591,37 +591,104 @@ def _parse_document(path: Path, *, root: Path, snippet_char_limit: int) -> list[
 
     parsed: list[_KnowledgeSection] = []
     for section_title, section_text in sections:
-        cleaned = _clean_text(section_text)
-        if not cleaned:
-            continue
         heading_tokens = Counter(_tokenize(section_title or ""))
-        body_tokens = Counter(_tokenize(cleaned))
-        snippet = _truncate(cleaned, snippet_char_limit)
-        content_text = "\n".join(
-            part for part in (title, section_title or "", summary or "", cleaned) if part
-        )
-        searchable_text = content_text.lower()
-        section_id = hashlib.sha1(
-            "\n".join((relative_path.as_posix(), section_title or "", cleaned)).encode("utf-8")
-        ).hexdigest()
-        parsed.append(
-            _KnowledgeSection(
-                section_id=section_id,
-                source_path=relative_path,
-                title=title,
-                section_title=section_title,
-                summary=summary or None,
-                snippet=snippet,
-                content_text=content_text,
-                title_tokens=title_tokens,
-                tag_tokens=tag_tokens,
-                heading_tokens=heading_tokens,
-                path_tokens=path_tokens,
-                body_tokens=body_tokens,
-                searchable_text=searchable_text,
+        # A long section is searched and attached in pieces, so every part of it
+        # can reach the model; before, only its first characters ever did.
+        for index, chunk in enumerate(_chunk_text(section_text, snippet_char_limit)):
+            content_text = "\n".join(
+                part for part in (title, section_title or "", summary or "", chunk) if part
             )
-        )
+            # Stable while the text is unchanged: the file, heading, position and text.
+            section_id = hashlib.sha1(
+                "\n".join(
+                    (relative_path.as_posix(), section_title or "", str(index), chunk)
+                ).encode("utf-8")
+            ).hexdigest()
+            parsed.append(
+                _KnowledgeSection(
+                    section_id=section_id,
+                    source_path=relative_path,
+                    title=title,
+                    section_title=section_title,
+                    summary=summary or None,
+                    snippet=chunk,
+                    content_text=content_text,
+                    title_tokens=title_tokens,
+                    tag_tokens=tag_tokens,
+                    heading_tokens=heading_tokens,
+                    path_tokens=path_tokens,
+                    body_tokens=Counter(_tokenize(chunk)),
+                    searchable_text=content_text.lower(),
+                )
+            )
     return parsed
+
+
+LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|\|)")
+SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+(?=[\"“(\[]?[A-Z0-9])")
+ABBREVIATION_RE = re.compile(r"\b(?:Dr|Mr|Mrs|Ms|Prof|St|Sr|Jr|vs|etc|e\.g|i\.e|No)\.$")
+
+
+def _chunk_text(text: str, limit: int) -> list[str]:
+    """Split a section into pieces of at most ``limit`` characters.
+
+    A section that fits stays whole, exactly as before. A longer one is cut
+    between list items and sentences, never inside one unless a single
+    sentence is longer than the limit, which is then cut between words.
+    """
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return []
+    if len(cleaned) <= limit:
+        return [cleaned]
+    units: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", text):
+        lines = [line for line in paragraph.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if any(LIST_ITEM_RE.match(line) for line in lines):
+            # A list: each item, with any wrapped lines, is one unit.
+            items: list[str] = []
+            for line in lines:
+                if LIST_ITEM_RE.match(line) or not items:
+                    items.append(line)
+                else:
+                    items[-1] += " " + line
+            units.extend(_clean_text(item) for item in items)
+        else:
+            units.extend(_sentences(_clean_text(" ".join(lines))))
+    chunks: list[str] = []
+    current = ""
+    for unit in units:
+        for piece in _split_long(unit, limit):
+            if current and len(current) + 1 + len(piece) > limit:
+                chunks.append(current)
+                current = piece
+            else:
+                current = f"{current} {piece}" if current else piece
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _sentences(text: str) -> list[str]:
+    sentences: list[str] = []
+    for part in SENTENCE_END_RE.split(text):
+        if sentences and ABBREVIATION_RE.search(sentences[-1]):
+            sentences[-1] += " " + part  # "Dr. Okafor" is one sentence.
+        else:
+            sentences.append(part)
+    return [sentence for sentence in sentences if sentence]
+
+
+def _split_long(text: str, limit: int) -> list[str]:
+    pieces: list[str] = []
+    while len(text) > limit:
+        cut = text.rfind(" ", 0, limit + 1)
+        cut = cut if cut > 0 else limit
+        pieces.append(text[:cut].strip())
+        text = text[cut:].strip()
+    return [*pieces, text] if text else pieces
 
 
 def _score_section(section: _KnowledgeSection, query: str, query_tokens: tuple[str, ...]) -> float:
@@ -996,11 +1063,3 @@ def _meaningful_tokens(text: str) -> tuple[str, ...]:
     tokens = filtered or raw
     deduped = list(dict.fromkeys(tokens))
     return tuple(deduped)
-
-
-def _truncate(text: str, limit: int) -> str:
-    cleaned = _clean_text(text)
-    if len(cleaned) <= limit:
-        return cleaned
-    shortened = cleaned[:limit].rsplit(" ", 1)[0].strip()
-    return f"{shortened}..."
