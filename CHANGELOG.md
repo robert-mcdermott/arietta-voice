@@ -26,6 +26,11 @@ version policy and the release procedure.
   questions in a conversation went from 1.21 s to 0.66 s to the first clause
   (p95 2.89 s to 1.09 s), with every fact still right. See
   [Answer quality](evals/ANSWER_QUALITY.md#november-14-2026-notes-in-a-conversation).
+- Each attached note reaches the model as one line, "[1] Title — Section:
+  text", instead of four label lines with the file path. The note's text is
+  unchanged and nothing on disk changes; on the owner's notes the block is a
+  quarter shorter (276 to 212 tokens at the median) and is read about 125 ms
+  sooner, with every answer still right.
 - The turn after an interrupted answer starts as fast as any other. Stopping
   an answer part way (interrupting it, carrying on speaking after the early
   end-of-turn check, or a hand-over to the smarter model) dropped the model's

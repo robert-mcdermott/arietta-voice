@@ -163,8 +163,11 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
    ([result](evals/LATENCY_BASELINE.md#experiment-reading-the-question-while-it-is-spoken)).
    A question missing its last two words found the same notes as the full one
    for 3 of 8 made-up questions and none of the owner's, so the early reading
-   rarely carried over. Next for questions with notes: fewer tokens per note
-   (the labels around each note and its 420-character length).
+   rarely carried over. Next for questions with notes: fewer tokens per note.
+   The labels are done (a quarter fewer tokens, about 125 ms). What remains is
+   sending the part of each section that matches the question instead of its
+   first 420 characters, which would also reach facts past that cut (63 of
+   the owner's 152 sections are longer); it must not cost answer quality.
 
 **Done when:** the standing benchmark meets the target over 100 warm turns with
 no increase in false cutoffs, and interruption latency has been measured
