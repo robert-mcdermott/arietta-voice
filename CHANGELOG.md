@@ -25,6 +25,10 @@ version policy and the release procedure.
 - A missing or outdated knowledge index is built when the voice assistant
   starts. An index from before the format change was silently ignored, which
   left hybrid search matching by keyword only.
+- Tried and rejected: having the model read the question and its notes while
+  the speaker is still talking. A question missing its last words rarely finds
+  the same notes, so the gain did not carry over (see
+  [the latency report](evals/LATENCY_BASELINE.md#experiment-reading-the-question-while-it-is-spoken)).
 - `bench/answer_quality.py --conversation N` asks questions in a row with
   history, and `--notes DIR` uses other notes, such as the made-up
   `evals/fixture_notes/`.

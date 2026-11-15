@@ -124,7 +124,7 @@ Done:
   meaning. Unrelated notes had been attached to 17 of 40 general questions on
   the owner's setup; the median there fell from 1.21 s to 0.66 s and the p95
   from 2.89 s to 1.09 s (text only). Questions that do need notes still spend
-  about 1.3 s reading three of them, which is what item 6 below targets.
+  about 1.3 s reading three of them (see item 6 below).
 
 Remaining, in order. With ONNX Kokoro a turn spends about 300 ms deciding the
 speaker has finished, 180 ms transcribing, 480 ms generating and 490 ms on the
@@ -158,11 +158,13 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
 5. **A live-microphone session** covering the early check, resuming and the
    deferred chime. Everything above was measured with synthetic speech. Run
    the 30-minute audible soak deferred from Milestone 0 in the same quiet room.
-6. **Read the question and its notes while the user is still speaking.** The
-   model reads new prompt text at about 4 ms a token on the M4, so the notes
-   and the question cost time after the speaker stops. With transcription
-   while speaking, the notes can be found and read before the end of the turn.
-   A time-boxed experiment; see the latency report for its decision rule.
+6. **Read the question and its notes while the user is still speaking** —
+   tried and rejected
+   ([result](evals/LATENCY_BASELINE.md#experiment-reading-the-question-while-it-is-spoken)).
+   A question missing its last two words found the same notes as the full one
+   for 3 of 8 made-up questions and none of the owner's, so the early reading
+   rarely carried over. Next for questions with notes: fewer tokens per note
+   (the labels around each note and its 420-character length).
 
 **Done when:** the standing benchmark meets the target over 100 warm turns with
 no increase in false cutoffs, and interruption latency has been measured
