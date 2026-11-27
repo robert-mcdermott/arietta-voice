@@ -201,10 +201,21 @@ def test_phone_navigation_and_first_chat(console, page):
     page.get_by_role("button", name="What time is it?").click()
     composer = page.get_by_role("textbox", name="Message", exact=True)
     assert composer.input_value() == "What time is it?"
+    arithmetic = page.get_by_role("button", name="What is 17 times 23?")
+    arithmetic.click()
+    assert composer.input_value() == "What is 17 times 23?"
+    composer.fill("My unfinished question")
+    sync_api.expect(arithmetic).to_be_disabled()
+    composer.fill("")
+    page.get_by_role("button", name="What time is it?").click()
     picker = page.get_by_role("combobox", name="Console section")
     picker.select_option("settings")
     page.go_back()
-    assert picker.input_value() == "chat"
+    sync_api.expect(picker).to_have_value("chat")
+    page.go_forward()
+    sync_api.expect(picker).to_have_value("settings")
+    page.go_back()
+    sync_api.expect(picker).to_have_value("chat")
     assert composer.input_value() == "What time is it?"
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     # Exercise the real instant tool through the streaming endpoint.

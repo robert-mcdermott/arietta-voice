@@ -47,6 +47,7 @@ function render() {
         <button class="btn" type="button" data-starter>What time is it?</button>
         <button class="btn" type="button" data-starter>What is 17 times 23?</button>
       </div></div>`;
+    updateStarters();
     return;
   }
   const last = chat.history[chat.history.length - 1];
@@ -74,6 +75,13 @@ function setPending(pending) {
   $("#chat-send").disabled = pending;
   $("#chat-clear").disabled = pending;
   $("#chat-message").disabled = pending;
+}
+
+function updateStarters() {
+  const buttons = [...document.querySelectorAll("#chat-log [data-starter]")];
+  const draft = $("#chat-message").value;
+  const customDraft = draft.trim() && !buttons.some((button) => button.textContent === draft);
+  for (const button of buttons) button.disabled = Boolean(customDraft);
 }
 
 function autosize() {
@@ -180,7 +188,7 @@ export function initChat() {
     const starter = event.target.closest("[data-starter]");
     if (starter) {
       const input = $("#chat-message");
-      if (!input.value.trim()) input.value = starter.textContent;
+      input.value = starter.textContent;
       autosize();
       input.focus();
       return;
@@ -190,7 +198,10 @@ export function initChat() {
     $("#chat-message").value = button.dataset.chatAnswer;
     guard(send)();
   });
-  $("#chat-message").addEventListener("input", autosize);
+  $("#chat-message").addEventListener("input", () => {
+    autosize();
+    updateStarters();
+  });
   $("#chat-message").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();

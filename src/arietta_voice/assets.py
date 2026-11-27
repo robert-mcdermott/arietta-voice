@@ -20,6 +20,9 @@ def ensure_download(url: str, destination: Path) -> Path:
         dir=destination.parent, suffix=".tmp", delete_on_close=False
     ) as handle:
         with urllib.request.urlopen(url, timeout=60) as response:
+            # A 206 response can have a matching Content-Length for just one range.
+            if response.status == 206 or response.headers.get("Content-Range"):
+                raise OSError(f"Incomplete download of {destination.name}. Try again.")
             shutil.copyfileobj(response, handle)
             size = handle.tell()
             expected = response.headers.get("Content-Length")

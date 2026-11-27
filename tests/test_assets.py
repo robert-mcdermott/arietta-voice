@@ -9,6 +9,7 @@ from arietta_voice.assets import ensure_download
 
 def response(body, length):
     stream = BytesIO(body)
+    stream.status = 200
     stream.headers = {"Content-Length": str(length)}
     return stream
 
@@ -22,6 +23,17 @@ def test_incomplete_download_can_be_retried(monkeypatch, tmp_path):
     assert list(tmp_path.iterdir()) == []
     assert ensure_download("https://example.org/model", path).read_bytes() == b"abc"
     assert ensure_download("https://example.org/model", path) == path
+
+
+def test_partial_http_response_is_never_cached(monkeypatch, tmp_path):
+    path = tmp_path / "model.onnx"
+    fragment = response(b"a", 1)
+    fragment.status = 206
+    fragment.headers["Content-Range"] = "bytes 0-0/1000"
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: fragment)
+    with pytest.raises(OSError, match="Incomplete download"):
+        ensure_download("https://example.org/model", path)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_simultaneous_first_downloads_publish_complete_files(monkeypatch, tmp_path):
