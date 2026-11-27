@@ -7,11 +7,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field, replace
+from functools import partial
 
 from arietta_voice.answers import declines
 from arietta_voice.clauses import RESPONSE_CHARS, SpeechClauses
 from arietta_voice.confirmations import confirmation_reply
-from arietta_voice.knowledge import KnowledgeRetriever
+from arietta_voice.knowledge import NOTES_HEADING, KnowledgeMatch, KnowledgeRetriever
 from arietta_voice.llm import ModelEvent, build_chat_model
 from arietta_voice.model_tooling import (
     NATIVE_CALL_START,
@@ -21,7 +22,9 @@ from arietta_voice.model_tooling import (
 )
 from arietta_voice.models import ConversationTurn, ToolResponse
 from arietta_voice.prompts import PromptManager, sanitize_for_speech
-from arietta_voice.tools.registry import approval_key
+from arietta_voice.tools.base import ToolError, ToolResult
+from arietta_voice.tools.builtin.search_knowledge import SearchKnowledgeTool
+from arietta_voice.tools.registry import MAX_CONTENT_CHARS, FastPathHit, approval_key
 
 # Tool calls the model may make in one turn before it must answer.
 MAX_TOOL_STEPS = 3
@@ -70,6 +73,71 @@ class ChatResult:
     confirmation: dict | None = None
     # The optional smarter model that gave this answer, if one did.
     smarter: str | None = None
+    sources: list[dict] = field(default_factory=list)
+
+
+CITATION_RULES = (
+    "When a local note supports your answer, cite it inline using its exact label, "
+    "for example: The spare part is in the cabinet [S1]. Cite only notes you use. "
+    "If the user asks for a personal fact that the notes do not contain and you "
+    "have no other evidence, say you could not find it in their notes. Never guess a personal fact."
+)
+SOURCE_MARKER = re.compile(r"\[S([1-9][0-9]{0,5})\]")
+NOTE_LOOKUP = re.compile(
+    r"^(?:(?:according to|based on) (?:my|our|the) notes\b[,;:\s]*|"
+    r"what do (?:my|our|the) notes say about\s+)(.+)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _lookup_note(tools, query):
+    arguments = {"query": query}
+    try:
+        result = tools.run("search_knowledge", arguments)
+        if result.empty:
+            result = ToolResult(speak="I couldn't find that in your notes.")
+    except ToolError:
+        result = ToolResult(speak="I couldn't search your notes just now.")
+    return FastPathHit("search_knowledge", arguments, result)
+
+
+class NoteCitations:
+    """Number the passages actually offered to the model across one console turn."""
+
+    def __init__(self):
+        self.passages: list[KnowledgeMatch] = []
+
+    def context(self, result):
+        if result.knowledge is None:
+            return result.content
+        text = NOTES_HEADING
+        for match in result.knowledge.matches:
+            number = len(self.passages) + 1
+            line = match.prompt_line(f"S{number}")
+            remaining = MAX_CONTENT_CHARS - len(text) - 1
+            if remaining <= len(line) - len(match.snippet):
+                break
+            text += "\n" + line[:remaining]
+            self.passages.append(match)
+        return text
+
+    def references(self, response):
+        refs = []
+        for label in dict.fromkeys(SOURCE_MARKER.findall(response)):
+            index = int(label) - 1
+            if index < len(self.passages):
+                match = self.passages[index]
+                if match.section_id:
+                    refs.append(
+                        dict(
+                            label=f"S{label}",
+                            path=match.source_path.as_posix(),
+                            section_id=match.section_id,
+                            title=match.title,
+                            section=match.section_title,
+                        )
+                    )
+        return refs
 
 
 @dataclass(slots=True)
@@ -158,7 +226,16 @@ class ConversationService:
             self._llm = build_chat_model(self.config.models)
         return getattr(self._llm, "native_tool_calls", False) is True
 
-    def stream(self, *, message, history=(), use_tools=True, max_tokens=None, temperature=None):
+    def stream(
+        self,
+        *,
+        message,
+        history=(),
+        use_tools=True,
+        max_tokens=None,
+        temperature=None,
+        cite_notes=False,
+    ):
         message = message.strip()
         history = [
             ConversationTurn(role=t["role"], content=t["content"].strip())
@@ -166,6 +243,14 @@ class ConversationService:
             if t["content"].strip()
         ]
         tools = self._registry() if use_tools else None
+        citations = (
+            NoteCitations()
+            if cite_notes
+            and tools is not None
+            and self.config.knowledge.enabled
+            and "search_knowledge" in tools.tools
+            else None
+        )
         # A question asked last turn: a clear answer settles it, anything else drops
         # it. It counts only in the conversation that asked it, as its last words.
         pending, self._pending, self._asked = self._pending, None, None
@@ -199,10 +284,20 @@ class ConversationService:
             if reply is not None:
                 called: list[str] = []
                 messages = self.prompt_manager.build_messages(history, message, None)
+                if citations is not None:
+                    messages = _with_rules(messages, CITATION_RULES)
                 yield from self._speech_events(
                     self._confirmed_turn(
-                        tools, pending, reply == "always", messages, called, max_tokens, temperature
+                        tools,
+                        pending,
+                        reply == "always",
+                        messages,
+                        called,
+                        max_tokens,
+                        temperature,
+                        citations,
                     ),
+                    citations=citations,
                     source="model",
                     used_tool=None,
                     finalize=lambda: {
@@ -214,9 +309,13 @@ class ConversationService:
         filler = _Filler()
         hit = None
         if tools is not None:
-            hit = yield from filler.wait(
-                lambda: tools.fast_path(message), {"kind": "clause", "text": FILLER}
-            )
+            lookup = NOTE_LOOKUP.match(message) if citations is not None else None
+            if lookup and type(tools.tools.get("search_knowledge")) is SearchKnowledgeTool:
+                # An explicit notes lookup can report an empty search directly.
+                work = partial(_lookup_note, tools, lookup[1])
+            else:
+                work = partial(tools.fast_path, message)
+            hit = yield from filler.wait(work, {"kind": "clause", "text": FILLER})
         used_tool = hit.name if hit else None
         if hit and hit.result.speak:
             yield from self._speech_events(
@@ -228,12 +327,18 @@ class ConversationService:
             return
         context = None
         if hit:
-            context = ToolResponse(hit.name, "", bypass_model=False, context=hit.result.content)
+            content = citations.context(hit.result) if citations is not None else hit.result.content
+            context = ToolResponse(hit.name, "", bypass_model=False, context=content)
         messages = self.prompt_manager.build_messages(history, message, context)
+
+        if citations is not None:
+            messages = _with_rules(messages, CITATION_RULES)
 
         if tools is not None and tools.model_tools and self._native_tools():
             called: list[str] = []
-            turn = self._native_turn(tools, messages, called, max_tokens, temperature, filler)
+            turn = self._native_turn(
+                tools, messages, called, max_tokens, temperature, filler, citations=citations
+            )
             smarter = self._smarter_model()
             if smarter is not None and self.config.smarter_model.when == "always":
                 if not self._wants_a_tool(tools, messages, temperature):
@@ -242,6 +347,7 @@ class ConversationService:
                 turn = self._with_smarter(turn, messages, called, max_tokens, temperature)
             yield from self._speech_events(
                 turn,
+                citations=citations,
                 source="model",
                 used_tool=used_tool,
                 finalize=lambda: {
@@ -268,6 +374,7 @@ class ConversationService:
                     source="model",
                     used_tool=used_tool,
                     model_tool=None,
+                    citations=citations,
                     finalize=self._smarter_note,
                 )
                 return
@@ -285,7 +392,7 @@ class ConversationService:
                 )
                 return
             model_tool = request.name
-            content, result = _run_for_model(tools, request.name, request.arguments)
+            content, result = _run_for_model(tools, request.name, request.arguments, citations)
             if result is not None and result.speak and _speaks_for_itself(tools, request.name):
                 yield from self._speech_events(
                     iter([ModelEvent("text", result.speak), ModelEvent("done")]),
@@ -302,6 +409,7 @@ class ConversationService:
             answer = self._with_smarter(answer, messages, [], max_tokens, temperature)
         yield from self._speech_events(
             answer,
+            citations=citations,
             source="model",
             used_tool=used_tool,
             model_tool=model_tool,
@@ -509,12 +617,14 @@ class ConversationService:
         self._asked = {"tool": call.name, "question": question}
         return question
 
-    def _confirmed_turn(self, tools, pending, always, messages, called, max_tokens, temperature):
+    def _confirmed_turn(
+        self, tools, pending, always, messages, called, max_tokens, temperature, citations=None
+    ):
         """The owner said yes: run exactly the call they agreed to, then answer."""
         tools.remember_approval(pending.name, always=always)
         called.append(pending.name)
         content, result = yield from _Filler().wait(
-            lambda: _run_for_model(tools, pending.name, pending.arguments),
+            lambda: _run_for_model(tools, pending.name, pending.arguments, citations),
             ModelEvent("filler", FILLER),
         )
         if result is not None and result.speak and _speaks_for_itself(tools, pending.name):
@@ -536,6 +646,7 @@ class ConversationService:
                 max_tokens,
                 temperature,
                 fallback=fallback,
+                citations=citations,
             )
             return
         note = {"role": "system", "content": f"Result from the {pending.name} tool:\n{content}"}
@@ -544,7 +655,15 @@ class ConversationService:
         )
 
     def _native_turn(
-        self, tools, messages, called, max_tokens, temperature, filler=None, fallback=None
+        self,
+        tools,
+        messages,
+        called,
+        max_tokens,
+        temperature,
+        filler=None,
+        fallback=None,
+        citations=None,
     ):
         """Text events for one turn with native tool calls, running tools between steps.
 
@@ -604,7 +723,7 @@ class ConversationService:
             called.append(call.name)
             filler = filler or _Filler()
             content, result = yield from filler.wait(
-                lambda: _run_for_model(tools, call.name, call.arguments),
+                lambda: _run_for_model(tools, call.name, call.arguments, citations),
                 ModelEvent("filler", FILLER),
             )
             if result is not None and result.speak and _speaks_for_itself(tools, call.name):
@@ -619,7 +738,7 @@ class ConversationService:
         yield ModelEvent("text", GAVE_UP)
         yield ModelEvent("done")
 
-    def _speech_events(self, events, finalize=None, **metadata):
+    def _speech_events(self, events, finalize=None, citations=None, **metadata):
         clauses = SpeechClauses()
         spoken = []
         response_parts = []
@@ -651,6 +770,8 @@ class ConversationService:
                 spoken.append("I don't have a good answer for that yet.")
                 yield {"kind": "clause", "text": spoken[0]}
             response = sanitize_for_speech("".join(response_parts)) or spoken[0]
+            if citations is not None:
+                metadata["sources"] = citations.references(response)
             if finalize is not None:
                 metadata.update(finalize())
             yield {"kind": "done", "result": {"response": response, **metadata}}
@@ -731,7 +852,7 @@ def _close(events):
         events.close()
 
 
-def _run_for_model(tools, name, arguments):
+def _run_for_model(tools, name, arguments, citations=None):
     """Run a tool the model asked for: (text for the model, result or None on failure)."""
     from arietta_voice.tools import ToolError
 
@@ -750,7 +871,7 @@ def _run_for_model(tools, name, arguments):
             "briefly that you could not find it.",
             result,
         )
-    return result.content, result
+    return (citations.context(result) if citations is not None else result.content), result
 
 
 def _tool_exchange(call_id, name, arguments, content, said):

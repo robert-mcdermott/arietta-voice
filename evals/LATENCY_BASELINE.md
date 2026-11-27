@@ -640,3 +640,51 @@ The first-write clock ends in software; it does not measure acoustic onset.
 The previous November run used muted output and a different tool list, so the
 difference alone cannot identify a backend regression. The ignored local report
 is in `tmp/latency-baseline/20261127T191411.460636Z/`.
+
+### Investigating the 1,851 ms first chunk
+
+The benchmark starts this clock when the parent asks the worker for its first
+audio frame. Kokoro phonemizes the first spoken clause and synthesizes a batch
+before returning any samples. Arietta then trims silence and sends up to 4,096
+samples to the parent. Opening the output device and writing to it are measured
+separately. Reducing the size of that first IPC frame would still require the
+same model computation.
+
+The original 100 warm turns showed substantial variation even for identical
+answers. One 31-character answer had the same response hash ten times and
+took 589–7,720 ms for the first chunk. Across successive blocks of 25 turns,
+the medians were 1,325, 1,452, 1,825 and 2,397 ms. Eight of the nine answer
+hashes with at least two observations in each half had a higher median in the
+second half. The report lacks per-call model timings and thermal measurements
+that could identify what caused that drift.
+
+A silent synthesis probe used the same cached Kokoro v1.0 model, `af_heart`
+voice and CPU provider on the M4. Six fresh processes used automatic, four,
+two, two, four and automatic intra-op threads in that order. Each processed
+three fixed phrases four times, reversing phrase order on alternate passes.
+Excluding the first pass left six warm observations per phrase and setting.
+
+| Synthetic phrase | Automatic (shipped) | 4 threads | 2 threads |
+| --- | ---: | ---: | ---: |
+| “Four.” | 286 ms | 327 ms | 457 ms |
+| “There are seven days in a week.” | 481 ms | 547 ms | 725 ms |
+| “Ice floats because its crystalline structure is less dense than liquid water.” | 1,185 ms | 1,318 ms | 1,762 ms |
+
+These are medians from requesting the first batch through trimming the audio.
+The corresponding median times inside ONNX Runtime with automatic threading
+were 285, 480 and 1,184 ms.
+
+A separate instrumented replay used the standing conversation benchmark with
+the same synthetic fixtures, shipped tools, default models and Jabra device.
+It wrote zeros to the speaker and ran each of the ten questions once after
+the separate first turn. For each turn, the probe timed Kokoro's
+`InferenceSession.run` inside the worker and matched it to the parent's
+first `tts_next` call. The median parent call took 593 ms, with 591 ms in
+model execution. The median per-turn difference was 2.3 ms. All ten warm
+turns were valid and all harness gates passed.
+
+Keep automatic threading. The shorter muted replay locates the cost, but its
+lower median cannot establish a speedup over the longer audible run. With no
+runtime fix to compare, the 100-turn audible result above stands. If a future
+change warrants another full run, collect worker-side model time and host
+thermal state alongside each turn to investigate the slowdown over time.

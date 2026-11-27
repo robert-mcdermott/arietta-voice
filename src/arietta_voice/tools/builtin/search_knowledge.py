@@ -27,6 +27,7 @@ class SearchKnowledgeTool(BaseTool):
             return ToolResult(data={"query": query, "matches": 0})
         return ToolResult(
             content=result.prompt_context(),
+            knowledge=result,
             data={"query": query, "matches": len(result.matches)},
         )
 

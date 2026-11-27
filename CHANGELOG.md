@@ -5,6 +5,8 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- Console Chat links cited local notes to their exact passages. Opening a citation
+  checks the current note and reports when the cited passage has changed or disappeared.
 - Simultaneous first-time model downloads use independent temporary files.
   Interrupted or truncated downloads can be retried.
 - Home opens text chat directly. Chat offers editable sample questions, the

@@ -11,6 +11,7 @@ except where ARIETTA_REQUIRE_BROWSER is set, as in CI.
 from __future__ import annotations
 
 import os
+import re
 import socket
 import threading
 import time
@@ -46,7 +47,7 @@ def _write_config(root: Path) -> Path:
 name = "Browser Test"
 
 [tools]
-enabled = ["assistant_identity", "local_time"]
+enabled = ["assistant_identity", "local_time", "search_knowledge"]
 
 [prompts]
 soul_path = "SOUL.md"
@@ -79,7 +80,9 @@ def console(tmp_path_factory):
     patch.setenv("ARIETTA_ADMIN_PASSWORD", PASSWORD)
     try:
         config_path = _write_config(tmp_path_factory.mktemp("console"))
-        app = create_app(service=AriettaApiService(config_path))
+        service = AriettaApiService(config_path)
+        service.worker.handler_factory = _fixture_engine
+        app = create_app(service=service)
     finally:
         patch.undo()
     with socket.socket() as probe:
@@ -100,6 +103,25 @@ def console(tmp_path_factory):
     yield f"http://127.0.0.1:{port}"
     server.should_exit = True
     thread.join(10)
+
+
+def _fixture_engine(config):
+    """Exercise the real worker and retrieval without downloading a model in CI."""
+    from arietta_voice.inference import InferenceEngine
+
+    engine = InferenceEngine(config)
+
+    def answer(messages, **kwargs):
+        for message in messages:
+            hit = re.search(
+                r"\[(S\d+)\] [^\n]+: The spare key is in the ([^.]+)\.", message["content"]
+            )
+            if hit:
+                return f"The spare key is in the {hit[2]} [{hit[1]}]."
+        return "I couldn't find the spare key in your notes."
+
+    engine.service()._generate_override = answer
+    return engine
 
 
 @pytest.fixture(scope="module")
@@ -240,4 +262,52 @@ def test_saving_one_editor_preserves_the_other_draft(console, page):
     page.click("#memory-save")
     sync_api.expect(page.locator("#memory-save")).to_have_text("Save")
     assert page.input_value("#persona-content") == "Another unfinished persona."
+    assert page.problems == []
+
+
+def test_chat_cites_current_note_passage_after_edit_and_deletion(console, page):
+    path = "household/entry & storage.md"
+    url = f"{console}/api/knowledge/files/household/entry%20%26%20storage.md"
+    question = "According to my notes, where is my spare key?"
+    page.goto(f"{console}/#/chat")
+
+    def ask():
+        page.click("#chat-clear")
+        page.fill("#chat-message", question)
+        page.click("#chat-send")
+        page.locator("#chat-log .assistant .msg-meta, #error-notice:visible").first.wait_for(
+            timeout=120000
+        )
+        assert page.locator("#error-notice").is_hidden(), page.locator("#error-notice").inner_text()
+        return page.locator("#chat-log .assistant .msg-body")
+
+    old_link = None
+    for location in ("blue drawer", "hall closet"):
+        note = (
+            "# House notes\n\n## Storage\nCamping chairs are in the shed.\n\n"
+            f"## Entry\nThe spare key is in the {location}.\n"
+        )
+        assert page.request.put(url, data={"content": note}).ok
+        reply = ask()
+        assert location in reply.inner_text().lower()
+        link = reply.get_by_role("link", name=re.compile("House notes.*Entry"))
+        with page.expect_popup() as opened:
+            link.click()
+        reader = opened.value
+        sync_api.expect(reader.get_by_role("heading", name="Entry")).to_be_visible()
+        assert path in reader.locator("main").inner_text()
+        assert reader.locator("blockquote").inner_text() == f"The spare key is in the {location}."
+        if old_link:
+            assert page.request.get(old_link).status == 404
+        old_link = reader.url
+        reader.close()
+
+    assert page.request.delete(url).ok
+    reply = ask()
+    assert not reply.get_by_role("link").count()
+    text = reply.inner_text().lower()
+    assert "blue drawer" not in text and "hall closet" not in text
+    assert re.search(r"not|couldn't|couldn’t|can't|can’t|no |don't|don’t|unable", text), text
+    assert "notes" in text and "access" not in text, text
+    assert page.request.get(old_link).status == 404
     assert page.problems == []

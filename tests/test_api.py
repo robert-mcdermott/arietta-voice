@@ -430,6 +430,27 @@ def test_knowledge_file_crud_endpoints(tmp_path: Path) -> None:
     assert deleted.json()["deleted"] is True
 
 
+def test_chat_passage_is_authenticated_and_escapes_note_text(tmp_path, monkeypatch):
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    service.config.tools.enabled = ("search_knowledge",)
+    (tmp_path / "knowledge" / "racks.md").write_text(
+        "# Racks\n\n## Storage\nThe telescope is on rack <A>.\n\n## Storage\nCoats are on rack B.\n"
+    )
+    monkeypatch.setattr(service, "_llm_generate", lambda *args, **kwargs: "Rack A [S1].")
+    result = client.post("/api/chat", auth=AUTH, json={"message": "telescope"}).json()
+    (ref,) = result["sources"]
+    assert ref["path"] == "racks.md"
+    url = "/admin/knowledge/passage"
+    params = {"path": ref["path"], "section_id": ref["section_id"]}
+    assert client.get(url, params=params).status_code == 401
+    page = client.get(url, params=params, auth=AUTH)
+    assert page.status_code == 200 and page.headers["cache-control"] == "no-store"
+    assert "rack &lt;A&gt;" in page.text and "Coats" not in page.text
+    for path in ("../config/SOUL.md", ".hidden.md", "_draft.md", "/etc/hosts"):
+        assert client.get(url, params={**params, "path": path}, auth=AUTH).status_code == 404
+
+
 def test_knowledge_file_endpoint_rejects_path_traversal(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 

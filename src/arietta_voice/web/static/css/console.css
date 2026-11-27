@@ -1183,6 +1183,26 @@ details.fold[open] > summary {
   border-bottom-left-radius: 5px;
 }
 
+.note-citation {
+  color: var(--accent-strong);
+  font-size: .9em;
+  text-underline-offset: .18em;
+}
+
+.note-passage {
+  max-width: 44rem;
+  margin: 8vh auto;
+  padding: 0 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.note-passage blockquote {
+  margin: 1.5rem 0;
+  border-inline-start: 3px solid var(--accent);
+  padding-inline-start: 1rem;
+  line-height: 1.6;
+}
+
 .msg-meta {
   display: flex;
   flex-wrap: wrap;

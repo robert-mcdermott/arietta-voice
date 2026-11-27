@@ -173,6 +173,18 @@ Quiet hours are from 10 PM to 7 AM on weekdays.
 Guests should use the network named "Guest" and the password stored in the entry drawer card.
 ```
 
+### Check an answer against a note
+
+In console **Chat**, ask “According to my notes, where is my spare key?”
+When the assistant cites a note, select the linked title and heading in its
+answer. A new tab shows the exact passage and the note's relative file path.
+Long sections can have several passages.
+
+After editing a fact in **Knowledge**, clear the conversation and ask again
+to check the current note. An old link to a changed or deleted passage shows
+that the passage is unavailable. An explicit notes lookup with no matches
+reports that the fact could not be found.
+
 ### Recommended structure
 
 Use:

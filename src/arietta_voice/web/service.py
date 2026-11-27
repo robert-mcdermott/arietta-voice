@@ -18,7 +18,7 @@ from arietta_voice import __version__
 from arietta_voice.config import AppConfig, config_to_dict, load_config
 from arietta_voice.conversation import ChatResult, ConversationService
 from arietta_voice.diagnostics import run_startup_diagnostics
-from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
+from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index, cited_passage
 from arietta_voice.llm import ChatModel, build_chat_model
 from arietta_voice.logging_utils import EventLogger
 from arietta_voice.mcp_servers import (
@@ -367,6 +367,9 @@ class AriettaApiService:
             "path": path.relative_to(self.config.knowledge.directory).as_posix(),
             "content": path.read_text(encoding="utf-8"),
         }
+
+    def read_cited_passage(self, file_path: str, section_id: str):
+        return cited_passage(self.config.knowledge, Path(file_path), section_id)
 
     def write_knowledge_file(self, file_path: str, content: str) -> dict[str, Any]:
         path = _resolve_knowledge_file(self.config, file_path)
@@ -742,6 +745,7 @@ class AriettaApiService:
             payload = request.model_dump(exclude={"request_id"})
             payload.update(
                 enabled_tools=tuple(enabled_tool_names(self.config)),
+                cite_notes=True,
             )
             response = self.worker.call(
                 "chat", payload, timeout_s=self.config.runtime.turn_timeout_s, cancellation=token
@@ -787,7 +791,7 @@ class AriettaApiService:
             self._active_chat = (request_id, token)
         deadline = time.monotonic() + self.config.runtime.turn_timeout_s
         payload = request.model_dump(exclude={"request_id"})
-        payload.update(enabled_tools=tuple(enabled_tool_names(self.config)))
+        payload.update(enabled_tools=tuple(enabled_tool_names(self.config)), cite_notes=True)
         stream = ChatStream(self, request, request_id, token, deadline)
         try:
             self.worker.call(
@@ -847,7 +851,9 @@ class AriettaApiService:
 
     def _chat_in_process(self, request: ChatRequest, *, record: bool = True) -> ChatResult:
         # In-process test/embedding entry point; production calls run in the worker.
-        result = self._conversation.chat(**request.model_dump(exclude={"request_id"}))
+        result = self._conversation.chat(
+            cite_notes=True, **request.model_dump(exclude={"request_id"})
+        )
         if record:
             self._record_chat(
                 request.message,

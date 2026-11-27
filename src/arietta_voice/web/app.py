@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi import Path as ApiPath
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -540,7 +541,36 @@ def create_app(
             "model_tool": result.model_tool,
             "confirmation": result.confirmation,
             "smarter": result.smarter,
+            "sources": result.sources,
         }
+
+    @app.get("/admin/knowledge/passage", response_class=HTMLResponse, include_in_schema=False)
+    def note_passage(
+        path: str,
+        section_id: str = Query(pattern=r"^[0-9a-f]{40}$"),
+        _user: str = Depends(require_admin),
+    ):
+        try:
+            match = svc().read_cited_passage(path, section_id)
+        except (ValueError, FileNotFoundError, NotADirectoryError):
+            match = None
+        if match is None:
+            title = "Cited passage unavailable"
+            body = "<p>This passage may have been edited or deleted. Ask again in Chat to check the current notes.</p>"
+        else:
+            title = escape(match.section_title or match.title)
+            body = (
+                f'<p class="muted">{escape(match.title)} · {escape(path)}</p>'
+                f"<blockquote>{escape(match.snippet)}</blockquote>"
+            )
+        return HTMLResponse(
+            f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{title} · Arietta Voice</title><script src="/static/js/theme.js"></script>'
+            f'<link rel="stylesheet" href="/static/css/console.css"></head>'
+            f'<body><main class="note-passage"><h1>{title}</h1>{body}</main></body></html>',
+            status_code=200 if match else 404,
+        )
 
     @app.get("/api/openapi.json")
     def api_openapi(_user: str = Depends(require_admin)) -> dict[str, Any]:

@@ -19,20 +19,29 @@ views, including streamed text chat and private persona and memory editors.
    Try the time or arithmetic example, send it, then navigate back. Repeat on
    a phone-sized screen. Before release, have a first-time user try this from
    the install instructions and record where they need help.
-2. **Qualify the voice experience on the default ONNX stack.** On November 27
+2. **Source-backed console Chat is implemented on this branch.** In Chrome,
+   the local model cited the right passage for a synthetic spare key, then
+   cited the corrected location in a fresh chat. After deletion, Chat reported
+   that it couldn't find the fact. Old links reported the missing passage.
+   The browser suite repeats this workflow with a scripted model.
+3. **Next, make learned preferences visible and correctable.** With memory enabled,
+   tell Arietta a preference and start a new session. Check what it learned,
+   where the fact came from, and whether it uses the preference. Correct it,
+   then forget it and verify both actions in fresh sessions. Follow this with
+   the reminder workflow: set one, check it in Home, and verify it fires once
+   across a restart.
+4. **Keep the voice qualification results as a baseline.** On November 27
    the 100-turn audible benchmark measured 3.36 s median and 11.35 s p95
    to the first non-silent speaker write, above the Milestone 1 targets.
    The quiet-room Jabra soak completed 206 turns in 30 minutes with three
-   speaker underflows and three AEC resets. Inspect the long first speech
-   chunks and the capture polling coincident with missed speaker writes, then
-   rerun the same protocols. Acoustic interruption-to-silence timing and live
-   qualification of the opt-in MLX path remain open.
+   speaker underflows and three AEC resets. The first-chunk investigation
+   found no benefit from limiting ONNX CPU threads. Capture polling
+   around missed writes, acoustic interruption-to-silence timing, and live
+   qualification of the opt-in MLX path remain open. Return to the 100-turn
+   run for a concrete latency change. Reserve guided Jabra checks for changes
+   to audible behavior, a reported regression, or a release decision.
    [Latency measurements](evals/LATENCY_BASELINE.md) ·
    [Soak results](evals/LIVE_LOAD_SOAK.md).
-3. **Prove one everyday workflow end to end.** Set a reminder by voice, check
-   it in Home, and verify it fires once across a restart. For note retrieval,
-   add a fact, ask for it in Chat, edit it, and check that the answer changes.
-   Use these journeys with prospective users before expanding integrations.
 
 The ONNX Model Zoo ended Git LFS downloads in July 2025 and directs users
 to Hugging Face. Arietta gets Kokoro and Smart Turn from their publishers.
@@ -126,7 +135,7 @@ Done:
   from 2.89 s to 1.09 s (text only). Questions that do need notes still spend
   about 1.3 s reading three of them (see item 6 below).
 
-Remaining, in order. With ONNX Kokoro a turn spends about 300 ms deciding the
+In the earlier muted baseline, a turn with ONNX Kokoro spent about 300 ms deciding the
 speaker has finished, 180 ms transcribing, 480 ms generating and 490 ms on the
 first speech chunk. ONNX needs about 450 ms even for three words, so a shorter
 first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
@@ -251,7 +260,7 @@ disabled tools never execute; an interrupted action never runs twice.
    from 10 to 16 of 20 right). The recall set has 14 answerable questions so
    far, checked in CI with keyword search; atomic index generations are still
    to do.
-4. Return source references with answers.
+4. Console Chat now links cited answers to the exact passage in the current note.
 
 **Done when:** the assistant recalls a fact stated in a previous session, the
 owner can see and remove it, and the retrieval target is met.

@@ -144,6 +144,7 @@ def run_tool(tool, arguments: dict[str, Any]) -> ToolResult:
         content=result.content[:MAX_CONTENT_CHARS],
         speak=None if result.speak is None else result.speak[:MAX_SPEAK_CHARS],
         data=result.data,
+        knowledge=result.knowledge,
     )
 
 
