@@ -5,6 +5,10 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- With memory enabled, console Chat learns preferences during idle time. The
+  Persona page shows saved facts and their origins, with controls to correct
+  or forget a fact for future conversations.
+
 - Console Chat links cited local notes to their exact passages. Opening a citation
   checks the current note and reports when the cited passage has changed or disappeared.
 - Simultaneous first-time model downloads use independent temporary files.

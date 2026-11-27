@@ -70,6 +70,15 @@ enabled = false
 
 @pytest.fixture(scope="module")
 def console(tmp_path_factory):
+    yield from _serve(tmp_path_factory.mktemp("console"))
+
+
+@pytest.fixture(scope="module")
+def memory_console(tmp_path_factory):
+    yield from _serve(tmp_path_factory.mktemp("memory-console"), memory=True)
+
+
+def _serve(root, *, memory=False):
     import uvicorn
 
     from arietta_voice.web.app import create_app
@@ -79,7 +88,10 @@ def console(tmp_path_factory):
     patch.setenv("ARIETTA_ADMIN_USERNAME", "admin")
     patch.setenv("ARIETTA_ADMIN_PASSWORD", PASSWORD)
     try:
-        config_path = _write_config(tmp_path_factory.mktemp("console"))
+        config_path = _write_config(root)
+        if memory:
+            with config_path.open("a") as handle:
+                handle.write("\n[memory]\nenabled = true\n")
         service = AriettaApiService(config_path)
         service.worker.handler_factory = _fixture_engine
         app = create_app(service=service)
@@ -108,10 +120,34 @@ def console(tmp_path_factory):
 def _fixture_engine(config):
     """Exercise the real worker and retrieval without downloading a model in CI."""
     from arietta_voice.inference import InferenceEngine
+    from arietta_voice.llm import ModelEvent
+
+    class MemoryModel:
+        def stream(self, messages, **kwargs):
+            user = (
+                messages[0]["content"].partition("User said: ")[2].partition("\nAssistant said:")[0]
+            )
+            yield ModelEvent(
+                "text", "- Prefers jasmine tea." if user == "I prefer jasmine tea." else "NONE"
+            )
+            yield ModelEvent("done")
 
     engine = InferenceEngine(config)
+    engine.service()._llm = MemoryModel()
 
     def answer(messages, **kwargs):
+        if messages[-1]["content"] == "I prefer jasmine tea.":
+            return "Understood."
+        if messages[-1]["content"] == "Which tea do I prefer?":
+            system = " ".join(m["content"] for m in messages if m["role"] == "system").lower()
+            return next(
+                (
+                    f"You prefer {tea} tea."
+                    for tea in ("jasmine", "oolong")
+                    if f"{tea} tea" in system
+                ),
+                "I don't know your tea preference.",
+            )
         for message in messages:
             hit = re.search(
                 r"\[(S\d+)\] [^\n]+: The spare key is in the ([^.]+)\.", message["content"]
@@ -253,6 +289,7 @@ def test_saving_one_editor_preserves_the_other_draft(console, page):
     page.goto(f"{console}/#/persona")
     sync_api.expect(page.locator("#persona-save")).to_be_enabled()
     page.fill("#persona-content", "A scratch persona.")
+    page.get_by_text("Edit the full memory file", exact=True).click()
     page.fill("#memory-content", "An unfinished memory.")
     page.click("#persona-save")
     sync_api.expect(page.locator("#persona-save")).to_have_text("Save")
@@ -310,4 +347,41 @@ def test_chat_cites_current_note_passage_after_edit_and_deletion(console, page):
     assert re.search(r"not|couldn't|couldn’t|can't|can’t|no |don't|don’t|unable", text), text
     assert "notes" in text and "access" not in text, text
     assert page.request.get(old_link).status == 404
+    assert page.problems == []
+
+
+def test_learn_correct_forget_in_fresh_chats(memory_console, page):
+    def fresh_chat(message):
+        page.goto(f"{memory_console}/#/chat")
+        page.reload()  # Discard all in-browser conversation history.
+        assert page.locator("#chat-log .msg").count() == 0
+        page.fill("#chat-message", message)
+        page.click("#chat-send")
+        page.locator("#chat-log .assistant .msg-meta").wait_for(timeout=90000)
+        return page.locator("#chat-log .assistant .msg-body").inner_text().lower()
+
+    fresh_chat("I prefer jasmine tea.")
+    page.goto(f"{memory_console}/#/persona")
+    fact = page.locator("#memory-entries .result-card").filter(has_text=re.compile("jasmine", re.I))
+    sync_api.expect(fact).to_be_visible(timeout=60000)
+    assert "Learned in Chat" in fact.inner_text()
+    assert "jasmine" in fresh_chat("Which tea do I prefer?")
+
+    page.goto(f"{memory_console}/#/persona")
+    fact.get_by_role("button", name="Edit", exact=True).click()
+    page.get_by_label("Correct saved fact").fill("Prefers oolong tea.")
+    page.get_by_role("button", name="Save correction").click()
+    updated = page.locator("#memory-entries .result-card").filter(has_text="oolong")
+    sync_api.expect(updated).to_contain_text("corrected")
+    answer = fresh_chat("Which tea do I prefer?")
+    assert "oolong" in answer and "jasmine" not in answer
+
+    page.goto(f"{memory_console}/#/persona")
+    page.once("dialog", lambda dialog: dialog.accept())
+    updated.get_by_role("button", name="Forget").click()
+    sync_api.expect(page.locator("#memory-entries")).to_contain_text("No saved facts")
+    answer = fresh_chat("Which tea do I prefer?")
+    assert "oolong" not in answer and "jasmine" not in answer
+    assert re.search(r"not|don.t|haven.t|no |unknown|which|tell me", answer), answer
+    assert not page.request.get(f"{memory_console}/api/persona").json()["memory"]["entries"]
     assert page.problems == []

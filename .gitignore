@@ -15,6 +15,7 @@ logs/
 /state/
 .knowledge_index/
 config/MEMORY.md
+/config/.MEMORY.md.*
 /config/*.local.toml
 /config/*.local.toml.lock
 /config/*.local.md

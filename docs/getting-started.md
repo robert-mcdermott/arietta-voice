@@ -143,6 +143,21 @@ Use tools when they are the source of truth.
 Do not invent device states or automation results.
 ```
 
+### Review a learned preference
+
+In **Settings → Memory and privacy**, enable **Remember facts between conversations**
+to turn on learning. In Chat or by voice, tell Arietta something you want it to
+remember, such as “I prefer jasmine tea.” After a completed turn, the configured
+chat model extracts durable facts during idle time. If you use a remote chat
+provider, it also processes these memory updates.
+
+Open **Persona → Memory** to see the saved fact and whether it came from Chat
+or voice. The list refreshes while the page is open. Select **Edit** to correct
+a fact or **Forget** to remove it. To check the result, clear Chat and ask
+“Which tea do I prefer?” A conversation that is already open still has its
+earlier messages. Existing single-line memory bullets are editable too, and
+**Edit the full memory file** opens free-form Markdown.
+
 ## 3. Add Knowledge
 
 Knowledge is the easiest and safest way to teach Arietta new facts.

@@ -172,3 +172,52 @@ def test_oversized_existing_memory_is_preserved_without_model_call(tmp_path):
         list(MemoryStore(path, True, 1).prepare_update(model, "User", "Answer", 1))
     model.stream.assert_not_called()
     assert path.read_text() == original
+
+
+def test_correct_and_forget_duplicates_without_changing_freeform_markdown(tmp_path):
+    from arietta_voice.memory import MemoryConflict, prompt_memory
+
+    path = tmp_path / "MEMORY.md"
+    original = b"# Memory\r\n\r\nA handwritten paragraph.\r\n\r\n"
+    fenced = b"\r\n```\r\n- A code example\r\n```\r\n"
+    path.write_bytes(original + b"- Likes tea\r\n* Likes tea\r\n" + fenced)
+    store = MemoryStore(path, True, 2)
+    before = store.inspect()
+    (fact,) = before["entries"]
+    assert fact["origin"] == "file"
+    store.edit("Likes coffee", revision=before["revision"], entry_id=fact["id"])
+    after = store.inspect()
+    (fixed,) = after["entries"]
+    assert fixed["edited"] and fixed["text"] == "Likes coffee"
+    assert "arietta-memory" not in prompt_memory(after["content"])
+    with pytest.raises(MemoryConflict):
+        store.edit(None, revision=before["revision"], entry_id=fact["id"])
+    store.edit(None, revision=after["revision"], entry_id=fixed["id"])
+    assert path.read_bytes() == original + fenced
+    assert store.inspect()["entries"] == []
+
+
+def test_delayed_learning_cannot_recreate_forgotten_preference(tmp_path):
+    import time
+
+    store = MemoryStore(tmp_path / "MEMORY.md", True, 10)
+    store.edit("- Prefers jasmine tea.\n")
+    old_turn = time.time_ns()
+    memory = store.inspect()
+    store.edit(None, revision=memory["revision"], entry_id=0)
+    # A queued voice or Chat job can start after forgetting and see the new
+    # text as its expected snapshot, even though it describes an earlier turn.
+    proposal = prepare(store, ["- Prefers jasmine tea."])
+    proposal["submitted_ns"] = old_turn
+    assert store.commit_update(proposal)["conflict"]
+    assert store.inspect()["entries"] == []
+
+
+def test_consolidation_preserves_corrected_fact_and_its_origin(tmp_path):
+    store = MemoryStore(tmp_path / "MEMORY.md", True, 2)
+    store.edit("# Memory\n- Prefers oolong tea. <!-- arietta-memory:chat:edited -->\n- Gardens.\n")
+    model = Mock(generate=Mock(return_value="# Memory\n- Grows herbs."))
+    assert store.maybe_consolidate(model, 2)
+    assert "oolong" not in str(model.generate.call_args)
+    fixed = next(entry for entry in store.inspect()["entries"] if entry["edited"])
+    assert (fixed["text"], fixed["origin"]) == ("Prefers oolong tea.", "chat")

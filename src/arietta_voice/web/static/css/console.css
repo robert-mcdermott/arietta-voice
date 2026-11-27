@@ -1382,6 +1382,11 @@ details.fold[open] > summary {
   margin-top: 6px;
 }
 
+.memory-value { overflow-wrap: anywhere; }
+.memory-file-editor { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+.memory-file-editor summary { cursor: pointer; color: var(--ink-2); }
+.memory-file-editor textarea { margin: .75rem 0; }
+
 /* ---------- Settings ---------- */
 
 .settings-forms {

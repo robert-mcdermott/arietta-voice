@@ -24,12 +24,10 @@ views, including streamed text chat and private persona and memory editors.
    cited the corrected location in a fresh chat. After deletion, Chat reported
    that it couldn't find the fact. Old links reported the missing passage.
    The browser suite repeats this workflow with a scripted model.
-3. **Next, make learned preferences visible and correctable.** With memory enabled,
-   tell Arietta a preference and start a new session. Check what it learned,
-   where the fact came from, and whether it uses the preference. Correct it,
-   then forget it and verify both actions in fresh sessions. Follow this with
-   the reminder workflow: set one, check it in Home, and verify it fires once
-   across a restart.
+3. **Learned preferences are editable in the console.** In fresh Chat sessions,
+   the local model recalled jasmine tea, used oolong tea after a correction
+   on the Persona page, and reported no saved preference after forgetting.
+   The next everyday workflow is a reminder that fires once across a restart.
 4. **Keep the voice qualification results as a baseline.** On November 27
    the 100-turn audible benchmark measured 3.36 s median and 11.35 s p95
    to the first non-silent speaker write, above the Milestone 1 targets.
@@ -249,7 +247,9 @@ disabled tools never execute; an interrupted action never runs twice.
 
 1. Replace the single generated `MEMORY.md` with structured memory: a profile
    of durable facts plus dated episodic notes, each with provenance, all
-   viewable, editable and deletable in the console.
+   viewable, editable and deletable in the console. The existing Markdown store
+   now exposes individual facts, their learning channel, and owner corrections.
+   Dated episodic notes remain open.
 2. Persist conversation history across sessions and make it searchable.
 3. Knowledge retrieval: bounded chunks with stable source IDs, atomic index
    generations, and a 50-question synthetic recall set. Target recall@3 of at

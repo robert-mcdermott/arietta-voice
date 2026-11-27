@@ -4,10 +4,16 @@ import re
 
 from arietta_voice.config import AppConfig
 from arietta_voice.knowledge import NOTES_RULE
+from arietta_voice.memory import prompt_memory
 from arietta_voice.models import ConversationTurn, ToolResponse
 
 MARKDOWN_NOISE_RE = re.compile(r"[#*_`>-]+")
 WHITESPACE_RE = re.compile(r"\s+")
+MEMORY_RULE = (
+    "Use saved preferences when relevant. If asked for a personal preference "
+    "you have no record of, say you haven't saved it yet. New facts are saved "
+    "after the turn, so acknowledge a new preference without claiming it has been saved."
+)
 
 
 class PromptManager:
@@ -18,8 +24,14 @@ class PromptManager:
         parts: list[str] = []
         if self.config.prompts.soul_path.exists():
             parts.append(self.config.prompts.soul_path.read_text(encoding="utf-8").strip())
-        if self.config.memory.enabled and self.config.prompts.memory_path.exists():
-            parts.append(self.config.prompts.memory_path.read_text(encoding="utf-8").strip())
+        if self.config.memory.enabled:
+            parts.append(MEMORY_RULE)
+            if self.config.prompts.memory_path.is_file():
+                parts.append(
+                    prompt_memory(
+                        self.config.prompts.memory_path.read_text(encoding="utf-8")
+                    ).strip()
+                )
         if self.config.knowledge.enabled:
             parts.append(NOTES_RULE)
         return "\n\n".join(part for part in parts if part)

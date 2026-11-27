@@ -105,7 +105,16 @@ class McpImportRequest(BaseModel):
     text: str = Field(min_length=2, max_length=100_000)
 
 
+class MemoryEntryEdit(BaseModel):
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content: str = Field(min_length=1, max_length=12000)
+
+
 class TextFileRequest(BaseModel):
     """A persona or memory file's new text."""
 
     content: str = Field(max_length=20_000)
+
+
+class MemoryFileRequest(TextFileRequest):
+    revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")

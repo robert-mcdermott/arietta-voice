@@ -461,11 +461,12 @@ TOML settings.
 
 ### Background memory
 
-When `[memory].enabled` is true, a fully delivered voice turn queues a memory
-update and immediately returns to listening. Extraction and optional
-consolidation begin after one second of quiet listening, using the same model
-worker. No second model is loaded. The console Chat page still does not write memory.
-No config migration or new private setting is required.
+When `[memory].enabled` is true, completed voice and console Chat turns can
+teach Arietta durable facts. Each interface schedules extraction and optional
+consolidation after one second of idle time on its existing inference worker.
+Both use the configured memory file. In **Persona → Memory**, each new fact
+shows its learning channel. Edit or forget a fact there and start a fresh chat
+to check the result. [Memory walkthrough](docs/getting-started.md#review-a-learned-preference).
 
 The queue holds at most two pending turns plus one active job. Each user/assistant
 text is limited to 12,000 characters; oversized jobs are skipped, and queue
@@ -485,8 +486,9 @@ can add next-turn startup latency; it is not a guarantee of zero interruption
 latency. Pending jobs wait for the next quiet interval.
 
 Extraction and consolidation produce one proposal before touching the memory
-file. Commit compares the file with the original snapshot; a detected intervening
-edit discards the proposal. Successful changes use an owner-only atomic
+file. Under a shared file lock, commit compares the file with the original
+snapshot and checks for console edits made since the turn began. A conflict
+discards the proposal. Successful changes use an owner-only atomic
 replacement. A write already committed before preemption is retained. Existing
 memory over 128,000 characters and generated memory output over 12,000 characters
 are rejected without truncation. Consolidation still follows the configured

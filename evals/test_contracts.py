@@ -12,7 +12,7 @@ from arietta_voice.config import default_config
 from arietta_voice.knowledge import KnowledgeRetriever
 from arietta_voice.memory import MemoryStore
 from arietta_voice.models import ConversationTurn, ToolResponse
-from arietta_voice.prompts import PromptManager, sanitize_for_speech
+from arietta_voice.prompts import MEMORY_RULE, PromptManager, sanitize_for_speech
 from arietta_voice.runtime import AriettaVoiceRuntime
 from arietta_voice.wake import build_wake_word_detector
 from arietta_voice.worker import WorkerFailure
@@ -54,7 +54,10 @@ def test_prompt_contract(case, tmp_path):
     context = ToolResponse("synthetic", "", False, case["context"])
     messages = PromptManager(config).build_messages(history, "Current synthetic question", context)
     expected = []
-    system = "\n\n".join(filter(None, [case["soul"], case["memory"] if case["enabled"] else ""]))
+    parts = [case["soul"]]
+    if case["enabled"]:
+        parts.extend([MEMORY_RULE, case.get("visible_memory", case["memory"])])
+    system = "\n\n".join(filter(None, parts))
     if system:
         expected.append({"role": "system", "content": system})
     retained = original[-case["limit"] * 2 :] if case["limit"] else []

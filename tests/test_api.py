@@ -1104,3 +1104,18 @@ def test_runtime_status_is_pushed_when_it_changes(tmp_path: Path) -> None:
     assert events[0].startswith("retry:")
     data = [json.loads(e[len("data: ") :]) for e in events if e.startswith("data: ")]
     assert data == [{"state": "idle"}, {"state": "listening"}]  # Only changes are sent.
+
+
+def test_memory_entry_controls_require_auth_and_reject_a_stale_edit(tmp_path):
+    client = _client(_write_api_config(tmp_path))
+    client.put("/api/memory", auth=AUTH, json={"content": "- First preference"})
+    memory = client.get("/api/persona", auth=AUTH).json()["memory"]
+    url = "/api/memory/entries/0"
+    payload = {"content": "New preference", "revision": memory["revision"]}
+    assert client.put(url, json=payload).status_code == 401
+    assert client.delete(url, params={"revision": memory["revision"]}).status_code == 401
+    updated = client.put(url, auth=AUTH, json=payload).json()["memory"]
+    assert updated["entries"][0]["text"] == "New preference"
+    assert client.delete(url, auth=AUTH, params={"revision": memory["revision"]}).status_code == 409
+    assert client.put("/api/memory", auth=AUTH, json=payload).status_code == 409
+    assert client.get("/api/persona", auth=AUTH).json()["memory"] == updated

@@ -70,7 +70,8 @@
     {
       "id": "memory-opt-in",
       "soul": "Use short answers.",
-      "memory": "# Memory\n- Synthetic favorite color: teal.",
+      "memory": "# Memory\n- Synthetic favorite color: teal. <!-- arietta-memory:chat:edited -->",
+      "visible_memory": "# Memory\n- Synthetic favorite color: teal.",
       "enabled": true,
       "limit": 2,
       "context": ""

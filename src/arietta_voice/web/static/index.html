@@ -355,9 +355,14 @@
                 <h3>Memory</h3>
                 <p class="hint" id="memory-file"></p>
               </div>
-              <button class="btn small primary" id="memory-save" type="button">Save</button>
+              <button class="btn small quiet" id="memory-refresh" type="button">Reload memory</button>
             </div>
-            <textarea id="memory-content" class="source-editor" rows="8" spellcheck="true" aria-label="Memory"></textarea>
+            <div id="memory-entries" aria-label="Saved facts"></div>
+            <details class="memory-file-editor">
+              <summary>Edit the full memory file</summary>
+              <textarea id="memory-content" class="source-editor" rows="8" spellcheck="true" aria-label="Memory"></textarea>
+              <button class="btn small primary" id="memory-save" type="button">Save</button>
+            </details>
           </div>
         </section>
 

@@ -42,7 +42,7 @@ class MemoryJobs:
             # Losing diagnostics must not lose the scheduler or delivered turn.
             pass
 
-    def submit(self, user, assistant, turn_count):
+    def submit(self, user, assistant, turn_count, *, origin="voice", submitted_ns=None):
         with self._condition:
             if self._closed:
                 return False
@@ -54,9 +54,22 @@ class MemoryJobs:
                 self._pending.popleft()
                 self._counts["dropped"] += 1
                 self.log("memory_job_dropped", reason="queue_full")
-            self._pending.append(dict(user=user, assistant=assistant, turn_count=turn_count))
+            self._pending.append(
+                dict(
+                    user=user,
+                    assistant=assistant,
+                    turn_count=turn_count,
+                    origin=origin,
+                    submitted_ns=submitted_ns or time.time_ns(),
+                )
+            )
             self._condition.notify_all()
             return True
+
+    def discard_pending(self):
+        with self._condition:
+            self._counts["dropped"] += len(self._pending)
+            self._pending.clear()
 
     def allow_idle(self):
         with self._condition:

@@ -17,12 +17,15 @@ from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from arietta_voice.admin_auth import load_admin_credentials
+from arietta_voice.memory import MemoryConflict
 from arietta_voice.web.schemas import (
     ChatRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
     McpImportRequest,
     McpServerRequest,
+    MemoryEntryEdit,
+    MemoryFileRequest,
     SettingsUpdateRequest,
     TextFileRequest,
     TimerCreateRequest,
@@ -67,7 +70,10 @@ def create_app(
         try:
             yield
         finally:
-            service.worker.close()
+            try:
+                service.memory_jobs.close()
+            finally:
+                service.worker.close()
 
     app = FastAPI(
         title="Arietta Voice API",
@@ -77,6 +83,11 @@ def create_app(
         openapi_url=None,
         lifespan=lifespan,
     )
+
+    @app.exception_handler(MemoryConflict)
+    async def memory_conflict(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
     app.state.arietta_service = service
     allowed_hosts = ["localhost", "127.0.0.1", "[::1]"]
     extra_hosts = os.environ.get("ARIETTA_ADMIN_ALLOWED_HOSTS", "")
@@ -180,9 +191,28 @@ def create_app(
 
     @app.put("/api/memory")
     def api_memory_save(
-        payload: TextFileRequest, _user: str = Depends(require_admin)
+        payload: MemoryFileRequest, _user: str = Depends(require_admin)
     ) -> dict[str, Any]:
-        return svc().save_memory(payload.content)
+        return svc().save_memory(payload.content, payload.revision)
+
+    @app.put("/api/memory/entries/{entry_id}")
+    def correct_memory(
+        entry_id: int, payload: MemoryEntryEdit, _user: str = Depends(require_admin)
+    ):
+        try:
+            return svc().change_memory_entry(entry_id, payload.revision, payload.content)
+        except MemoryConflict:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/memory/entries/{entry_id}")
+    def forget_memory(
+        entry_id: int,
+        revision: str = Query(pattern=r"^[0-9a-f]{64}$"),
+        _user: str = Depends(require_admin),
+    ):
+        return svc().change_memory_entry(entry_id, revision)
 
     @app.post("/api/runtime/start")
     def api_runtime_start(_user: str = Depends(require_admin)) -> dict[str, Any]:

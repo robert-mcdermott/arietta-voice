@@ -81,6 +81,7 @@ async function refreshView() {
     if (currentView === "activity" && activityOnFirstPage()) await loadActivity();
     if (currentView === "tools" && !toolsBusy()) await loadTools();
     if (currentView === "knowledge" && !knowledgeEditing()) await loadKnowledgeFiles();
+    if (currentView === "persona" && !personaDirty()) await loadPersona();
     if (currentView === "system") await loadDiagnostics();
   } catch (error) {
     setError(error.message);
