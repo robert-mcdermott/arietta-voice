@@ -615,3 +615,28 @@ turns earlier today) that is 0.38 s sooner at the median and 1.18 s at the p95,
 but still above the target of 1.0 s and 1.6 s. The largest remaining part is
 the model's first clause. Both settings stay off by default until the live
 soak and microphone checks pass (Milestone 1, items 1, 2 and 5).
+
+## November 27, 2026 · shipped ONNX stack on the Jabra
+
+At commit `8456002`, the standing benchmark completed one separately measured
+first turn and 100 valid warm turns, ten per question. It used the production
+environment, the shipped tool list, batch STT, default ONNX Kokoro, shared
+synthetic fixtures, and audible Jabra SPEAK 410 USB output. Each question
+started a new conversation. The test used a disposable persona, with private
+knowledge and memory disabled.
+
+| Warm measurement | Median | p95 |
+| --- | ---: | ---: |
+| End of synthetic speech to first non-silent speaker write | 3,358 ms | 11,353 ms |
+| End of synthetic speech to processing start | 293 ms | 353 ms |
+| First TTS chunk call | 1,851 ms | 5,780 ms |
+
+The slowest first speaker write took 16,252 ms. The run missed the 1,000 ms
+median and 1,600 ms p95 targets. It completed with 26 speaker underflow flags
+and failed the zero-underflow gate. Every other harness gate passed, including
+worker continuity, valid turns, redacted logs, clean shutdown and protected-file
+fingerprints. Normalized transcription exactly matched 80 of 100 warm fixtures.
+The first-write clock ends in software; it does not measure acoustic onset.
+The previous November run used muted output and a different tool list, so the
+difference alone cannot identify a backend regression. The ignored local report
+is in `tmp/latency-baseline/20261127T191411.460636Z/`.

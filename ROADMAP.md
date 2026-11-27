@@ -19,12 +19,16 @@ views, including streamed text chat and private persona and memory editors.
    Try the time or arithmetic example, send it, then navigate back. Repeat on
    a phone-sized screen. Before release, have a first-time user try this from
    the install instructions and record where they need help.
-2. **Qualify the voice experience on the default ONNX stack.** Run the standing
-   100-turn benchmark and the deferred quiet-room 30-minute Jabra soak. Record
-   first-audio median/p95, audible interruption-to-silence, false cutoffs and
-   audio faults. Use the Milestone 1 targets below to decide whether to release
-   or fix the largest measured delay. The opt-in MLX path still needs its own
-   live qualification before a default change.
+2. **Qualify the voice experience on the default ONNX stack.** On November 27
+   the 100-turn audible benchmark measured 3.36 s median and 11.35 s p95
+   to the first non-silent speaker write, above the Milestone 1 targets.
+   The quiet-room Jabra soak completed 206 turns in 30 minutes with three
+   speaker underflows and three AEC resets. Inspect the long first speech
+   chunks and the capture polling coincident with missed speaker writes, then
+   rerun the same protocols. Acoustic interruption-to-silence timing and live
+   qualification of the opt-in MLX path remain open.
+   [Latency measurements](evals/LATENCY_BASELINE.md) ·
+   [Soak results](evals/LIVE_LOAD_SOAK.md).
 3. **Prove one everyday workflow end to end.** Set a reminder by voice, check
    it in Home, and verify it fires once across a restart. For note retrieval,
    add a fact, ask for it in Chat, edit it, and check that the answer changes.
