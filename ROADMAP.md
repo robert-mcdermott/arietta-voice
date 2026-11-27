@@ -27,8 +27,11 @@ views, including streamed text chat and private persona and memory editors.
 3. **Learned preferences are editable in the console.** In fresh Chat sessions,
    the local model recalled jasmine tea, used oolong tea after a correction
    on the Persona page, and reported no saved preference after forgetting.
-   The next everyday workflow is a reminder that fires once across a restart.
-4. **Keep the voice qualification results as a baseline.** On November 27
+4. **Reminders survive runtime restarts.** A Chrome test sets a synthetic
+   reminder in Chat and finds it on Home. With a controlled clock and silent
+   output, a fresh voice runtime announces it once when due. After the user
+   selects Stop, another fresh runtime stays quiet and Home shows “Stopped.”
+5. **Keep the voice qualification results as a baseline.** On November 27
    the 100-turn audible benchmark measured 3.36 s median and 11.35 s p95
    to the first non-silent speaker write, above the Milestone 1 targets.
    The quiet-room Jabra soak completed 206 turns in 30 minutes with three

@@ -38,7 +38,6 @@ from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
 from arietta_voice.timephrases import describe_when, parse_duration, parse_when
 from arietta_voice.timers import (
-    RINGING,
     TimerStore,
     alarm_name,
     reminder_parts,
@@ -597,10 +596,9 @@ class AriettaApiService:
             raise FileNotFoundError(alert_id)
         return {"cancelled": alert_id, **self.timers()}
 
-    def stop_ringing(self) -> dict[str, Any]:
+    def stop_ringing(self, alert_id: str | None = None) -> dict[str, Any]:
         store = TimerStore(self.config.timers.path)
-        ringing = [alert.id for alert in store.active() if alert.status == RINGING]
-        stopped = store.cancel(ringing, outcome="dismissed") if ringing else []
+        stopped = store.dismiss_ringing(alert_id)
         return {"stopped": [alert.id for alert in stopped], **self.timers()}
 
     # MCP servers. The file is read by the voice runtime's worker, which notices

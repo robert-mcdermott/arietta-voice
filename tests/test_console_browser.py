@@ -10,12 +10,15 @@ except where ARIETTA_REQUIRE_BROWSER is set, as in CI.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import re
 import socket
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -47,7 +50,7 @@ def _write_config(root: Path) -> Path:
 name = "Browser Test"
 
 [tools]
-enabled = ["assistant_identity", "local_time", "search_knowledge"]
+enabled = ["assistant_identity", "local_time", "set_reminder", "search_knowledge"]
 
 [prompts]
 soul_path = "SOUL.md"
@@ -76,6 +79,13 @@ def console(tmp_path_factory):
 @pytest.fixture(scope="module")
 def memory_console(tmp_path_factory):
     yield from _serve(tmp_path_factory.mktemp("memory-console"), memory=True)
+
+
+@pytest.fixture(scope="module")
+def reminder_console(tmp_path_factory):
+    root = tmp_path_factory.mktemp("reminder-console")
+    for url in _serve(root):
+        yield url, root / "config" / "arietta_voice.toml"
 
 
 def _serve(root, *, memory=False):
@@ -384,4 +394,115 @@ def test_learn_correct_forget_in_fresh_chats(memory_console, page):
     assert "oolong" not in answer and "jasmine" not in answer
     assert re.search(r"not|don.t|haven.t|no |unknown|which|tell me", answer), answer
     assert not page.request.get(f"{memory_console}/api/persona").json()["memory"]["entries"]
+    assert page.problems == []
+
+
+def _silent_reminder_runtime(config_path, connection):
+    """Run the real quiet listening loop up to its next microphone read on each tick."""
+    from arietta_voice.config import load_config
+    from arietta_voice.runtime import AriettaVoiceRuntime
+
+    config = load_config(config_path)
+    config.audio.tts_enabled = config.audio.chime_enabled = False
+    runtime = AriettaVoiceRuntime(config)
+    microphone = Mock(dropped_chunks=0, input_overflows=0)
+    microphone.get.side_effect = StopIteration
+    spoken = []
+    runtime._print_response = spoken.append
+    try:
+        while (now := connection.recv()) is not None:
+            runtime.alerts.clock = runtime.alerts.store.clock = lambda: now
+            spoken.clear()
+            with pytest.raises(StopIteration):
+                runtime._listen(microphone, Mock())
+            connection.send(spoken)
+    finally:
+        runtime.memory_jobs.close()
+        runtime.worker.close()
+        connection.close()
+
+
+@contextmanager
+def _reminder_runtime(config_path):
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    process = context.Process(target=_silent_reminder_runtime, args=(config_path, child))
+    process.start()
+    child.close()
+
+    def tick(now):
+        parent.send(now)
+        assert parent.poll(20), "The reminder runtime did not finish its clock tick"
+        return parent.recv()
+
+    try:
+        yield tick
+    finally:
+        try:
+            if process.is_alive():
+                parent.send(None)
+        finally:
+            parent.close()
+            process.join(5)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+            assert process.exitcode == 0
+            process.close()
+
+
+def test_chat_reminder_fires_once_and_stays_dismissed_across_restarts(reminder_console, page):
+    url, config_path = reminder_console
+    label = "water the test fern"
+
+    def state():
+        response = page.request.get(f"{url}/api/timers")
+        assert response.ok
+        return response.json()
+
+    with _reminder_runtime(config_path) as tick:
+        assert tick(time.time()) == []
+        page.goto(f"{url}/#/chat")
+        page.fill("#chat-message", f"Remind me in ten minutes to {label}.")
+        page.click("#chat-send")
+        sync_api.expect(page.locator("#chat-log .assistant .msg-body")).to_contain_text(label)
+        page.get_by_role("button", name="Home", exact=True).click()
+        row = page.locator("#timers-list li").filter(has_text=label)
+        sync_api.expect(row.get_by_role("button", name="Cancel")).to_be_visible()
+        (pending,) = state()["active"]
+        assert (pending["kind"], pending["label"], pending["status"], pending["rings"]) == (
+            "reminder",
+            label,
+            "pending",
+            0,
+        )
+        due = pending["due_at"]
+        assert tick(due - 1) == []
+
+    with _reminder_runtime(config_path) as tick:
+        assert tick(due - 1) == []
+        assert tick(due) == [f"It's time to {label}."]
+        assert tick(due + 1) == []
+        (ringing,) = state()["active"]
+        assert (ringing["id"], ringing["status"], ringing["rings"]) == (pending["id"], "ringing", 1)
+        page.reload()
+        row.get_by_role("button", name="Stop", exact=True).click()
+        sync_api.expect(row).to_have_count(0)
+        assert tick(due + 3600) == []
+
+    with _reminder_runtime(config_path) as tick:
+        assert tick(due + 7200) == []
+        page.reload()
+        page.locator("#timers-finished summary").click()
+        earlier = page.locator("#timers-finished-list li").filter(has_text=label)
+        sync_api.expect(earlier).to_contain_text("Stopped")
+        final = state()
+        assert final["active"] == []
+        (finished,) = final["finished"]
+        assert (finished["id"], finished["status"], finished["outcome"], finished["rings"]) == (
+            pending["id"],
+            "done",
+            "dismissed",
+            1,
+        )
     assert page.problems == []

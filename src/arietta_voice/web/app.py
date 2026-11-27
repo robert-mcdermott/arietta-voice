@@ -437,8 +437,11 @@ def create_app(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.post("/api/timers/stop")
-    def api_stop_timers(_user: str = Depends(require_admin)) -> dict[str, Any]:
-        return svc().stop_ringing()
+    def api_stop_timers(
+        alert_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{8}$"),
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        return svc().stop_ringing(alert_id)
 
     @app.post("/api/timers/{alert_id}/cancel")
     def api_cancel_timer(

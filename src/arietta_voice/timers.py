@@ -326,14 +326,20 @@ class TimerStore:
 
     def cancel(self, ids: list[str], outcome: str = "cancelled") -> list[Alert]:
         wanted = set(ids)
+        return self._finish_matching(lambda alert: alert.active and alert.id in wanted, outcome)
 
+    def dismiss_ringing(self, alert_id: str | None = None) -> list[Alert]:
+        return self._finish_matching(
+            lambda alert: alert.status == RINGING and (alert_id is None or alert.id == alert_id),
+            "dismissed",
+        )
+
+    def _finish_matching(self, matches: Callable[[Alert], bool], outcome: str) -> list[Alert]:
         def change(alerts, now):
-            cancelled = []
-            for alert in alerts:
-                if alert.id in wanted and alert.active:
-                    alert.status, alert.finished_at, alert.outcome = DONE, now, outcome
-                    cancelled.append(alert)
-            return cancelled
+            finished = [alert for alert in alerts if matches(alert)]
+            for alert in finished:
+                alert.status, alert.finished_at, alert.outcome = DONE, now, outcome
+            return finished
 
         return self.mutate(change)
 

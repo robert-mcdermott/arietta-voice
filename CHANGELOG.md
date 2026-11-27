@@ -5,6 +5,8 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- Home refreshes reminders when you return from Chat. Stopping a ringing
+  reminder records it as “Stopped” in Earlier and leaves other reminders active.
 - With memory enabled, console Chat learns preferences during idle time. The
   Persona page shows saved facts and their origins, with controls to correct
   or forget a fact for future conversations.

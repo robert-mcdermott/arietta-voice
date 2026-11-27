@@ -827,6 +827,31 @@ def test_timer_endpoints_list_add_stop_and_cancel(tmp_path: Path) -> None:
     assert client.post("/api/timers/..%2Fx/cancel", auth=AUTH).status_code in (404, 422)
 
 
+def test_stop_one_ringing_alert_leaves_others_alone(tmp_path: Path) -> None:
+    from arietta_voice.timers import AlertScheduler, TimerStore
+
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    store = TimerStore(service.config.timers.path)
+    first = store.add_timer(10, "first")
+    second = store.add_timer(10, "second")
+    scheduler = AlertScheduler(store, clock=lambda: second.due_at)
+    scheduler.rang(scheduler.due())
+
+    def stop(alert):
+        response = client.post("/api/timers/stop", auth=AUTH, params={"alert_id": alert.id})
+        assert response.is_success
+        return response.json()
+
+    stopped = stop(first)
+    assert stopped["stopped"] == [first.id]
+    assert [(a["id"], a["status"]) for a in stopped["active"]] == [(second.id, "ringing")]
+    assert stop(first)["stopped"] == []
+    scheduler.snooze(60)
+    stale = stop(second)
+    assert stale["stopped"] == []
+    assert [(a["id"], a["status"]) for a in stale["active"]] == [(second.id, "pending")]
+
+
 def _streaming_client(tmp_path, *, fail_at=None):
     """A client whose worker streams the in-process conversation, like the real one."""
     from unittest.mock import Mock
