@@ -1,6 +1,6 @@
 # Arietta Voice Roadmap
 
-Revised November 13, 2026. This replaces the October plan, which is preserved
+Revised November 27, 2026. This replaces the October plan, which is preserved
 with its full status log in
 [docs/archive/ROADMAP-2026-10.md](docs/archive/ROADMAP-2026-10.md).
 
@@ -8,41 +8,37 @@ with its full status log in
 Silicon Mac — one that answers about as fast as a person would, can actually do
 things, remembers its owner, and is pleasant to run and configure.
 
-## Where the project stands
+## Release priorities · November 27, 2026
 
-The October work built a strong foundation and then stalled inside it.
+The stable release is `0.2.0`. The current candidate, `0.3.0rc1`, already
+supports timers and reminders, arithmetic, answers from notes, optional weather
+and web search, and tools supplied by MCP servers. The console exposes nine
+views, including streamed text chat and private persona and memory editors.
 
-**Solid and worth keeping**
+1. **Get a new owner to a useful answer.** Home now opens text chat directly.
+   Try the time or arithmetic example, send it, then navigate back. Repeat on
+   a phone-sized screen. Before release, have a first-time user try this from
+   the install instructions and record where they need help.
+2. **Qualify the voice experience on the default ONNX stack.** Run the standing
+   100-turn benchmark and the deferred quiet-room 30-minute Jabra soak. Record
+   first-audio median/p95, audible interruption-to-silence, false cutoffs and
+   audio faults. Use the Milestone 1 targets below to decide whether to release
+   or fix the largest measured delay. The opt-in MLX path still needs its own
+   live qualification before a default change.
+3. **Prove one everyday workflow end to end.** Set a reminder by voice, check
+   it in Home, and verify it fires once across a restart. For note retrieval,
+   add a fact, ask for it in Chat, edit it, and check that the answer changes.
+   Use these journeys with prospective users before expanding integrations.
 
-- Privacy by default: no passive transcript logging, minimal public health
-  endpoint, private config/persona overrides, admin credentials required.
-- Reliability: bounded audio buffers, a killable serialized inference worker,
-  per-turn deadlines and cancellation, device reconnect, background memory jobs.
-- Streaming plumbing: provider token streaming into clause-level Kokoro
-  synthesis, AEC-based barge-in, pre-roll capture.
-- 605 passing tests, Apple Silicon CI, a synthetic evaluation corpus and a
-  repeatable latency benchmark.
-
-**Where it went off course**
-
-- **Latency did not move.** The baseline was 2,362 ms median from end of speech
-  to first audio. After streaming, cancellation and the Kokoro comparisons, the
-  closest later measurement for the default stack is 2,447 ms. The old Phase 2
-  target was a 30% reduction. (Protocols differ slightly; the conclusion does
-  not.)
-- **Streaming is bypassed in the default configuration.** When model tools are
-  enabled — the default — every turn first runs a complete, unstreamed planning
-  generation, and a direct answer from that call is spoken only after it
-  finishes.
-- **Effort went to measurement instead of outcomes.** Nine commits and nine
-  reports went to comparing ONNX and MLX Kokoro and chasing the audio faults
-  that surfaced, for a 3% end-to-end gain. The last 30-minute soak on the
-  opt-in MLX path failed its audio gate.
-- **The assistant cannot do much.** Its tools are local time, its own identity,
-  Markdown knowledge search and system info. The first real integration was
-  scheduled for the fourth of five phases.
-- **Nothing shipped.** The version was still an untagged `0.1.0` with a large
-  unreleased changelog. (Since then: `0.2.0` is released; see Milestone 0.)
+The ONNX Model Zoo ended Git LFS downloads in July 2025 and directs users
+to Hugging Face. Arietta gets Kokoro and Smart Turn from their publishers.
+On November 27 all three configured model and voice URLs returned HTTP 206
+to one-byte requests. The installed Kokoro ONNX engine also synthesized “Your
+timer is ready” from the cache (31,744 samples at 24 kHz). Keep the speech-engine
+decision based on live performance.
+[Model Zoo notice](https://github.com/onnx/models/blob/main/README.md) ·
+[Kokoro assets](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0) ·
+[Smart Turn model](https://huggingface.co/pipecat-ai/smart-turn-v3/blob/main/smart-turn-v3.2-cpu.onnx).
 
 ## How this roadmap works
 
@@ -294,8 +290,6 @@ Done:
   effective configuration by section instead of a JSON dump.
 - Chat answers stream clause by clause (server-sent events), and Home has a
   per-turn latency bar from the Milestone 1 stage timings.
-
-Still to do:
 
 - Push status updates over server-sent events instead of polling — done for
   the runtime status on Home.

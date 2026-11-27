@@ -315,7 +315,7 @@ def registry(tmp_path):
 
 def pin_clock(registry, now):
     """Fix "now" for the tools and for the store's own check that a time is ahead."""
-    for name in ("set_reminder", "set_alarm"):
+    for name in ("set_reminder", "set_alarm", "cancel_timer"):
         registry.tools[name].clock = lambda: now
         registry.tools[name].store.clock = now.timestamp
 

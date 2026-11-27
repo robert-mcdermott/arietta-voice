@@ -42,7 +42,12 @@ function render() {
   const log = $("#chat-log");
   if (!chat.history.length && !chat.pending) {
     log.innerHTML = `<div class="chat-empty"><strong>Chat with ${escapeHtml(assistantName())}</strong>
-      Type a message to test answers, knowledge and tools without using the microphone.</div>`;
+      <p>Ask a question, or start with one of these.</p>
+      <div class="chat-starters">
+        <button class="btn" type="button" data-starter>What time is it?</button>
+        <button class="btn" type="button" data-starter>What is 17 times 23?</button>
+      </div></div>`;
+    updateStarters();
     return;
   }
   const last = chat.history[chat.history.length - 1];
@@ -70,6 +75,13 @@ function setPending(pending) {
   $("#chat-send").disabled = pending;
   $("#chat-clear").disabled = pending;
   $("#chat-message").disabled = pending;
+}
+
+function updateStarters() {
+  const buttons = [...document.querySelectorAll("#chat-log [data-starter]")];
+  const draft = $("#chat-message").value;
+  const customDraft = draft.trim() && !buttons.some((button) => button.textContent === draft);
+  for (const button of buttons) button.disabled = Boolean(customDraft);
 }
 
 function autosize() {
@@ -173,12 +185,23 @@ export function initChat() {
     render();
   });
   $("#chat-log").addEventListener("click", (event) => {
+    const starter = event.target.closest("[data-starter]");
+    if (starter) {
+      const input = $("#chat-message");
+      input.value = starter.textContent;
+      autosize();
+      input.focus();
+      return;
+    }
     const button = event.target.closest("[data-chat-answer]");
     if (!button || chat.pending) return;
     $("#chat-message").value = button.dataset.chatAnswer;
     guard(send)();
   });
-  $("#chat-message").addEventListener("input", autosize);
+  $("#chat-message").addEventListener("input", () => {
+    autosize();
+    updateStarters();
+  });
   $("#chat-message").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();

@@ -26,6 +26,7 @@
         </div>
       </div>
 
+      <select id="section-picker" aria-label="Console section"></select>
       <nav class="nav" aria-label="Sections">
         <button class="nav-button active" data-view="home">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.5"/></svg>
@@ -112,6 +113,7 @@
               <p class="hero-sub" id="hero-sub"></p>
               <div class="row hero-actions">
                 <button class="btn primary" id="runtime-start" type="button">Start listening</button>
+                <button class="btn" data-view-target="chat" type="button">Open text chat</button>
                 <button class="btn" id="runtime-restart" type="button">Restart</button>
                 <button class="btn danger" id="runtime-stop" type="button">Stop</button>
               </div>
