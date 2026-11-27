@@ -2,17 +2,14 @@
 
 ![Arietta Logo](assets/arietta_logo.png)
 
-Arietta Voice is a local-first framework for building a wake-word-driven voice
-assistant on Apple Silicon Macs. It combines local speech-to-text,
-text-to-speech, turn detection, tool routing, markdown knowledge retrieval, and
-a web admin console into a customizable assistant runtime. It's like your own private,
-custom, locally host Alexa/Echo, but better.
+Arietta Voice is a personal voice assistant for Apple Silicon Macs. Say
+“Bridget, set a timer for ten minutes,” ask it to convert recipe quantities,
+or give it a Markdown note and ask about it later. Speech recognition,
+answers and speech synthesis run on your Mac by default.
 
-The project is meant to become *your* assistant, not a finished general-purpose
-assistant out of the box. As shipped, it is mostly a working runtime and admin
-surface; it becomes useful when you provide the assistant persona in `SOUL.md`,
-add knowledge articles for your environment, configure the wake word, and add
-tools for the things you want it to do.
+The web console lets you type to the same assistant, see when a reminder is
+due, and edit the notes or persona it uses. You can also connect external
+tools for jobs such as checking the weather or controlling your home.
 
 The default assistant persona is named `Bridget`, and the default wake word is
 also `Bridget`. Both are easy to change in your private
@@ -131,12 +128,15 @@ HTTP Basic credentials are not encrypted by HTTP itself. The API rejects
 untrusted Host headers and cross-origin browser mutations, and marks responses
 non-cacheable. These controls do not provide TLS or a multi-user permission model.
 
-The console has seven sections: **Home** (live assistant status, runtime
-controls, timers, reminders and alarms, the last turn's timing and the current
-exchange), **Chat** (answers stream as they are written), **Knowledge**,
-**Tools**, **Activity** (the event log), **System** (health checks, audio and
-process detail) and **Settings** (common settings as forms, plus everything in
-effect). It follows your system light or dark preference.
+For a first conversation, choose **Open text chat** on Home, select **What time
+is it?**, and press **Send**. To try voice, return to Home, choose **Start
+listening**, and wait for the wake-word prompt.
+
+Home also shows timers, reminders, alarms and the last spoken turn's timing.
+Use **Knowledge** for notes, **Persona** for personality and memory, **Tools**
+for capabilities, and **Connections** for MCP servers. **Activity**, **System**
+and **Settings** cover the event log, diagnostics and configuration. On smaller
+screens the section picker takes you to any of the nine pages.
 
 ![The console's Home page: the assistant listening, a pasta timer counting down, an alarm and a reminder, the last turn's timing and recent activity](assets/arietta_console.png)
 

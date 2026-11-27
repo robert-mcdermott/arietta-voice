@@ -54,8 +54,9 @@ async function loadView(view) {
 }
 
 function switchView(view, { updateHash = true } = {}) {
-  if (!VIEWS[view]) view = "home";
+  if (!Object.hasOwn(VIEWS, view)) view = "home";
   currentView = view;
+  $("#section-picker").value = view;
   $$(".nav-button").forEach((button) => {
     const active = button.dataset.view === view;
     button.classList.toggle("active", active);
@@ -68,7 +69,7 @@ function switchView(view, { updateHash = true } = {}) {
   $("#view-title").textContent = VIEWS[view][0];
   $("#view-sub").textContent = VIEWS[view][1];
   document.title = `${VIEWS[view][0]} · Arietta Voice`;
-  if (updateHash && location.hash !== `#/${view}`) history.replaceState(null, "", `#/${view}`);
+  if (updateHash && location.hash !== `#/${view}`) history.pushState(null, "", `#/${view}`);
   guard(loadView)(view);
 }
 
@@ -101,6 +102,9 @@ function initTheme() {
 }
 
 function init() {
+  const picker = $("#section-picker");
+  for (const [view, [title]] of Object.entries(VIEWS)) picker.add(new Option(title, view));
+  picker.addEventListener("change", () => switchView(picker.value));
   initTheme();
   initChat();
   initKnowledge();
@@ -166,7 +170,11 @@ function init() {
   }, OVERVIEW_POLL_MS);
   setInterval(refreshView, VIEW_POLL_MS);
 
-  guard(loadOverview)().then(() => switchView(viewFromHash()));
+  const initialView = viewFromHash();
+  const view = Object.hasOwn(VIEWS, initialView) ? initialView : "home";
+  history.replaceState(null, "", `#/${view}`);
+  switchView(view, { updateHash: false });
+  guard(loadOverview)();
   guard(loadContentLoggingFlag)();
 }
 

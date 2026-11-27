@@ -42,7 +42,11 @@ function render() {
   const log = $("#chat-log");
   if (!chat.history.length && !chat.pending) {
     log.innerHTML = `<div class="chat-empty"><strong>Chat with ${escapeHtml(assistantName())}</strong>
-      Type a message to test answers, knowledge and tools without using the microphone.</div>`;
+      <p>Ask a question, or start with one of these.</p>
+      <div class="chat-starters">
+        <button class="btn" type="button" data-starter>What time is it?</button>
+        <button class="btn" type="button" data-starter>What is 17 times 23?</button>
+      </div></div>`;
     return;
   }
   const last = chat.history[chat.history.length - 1];
@@ -173,6 +177,14 @@ export function initChat() {
     render();
   });
   $("#chat-log").addEventListener("click", (event) => {
+    const starter = event.target.closest("[data-starter]");
+    if (starter) {
+      const input = $("#chat-message");
+      if (!input.value.trim()) input.value = starter.textContent;
+      autosize();
+      input.focus();
+      return;
+    }
     const button = event.target.closest("[data-chat-answer]");
     if (!button || chat.pending) return;
     $("#chat-message").value = button.dataset.chatAnswer;

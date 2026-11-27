@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from datetime import datetime
 
 from arietta_voice.timephrases import describe_when
@@ -33,14 +32,16 @@ class CancelTimerTool(BaseTool):
     timeout_s = 5.0
     speaks_for_itself = True
 
-    def __init__(self, context=None, store=None) -> None:
+    def __init__(self, context=None, store=None, clock=datetime.now) -> None:
         super().__init__(context)
+        self.clock = clock
         self.store = store if store is not None else store_for(context)
 
     def match(self, text):
         return cancel_request(text)
 
     def run(self, arguments):
+        now = self.clock()
         kind = arguments.get("kind") or "any"
         which = " ".join(str(arguments.get("which") or "").lower().split())
         candidates = [a for a in self.store.active() if kind == "any" or a.kind == kind]
@@ -56,23 +57,23 @@ class CancelTimerTool(BaseTool):
             ringing = [a for a in candidates if a.status == RINGING]
             chosen = ringing or (candidates if len(candidates) == 1 else [])
         if not chosen or (which and which != "all" and len(chosen) > 1):
-            names = [_name(alert) for alert in (chosen or candidates)]
+            names = [_name(alert, now) for alert in (chosen or candidates)]
             listed = ", ".join(names[:-1]) + f" or {names[-1]}"
             return _say(f"Which one: {listed}?")
         cancelled = self.store.cancel([alert.id for alert in chosen])
         if not cancelled:
             return _say("That one has already finished.")
         if len(cancelled) == 1:
-            return _say(f"Okay, I've cancelled {_name(cancelled[0])}.", cancelled)
+            return _say(f"Okay, I've cancelled {_name(cancelled[0], now)}.", cancelled)
         return _say(f"Okay, I've cancelled {len(cancelled)} {NOUNS[kind]}.", cancelled)
 
 
-def _name(alert) -> str:
+def _name(alert, now: datetime) -> str:
     if alert.kind == "timer":
         return f"your {timer_name(alert)}"
     if alert.kind == "alarm":
-        due = datetime.fromtimestamp(alert.due_at).astimezone()
-        when = describe_when(due, datetime.fromtimestamp(time.time()).astimezone())
+        due = datetime.fromtimestamp(alert.due_at, now.tzinfo)
+        when = describe_when(due, now)
         return f"your {alarm_name(alert)} {when}"
     return f"your reminder {reminder_phrase(alert)}"
 

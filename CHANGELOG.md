@@ -5,6 +5,14 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- Simultaneous first-time model downloads use independent temporary files.
+  Interrupted or truncated downloads can be retried.
+- Home opens text chat directly. Chat offers editable sample questions, the
+  console supports browser Back and Forward, and narrow screens have a section
+  picker with all nine pages.
+- Saving persona or memory preserves unfinished edits in the other editor and
+  text typed while a save is in progress.
+
 ## 0.3.0rc1 — 2026-11-14
 
 First release candidate for 0.3.0 (Milestone 1, "Feels instant"): answers

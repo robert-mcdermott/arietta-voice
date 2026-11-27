@@ -172,6 +172,10 @@ pre,
   color: var(--muted);
 }
 
+#section-picker {
+  display: none;
+}
+
 .nav {
   display: flex;
   flex-direction: column;
@@ -1135,6 +1139,13 @@ details.fold[open] > summary {
   color: var(--muted);
 }
 
+.chat-starters {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .chat-empty strong {
   display: block;
   margin-bottom: 6px;
@@ -1760,8 +1771,16 @@ progress::-moz-progress-bar {
     display: none;
   }
 
+  #section-picker {
+    display: block;
+    width: auto;
+    flex: 1;
+    min-height: 44px;
+    min-width: 0;
+  }
+
   .nav {
-    flex-direction: row;
+    display: none;
   }
 
   .nav-button {
@@ -1807,8 +1826,12 @@ progress::-moz-progress-bar {
     justify-content: flex-start;
   }
 
+  .page:has(#chat.active) #poll-status {
+    display: none;
+  }
+
   .chat {
-    height: calc(100vh - 190px);
+    height: calc(100dvh - 190px);
   }
 }
 

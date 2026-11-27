@@ -39,7 +39,10 @@ function describeRuntime(runtime, assistant) {
     if (runtime.lifecycle === "starting") {
       return { orb: "starting", title: "Starting up…", sub: runtime.note };
     }
-    return { orb: "offline", title: "Not running", sub: runtime.note };
+    const sub = runtime.lifecycle === "missing"
+      ? wakeEnabled ? `Once listening, say “${wake}” to begin.` : "Once listening, ask your question aloud."
+      : runtime.note;
+    return { orb: "offline", title: "Voice is stopped", sub };
   }
   const turns = Number(runtime.session_turn_count || 0);
   const session = runtime.session_active

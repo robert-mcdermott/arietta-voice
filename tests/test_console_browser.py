@@ -192,3 +192,41 @@ def test_a_script_error_or_failed_request_is_caught(console, page):
     page.wait_for_timeout(500)
     assert any("synthetic failure" in problem for problem in page.problems)
     assert any("HTTP 404" in problem for problem in page.problems)
+
+
+def test_phone_navigation_and_first_chat(console, page):
+    page.set_viewport_size({"width": 375, "height": 800})
+    page.goto(console)
+    page.get_by_role("button", name="Open text chat").click()
+    page.get_by_role("button", name="What time is it?").click()
+    composer = page.get_by_role("textbox", name="Message", exact=True)
+    assert composer.input_value() == "What time is it?"
+    picker = page.get_by_role("combobox", name="Console section")
+    picker.select_option("settings")
+    page.go_back()
+    assert picker.input_value() == "chat"
+    assert composer.input_value() == "What time is it?"
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    # Exercise the real instant tool through the streaming endpoint.
+    page.get_by_role("button", name="Send", exact=True).click()
+    page.locator("#chat-log .assistant .msg-meta").wait_for()
+    assert "time" in page.locator("#chat-log .assistant .msg-body").inner_text().lower() or (
+        "local_time" in page.locator("#chat-log .assistant .msg-meta").inner_text()
+    )
+    assert page.problems == []
+
+
+def test_saving_one_editor_preserves_the_other_draft(console, page):
+    page.goto(f"{console}/#/persona")
+    sync_api.expect(page.locator("#persona-save")).to_be_enabled()
+    page.fill("#persona-content", "A scratch persona.")
+    page.fill("#memory-content", "An unfinished memory.")
+    page.click("#persona-save")
+    sync_api.expect(page.locator("#persona-save")).to_have_text("Save")
+    assert page.input_value("#memory-content") == "An unfinished memory."
+    assert page.locator("#memory-save").inner_text() == "Save changes"
+    page.fill("#persona-content", "Another unfinished persona.")
+    page.click("#memory-save")
+    sync_api.expect(page.locator("#memory-save")).to_have_text("Save")
+    assert page.input_value("#persona-content") == "Another unfinished persona."
+    assert page.problems == []
