@@ -43,6 +43,7 @@ function viewFromHash() {
 let viewLoading = false;
 
 async function loadView(view) {
+  if (view === "home") await loadOverview();
   if (view === "chat") showChat();
   if (view === "knowledge") await loadKnowledgeFiles();
   if (view === "persona") await loadPersona();
@@ -81,6 +82,7 @@ async function refreshView() {
     if (currentView === "activity" && activityOnFirstPage()) await loadActivity();
     if (currentView === "tools" && !toolsBusy()) await loadTools();
     if (currentView === "knowledge" && !knowledgeEditing()) await loadKnowledgeFiles();
+    if (currentView === "persona" && !personaDirty()) await loadPersona();
     if (currentView === "system") await loadDiagnostics();
   } catch (error) {
     setError(error.message);
@@ -174,7 +176,7 @@ function init() {
   const view = Object.hasOwn(VIEWS, initialView) ? initialView : "home";
   history.replaceState(null, "", `#/${view}`);
   switchView(view, { updateHash: false });
-  guard(loadOverview)();
+  if (view !== "home") guard(loadOverview)();
   guard(loadContentLoggingFlag)();
 }
 

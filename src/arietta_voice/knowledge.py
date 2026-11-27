@@ -86,6 +86,13 @@ class KnowledgeMatch:
     section_title: str | None
     snippet: str
     score: float
+    section_id: str = ""
+
+    def prompt_line(self, label: str) -> str:
+        heading = self.title
+        if self.section_title and self.section_title != self.title:
+            heading = f"{self.title} — {self.section_title}"
+        return f"[{label}] {heading}: {self.snippet}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,10 +110,7 @@ class KnowledgeSearchResult:
         """
         lines = [NOTES_HEADING]  # How to use them is in the system prompt (NOTES_RULE).
         for index, match in enumerate(self.matches, start=1):
-            heading = match.title
-            if match.section_title and match.section_title != match.title:
-                heading = f"{match.title} — {match.section_title}"
-            lines.append(f"[{index}] {heading}: {match.snippet}")
+            lines.append(match.prompt_line(str(index)))
         return "\n".join(lines)
 
 
@@ -534,25 +538,43 @@ def _directory_signature(directory: Path) -> tuple[tuple[str, int, int], ...] | 
     return tuple(signature)
 
 
+def _is_searchable_note(relative: Path, resolved_root: Path) -> bool:
+    if (
+        relative.is_absolute()
+        or any(part.startswith(("_", ".")) for part in relative.parts)
+        or relative.name in IGNORED_FILENAMES
+        or relative.suffix.lower() not in SUPPORTED_EXTENSIONS
+    ):
+        return False
+    try:
+        path = (resolved_root / relative).resolve()
+        return path.is_relative_to(resolved_root) and path.is_file()
+    except (OSError, RuntimeError):
+        return False
+
+
 def _iter_knowledge_files(directory: Path) -> list[Path]:
-    files: list[Path] = []
     root = directory.resolve()
-    for path in sorted(directory.rglob("*")):
-        if any(part.startswith(("_", ".")) for part in path.relative_to(directory).parts):
-            continue
-        try:
-            if not path.resolve().is_relative_to(root):
-                continue
-        except (OSError, RuntimeError):
-            continue
-        if not path.is_file():
-            continue
-        if path.name in IGNORED_FILENAMES:
-            continue
-        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            continue
-        files.append(path)
-    return files
+    return [
+        path
+        for path in sorted(directory.rglob("*"))
+        if _is_searchable_note(path.relative_to(directory), root)
+    ]
+
+
+def cited_passage(
+    config: KnowledgeConfig, relative: Path, section_id: str
+) -> _KnowledgeSection | None:
+    """Look up the cited chunk in the current note without trusting a stale index."""
+    root = config.directory
+    if not config.enabled or not _is_searchable_note(relative, root.resolve()):
+        return None
+    for section in _parse_document(
+        root / relative, root=root, snippet_char_limit=config.snippet_char_limit
+    ):
+        if section.section_id == section_id:
+            return section
+    return None
 
 
 def _load_sections(directory: Path, *, snippet_char_limit: int) -> list[_KnowledgeSection]:
@@ -718,6 +740,12 @@ def _score_section(section: _KnowledgeSection, query: str, query_tokens: tuple[s
     normalized_query = _clean_text(query).lower()
     if normalized_query and normalized_query in section.searchable_text:
         score += 4.0
+    elif len(query_tokens) > 1 and len(matched_tokens) == len(query_tokens):
+        # "Where is my spare key?" should find "the spare key" in the body,
+        # even when neither word appears in the note title or heading.
+        phrase = re.escape(" ".join(query_tokens))
+        if re.search(rf"\b{phrase}\b", section.snippet, re.IGNORECASE):
+            score += 4.0
 
     coverage = len(matched_tokens) / max(1, len(query_tokens))
     score *= 0.65 + (coverage * 0.75)
@@ -775,6 +803,7 @@ def _knowledge_result(
                 section_title=match.section_title,
                 snippet=match.snippet,
                 score=round(match.score, 3),
+                section_id=match.section_id,
             )
             for match in matches
         ),

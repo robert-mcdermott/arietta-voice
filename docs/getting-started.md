@@ -143,6 +143,21 @@ Use tools when they are the source of truth.
 Do not invent device states or automation results.
 ```
 
+### Review a learned preference
+
+In **Settings → Memory and privacy**, enable **Remember facts between conversations**
+to turn on learning. In Chat or by voice, tell Arietta something you want it to
+remember, such as “I prefer jasmine tea.” After a completed turn, the configured
+chat model extracts durable facts during idle time. If you use a remote chat
+provider, it also processes these memory updates.
+
+Open **Persona → Memory** to see the saved fact and whether it came from Chat
+or voice. The list refreshes while the page is open. Select **Edit** to correct
+a fact or **Forget** to remove it. To check the result, clear Chat and ask
+“Which tea do I prefer?” A conversation that is already open still has its
+earlier messages. Existing single-line memory bullets are editable too, and
+**Edit the full memory file** opens free-form Markdown.
+
 ## 3. Add Knowledge
 
 Knowledge is the easiest and safest way to teach Arietta new facts.
@@ -172,6 +187,18 @@ Quiet hours are from 10 PM to 7 AM on weekdays.
 
 Guests should use the network named "Guest" and the password stored in the entry drawer card.
 ```
+
+### Check an answer against a note
+
+In console **Chat**, ask “According to my notes, where is my spare key?”
+When the assistant cites a note, select the linked title and heading in its
+answer. A new tab shows the exact passage and the note's relative file path.
+Long sections can have several passages.
+
+After editing a fact in **Knowledge**, clear the conversation and ask again
+to check the current note. An old link to a changed or deleted passage shows
+that the passage is unavailable. An explicit notes lookup with no matches
+reports that the fact could not be found.
 
 ### Recommended structure
 

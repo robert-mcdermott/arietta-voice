@@ -89,6 +89,7 @@ class AriettaVoiceRuntime:
         self._last_audio_statistics = {}
         self.turn_stage = "idle"
         self.turn_started_at: float | None = None
+        self._turn_started_ns: int | None = None
         self._stage_started_at: float | None = None
         self._turn_deadline: float | None = None
         self._turn_token = None
@@ -435,6 +436,7 @@ class AriettaVoiceRuntime:
         self._turn_keys = keypress_monitor
         self._turn_thread_ident = threading.get_ident()
         self._turn_microphone = microphone
+        self._turn_started_ns = time.time_ns()
         self.turn_started_at = time.monotonic()
         self._turn_deadline = self.turn_started_at + self.config.runtime.turn_timeout_s
         try:
@@ -471,6 +473,7 @@ class AriettaVoiceRuntime:
             self._turn_token = self._turn_keys = self._turn_thread_ident = None
             self._turn_microphone = None
             self.turn_started_at = self._turn_deadline = None
+            self._turn_started_ns = None
             self.turn_stage = "idle"
             capture_phase(microphone, "listening")
             self._publish_status(force=True)
@@ -676,7 +679,9 @@ class AriettaVoiceRuntime:
 
     def _remember_turn(self, transcript: str, response: str) -> None:
         if self.config.memory.enabled:
-            self.memory_jobs.submit(transcript, response, self.session.turn_count)
+            self.memory_jobs.submit(
+                transcript, response, self.session.turn_count, submitted_ns=self._turn_started_ns
+            )
 
     def _handle_active_turn(
         self,
@@ -838,6 +843,7 @@ class AriettaVoiceRuntime:
         self._turn_keys = keypress_monitor
         self._turn_thread_ident = threading.get_ident()
         self._turn_microphone = microphone
+        self._turn_started_ns = time.time_ns()
         self.turn_started_at = time.monotonic()
         self._turn_deadline = self.turn_started_at + self.config.runtime.turn_timeout_s
         self.last_error = None
@@ -883,6 +889,7 @@ class AriettaVoiceRuntime:
             self.last_turn_duration_ms = round((time.monotonic() - self.turn_started_at) * 1000)
             self._log_turn_timing()
             self.turn_started_at = self._turn_deadline = None
+            self._turn_started_ns = None
             self.turn_stage = "idle"
             self._publish_status(force=True)
 

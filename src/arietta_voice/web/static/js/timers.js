@@ -52,7 +52,7 @@ function activeItem(alert) {
   return `<li class="timer-item${ringing ? " ringing" : ""}">
     <div><strong>${escapeHtml(title(alert))}</strong><div class="timer-sub">${status}</div></div>
     ${count}
-    <button class="btn small" type="button" data-cancel="${escapeHtml(alert.id)}">${ringing ? "Stop" : "Cancel"}</button>
+    <button class="btn small" type="button" data-${ringing ? "stop" : "cancel"}="${escapeHtml(alert.id)}">${ringing ? "Stop" : "Cancel"}</button>
   </li>`;
 }
 
@@ -161,6 +161,11 @@ async function cancelTimer(id) {
   renderTimers(await api(`/api/timers/${encodeURIComponent(id)}/cancel`, { method: "POST" }));
 }
 
+async function stopRinging(id) {
+  const query = id ? `?alert_id=${encodeURIComponent(id)}` : "";
+  renderTimers(await api(`/api/timers/stop${query}`, { method: "POST" }));
+}
+
 export function initTimers() {
   $$(".segmented .seg").forEach((button) =>
     button.addEventListener("click", () => setKind(button.dataset.kind)),
@@ -172,12 +177,13 @@ export function initTimers() {
     });
   }
   $("#timers-list").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-cancel]");
-    if (button) guard(cancelTimer)(button.dataset.cancel);
+    const button = event.target.closest("[data-cancel], [data-stop]");
+    if (button?.dataset.stop) guard(stopRinging)(button.dataset.stop);
+    else if (button?.dataset.cancel) guard(cancelTimer)(button.dataset.cancel);
   });
   $("#timers-stop").addEventListener(
     "click",
-    guard(async () => renderTimers(await api("/api/timers/stop", { method: "POST" }))),
+    guard(() => stopRinging()),
   );
   setInterval(tick, 1000);
 }

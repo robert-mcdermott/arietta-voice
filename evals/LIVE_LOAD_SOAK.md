@@ -231,3 +231,59 @@ without calling incomplete coverage a pass. Marker contents are never executed.
 window; record the source run rather than implying both occurred in one worker.
 Reports, synthetic profiles, markers and host/resource traces remain local and
 ignored by Git. There is no production-app soak mode or spoken control command.
+
+## November 27, 2026 · default ONNX on the Jabra
+
+The opening live check passed. The operator confirmed that interrupting a count
+stopped playback without overlap, the assistant answered six, and goodbye was
+followed by a farewell and 25 seconds of silence. Events confirmed one intended
+interruption and an explicit goodbye. One microphone chunk dropped during
+transcription in the opening window.
+
+The first load attempt stopped at 56.5 seconds. Five synthetic turns completed
+normally. The sixth had a matching fixture transcript and an interruption during
+speaker playback, so the runner stopped with `invalid_load_turn`. There were no
+output underflows, alignment resets or additional capture drops during load.
+The four-model worker stayed resident. The event log does not identify the
+source of the sound. Shutdown was clean and the protected files matched. This
+attempt did not reach the closing check or meet the 30-minute criterion.
+Local evidence: `tmp/live-load-soak/20261127T193015.635365Z/`.
+
+After the operator confirmed a quiet room, a fresh run completed **1,801.8
+seconds and 206 valid load turns**. It reused the separately recorded opening
+check via `--skip-before`. All ten fixtures ran with one four-model worker.
+There were zero load interruptions, worker restarts, device reconnects, capture
+queue drops or native input overflows. Transcripts matched the normalized
+fixture exactly on 124/206 turns. The live/load profile disables tools. The
+separate latency benchmark offered the shipped tools.
+
+**The zero-fault audio criteria failed.** Turns 36, 59 and 67 each recorded
+one output underflow and one corresponding AEC reset. In those three contexts,
+the intervals between writes were 75.8, 42.3 and 33.7 ms, of which 75.6, 42.1
+and 33.5 ms were capture polling. Each reported zero producer wait. This points
+to capture work or scheduling between speaker writes as an investigation
+target. The final 139 load turns had no further flags.
+
+Sampled active MLX allocation (the local chat model also uses MLX) stayed at
+4,924.7 MiB, with an allocator peak of 9,821.4 MiB. These are allocator
+measurements, not the total memory footprint of ONNX and the application.
+The host thermal state was fair in 341 of 350 load samples and nominal in nine.
+Local evidence: `tmp/live-load-soak/20261127T193424.098662Z/`.
+
+The closing operator window expired after eight minutes without a detected wake
+or goodbye. The post-load spoken check is **unverified**. The runner recorded
+`operator_window_expired`, retained the completed duration and all 206 turns,
+and shut down the worker and audio devices cleanly. All runtime gates passed;
+the two failed audio gates were output underflows and alignment resets.
+Protected config and knowledge fingerprints matched after both soak attempts.
+
+A fresh 182.3-second ONNX session on the same Jabra completed the missed
+operator protocol later on November 27. The operator heard counting stop
+without overlap, the answer six, a farewell, and silence. The redacted events
+showed one voice interruption, one explicit goodbye and a return to waiting
+for the wake word, with no further playback for over 25 seconds. All automated
+live checks passed. The run recorded zero speaker underflows, AEC resets,
+capture drops and native input overflows. The devices stopped and the protected
+files matched. Python's resource tracker warned about two semaphores at process
+exit. The original soak's closing window and three underflows remain recorded
+above. Follow-up evidence: `tmp/hardware-validation/20261127T202749.568810Z/`.

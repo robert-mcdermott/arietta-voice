@@ -14,6 +14,20 @@ function assistantName() {
   return overview.state?.assistant?.name || "Assistant";
 }
 
+function messageBody(message) {
+  const text = escapeHtml(message.content);
+  if (!message.meta?.sources?.length) return text;
+  const sources = new Map(message.meta.sources.map((source) => [source.label, source]));
+  return text.replace(/\[(S[1-9]\d*)\]/g, (marker, label) => {
+    const source = sources.get(label);
+    if (!source) return marker;
+    const params = new URLSearchParams({ path: source.path, section_id: source.section_id });
+    const name = source.section && source.section !== source.title
+      ? `${source.title} › ${source.section}` : source.title;
+    return `<a class="note-citation" href="/admin/knowledge/passage?${escapeHtml(params.toString())}" target="_blank" rel="noopener noreferrer" aria-label="Open cited passage: ${escapeHtml(name)} (new tab)">[${escapeHtml(name)}]</a>`;
+  });
+}
+
 function messageMeta(message) {
   if (message.role !== "assistant" || !message.meta) return "";
   const parts = [];
@@ -55,7 +69,7 @@ function render() {
     .filter((message) => message.content)
     .map(
       (message) => `<div class="msg ${message.role === "user" ? "user" : "assistant"}">
-        <div class="msg-body">${escapeHtml(message.content)}</div>${messageMeta(message)}${
+        <div class="msg-body">${messageBody(message)}</div>${messageMeta(message)}${
           message === last && !chat.pending ? answerButtons(message) : ""
         }</div>`,
     )
@@ -94,7 +108,10 @@ async function send() {
   const textarea = $("#chat-message");
   const message = textarea.value.trim();
   if (!message || chat.pending) return;
-  const history = chat.history.slice(-10).map(({ role, content }) => ({ role, content }));
+  const history = chat.history.slice(-10).map(({ role, content, meta }) => {
+    for (const source of meta?.sources || []) content = content.replaceAll(`[${source.label}]`, "");
+    return { role, content };
+  });
   chat.requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
@@ -135,6 +152,7 @@ async function send() {
       model_tool: result.model_tool,
       confirmation: result.confirmation,
       smarter: result.smarter,
+      sources: result.sources,
       seconds: (performance.now() - started) / 1000,
       first: reply.firstAt ? (reply.firstAt - started) / 1000 : null,
     };

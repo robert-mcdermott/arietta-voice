@@ -5,23 +5,27 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi import Path as ApiPath
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from arietta_voice.admin_auth import load_admin_credentials
+from arietta_voice.memory import MemoryConflict
 from arietta_voice.web.schemas import (
     ChatRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
     McpImportRequest,
     McpServerRequest,
+    MemoryEntryEdit,
+    MemoryFileRequest,
     SettingsUpdateRequest,
     TextFileRequest,
     TimerCreateRequest,
@@ -66,7 +70,10 @@ def create_app(
         try:
             yield
         finally:
-            service.worker.close()
+            try:
+                service.memory_jobs.close()
+            finally:
+                service.worker.close()
 
     app = FastAPI(
         title="Arietta Voice API",
@@ -76,6 +83,11 @@ def create_app(
         openapi_url=None,
         lifespan=lifespan,
     )
+
+    @app.exception_handler(MemoryConflict)
+    async def memory_conflict(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
     app.state.arietta_service = service
     allowed_hosts = ["localhost", "127.0.0.1", "[::1]"]
     extra_hosts = os.environ.get("ARIETTA_ADMIN_ALLOWED_HOSTS", "")
@@ -179,9 +191,28 @@ def create_app(
 
     @app.put("/api/memory")
     def api_memory_save(
-        payload: TextFileRequest, _user: str = Depends(require_admin)
+        payload: MemoryFileRequest, _user: str = Depends(require_admin)
     ) -> dict[str, Any]:
-        return svc().save_memory(payload.content)
+        return svc().save_memory(payload.content, payload.revision)
+
+    @app.put("/api/memory/entries/{entry_id}")
+    def correct_memory(
+        entry_id: int, payload: MemoryEntryEdit, _user: str = Depends(require_admin)
+    ):
+        try:
+            return svc().change_memory_entry(entry_id, payload.revision, payload.content)
+        except MemoryConflict:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/memory/entries/{entry_id}")
+    def forget_memory(
+        entry_id: int,
+        revision: str = Query(pattern=r"^[0-9a-f]{64}$"),
+        _user: str = Depends(require_admin),
+    ):
+        return svc().change_memory_entry(entry_id, revision)
 
     @app.post("/api/runtime/start")
     def api_runtime_start(_user: str = Depends(require_admin)) -> dict[str, Any]:
@@ -406,8 +437,11 @@ def create_app(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.post("/api/timers/stop")
-    def api_stop_timers(_user: str = Depends(require_admin)) -> dict[str, Any]:
-        return svc().stop_ringing()
+    def api_stop_timers(
+        alert_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{8}$"),
+        _user: str = Depends(require_admin),
+    ) -> dict[str, Any]:
+        return svc().stop_ringing(alert_id)
 
     @app.post("/api/timers/{alert_id}/cancel")
     def api_cancel_timer(
@@ -540,7 +574,36 @@ def create_app(
             "model_tool": result.model_tool,
             "confirmation": result.confirmation,
             "smarter": result.smarter,
+            "sources": result.sources,
         }
+
+    @app.get("/admin/knowledge/passage", response_class=HTMLResponse, include_in_schema=False)
+    def note_passage(
+        path: str,
+        section_id: str = Query(pattern=r"^[0-9a-f]{40}$"),
+        _user: str = Depends(require_admin),
+    ):
+        try:
+            match = svc().read_cited_passage(path, section_id)
+        except (ValueError, FileNotFoundError, NotADirectoryError):
+            match = None
+        if match is None:
+            title = "Cited passage unavailable"
+            body = "<p>This passage may have been edited or deleted. Ask again in Chat to check the current notes.</p>"
+        else:
+            title = escape(match.section_title or match.title)
+            body = (
+                f'<p class="muted">{escape(match.title)} · {escape(path)}</p>'
+                f"<blockquote>{escape(match.snippet)}</blockquote>"
+            )
+        return HTMLResponse(
+            f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{title} · Arietta Voice</title><script src="/static/js/theme.js"></script>'
+            f'<link rel="stylesheet" href="/static/css/console.css"></head>'
+            f'<body><main class="note-passage"><h1>{title}</h1>{body}</main></body></html>',
+            status_code=200 if match else 404,
+        )
 
     @app.get("/api/openapi.json")
     def api_openapi(_user: str = Depends(require_admin)) -> dict[str, Any]:

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from arietta_voice.config import AppConfig
-    from arietta_voice.knowledge import KnowledgeRetriever
+    from arietta_voice.knowledge import KnowledgeRetriever, KnowledgeSearchResult
 
 EMPTY_PARAMETERS: dict[str, Any] = {"type": "object", "properties": {}}
 
@@ -38,6 +38,8 @@ class ToolResult:
     content: str = ""
     speak: str | None = None
     data: dict[str, Any] = field(default_factory=dict)
+
+    knowledge: KnowledgeSearchResult | None = None
 
     @property
     def empty(self) -> bool:

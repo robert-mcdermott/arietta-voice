@@ -1,9 +1,41 @@
 from unittest.mock import Mock
 
+import pytest
+
 from arietta_voice.config import default_config
 from arietta_voice.conversation import ConversationService
 from arietta_voice.inference import InferenceEngine
 from arietta_voice.tools import ToolResult
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_console_cites_only_passages_referenced_this_turn(tmp_path, native):
+    config = default_config(tmp_path)
+    config.tools.enabled = ("search_knowledge",)
+    config.knowledge.directory.mkdir()
+    note = config.knowledge.directory / "garden.md"
+    note.write_text(
+        "# Garden\n\n## Clover\nClover flowers in May.\n\n## Juniper\nJuniper is evergreen.\n"
+    )
+    tool_call = (
+        '<|tool_call>call:search_knowledge{query:<|"|>juniper<|"|>}<tool_call|>'
+        if native
+        else '{"tool_call":{"name":"search_knowledge","arguments":{"query":"juniper"}}}'
+    )
+    replies = iter([tool_call, "Evergreen [S2]. Again [S2]. Unknown [S99].", "A general answer."])
+    prompts = []
+
+    def generate(messages, **kwargs):
+        prompts.append(messages)
+        return next(replies)
+
+    service = ConversationService(config, generate=generate, native_tools=native)
+    result = service.chat(message="Clover", cite_notes=True)
+    assert result.model_tool == "search_knowledge"
+    assert any("[S1] Garden — Clover" in m["content"] for m in prompts[0])
+    assert any("[S2] Garden — Juniper" in m["content"] for m in prompts[1])
+    assert [(s["label"], s["section"]) for s in result.sources] == [("S2", "Juniper")]
+    assert service.chat(message="Clover", cite_notes=True).sources == []
 
 
 def test_voice_and_console_share_policy_and_request_is_not_mutated(tmp_path):

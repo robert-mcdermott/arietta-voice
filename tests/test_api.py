@@ -430,6 +430,27 @@ def test_knowledge_file_crud_endpoints(tmp_path: Path) -> None:
     assert deleted.json()["deleted"] is True
 
 
+def test_chat_passage_is_authenticated_and_escapes_note_text(tmp_path, monkeypatch):
+    config_path = _write_api_config(tmp_path)
+    client, service = _client_with_service(config_path)
+    service.config.tools.enabled = ("search_knowledge",)
+    (tmp_path / "knowledge" / "racks.md").write_text(
+        "# Racks\n\n## Storage\nThe telescope is on rack <A>.\n\n## Storage\nCoats are on rack B.\n"
+    )
+    monkeypatch.setattr(service, "_llm_generate", lambda *args, **kwargs: "Rack A [S1].")
+    result = client.post("/api/chat", auth=AUTH, json={"message": "telescope"}).json()
+    (ref,) = result["sources"]
+    assert ref["path"] == "racks.md"
+    url = "/admin/knowledge/passage"
+    params = {"path": ref["path"], "section_id": ref["section_id"]}
+    assert client.get(url, params=params).status_code == 401
+    page = client.get(url, params=params, auth=AUTH)
+    assert page.status_code == 200 and page.headers["cache-control"] == "no-store"
+    assert "rack &lt;A&gt;" in page.text and "Coats" not in page.text
+    for path in ("../config/SOUL.md", ".hidden.md", "_draft.md", "/etc/hosts"):
+        assert client.get(url, params={**params, "path": path}, auth=AUTH).status_code == 404
+
+
 def test_knowledge_file_endpoint_rejects_path_traversal(tmp_path: Path) -> None:
     client = _client(_write_api_config(tmp_path))
 
@@ -806,6 +827,31 @@ def test_timer_endpoints_list_add_stop_and_cancel(tmp_path: Path) -> None:
     assert client.post("/api/timers/..%2Fx/cancel", auth=AUTH).status_code in (404, 422)
 
 
+def test_stop_one_ringing_alert_leaves_others_alone(tmp_path: Path) -> None:
+    from arietta_voice.timers import AlertScheduler, TimerStore
+
+    client, service = _client_with_service(_write_api_config(tmp_path))
+    store = TimerStore(service.config.timers.path)
+    first = store.add_timer(10, "first")
+    second = store.add_timer(10, "second")
+    scheduler = AlertScheduler(store, clock=lambda: second.due_at)
+    scheduler.rang(scheduler.due())
+
+    def stop(alert):
+        response = client.post("/api/timers/stop", auth=AUTH, params={"alert_id": alert.id})
+        assert response.is_success
+        return response.json()
+
+    stopped = stop(first)
+    assert stopped["stopped"] == [first.id]
+    assert [(a["id"], a["status"]) for a in stopped["active"]] == [(second.id, "ringing")]
+    assert stop(first)["stopped"] == []
+    scheduler.snooze(60)
+    stale = stop(second)
+    assert stale["stopped"] == []
+    assert [(a["id"], a["status"]) for a in stale["active"]] == [(second.id, "pending")]
+
+
 def _streaming_client(tmp_path, *, fail_at=None):
     """A client whose worker streams the in-process conversation, like the real one."""
     from unittest.mock import Mock
@@ -1083,3 +1129,18 @@ def test_runtime_status_is_pushed_when_it_changes(tmp_path: Path) -> None:
     assert events[0].startswith("retry:")
     data = [json.loads(e[len("data: ") :]) for e in events if e.startswith("data: ")]
     assert data == [{"state": "idle"}, {"state": "listening"}]  # Only changes are sent.
+
+
+def test_memory_entry_controls_require_auth_and_reject_a_stale_edit(tmp_path):
+    client = _client(_write_api_config(tmp_path))
+    client.put("/api/memory", auth=AUTH, json={"content": "- First preference"})
+    memory = client.get("/api/persona", auth=AUTH).json()["memory"]
+    url = "/api/memory/entries/0"
+    payload = {"content": "New preference", "revision": memory["revision"]}
+    assert client.put(url, json=payload).status_code == 401
+    assert client.delete(url, params={"revision": memory["revision"]}).status_code == 401
+    updated = client.put(url, auth=AUTH, json=payload).json()["memory"]
+    assert updated["entries"][0]["text"] == "New preference"
+    assert client.delete(url, auth=AUTH, params={"revision": memory["revision"]}).status_code == 409
+    assert client.put("/api/memory", auth=AUTH, json=payload).status_code == 409
+    assert client.get("/api/persona", auth=AUTH).json()["memory"] == updated

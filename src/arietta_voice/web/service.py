@@ -18,7 +18,7 @@ from arietta_voice import __version__
 from arietta_voice.config import AppConfig, config_to_dict, load_config
 from arietta_voice.conversation import ChatResult, ConversationService
 from arietta_voice.diagnostics import run_startup_diagnostics
-from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index
+from arietta_voice.knowledge import KnowledgeRetriever, build_knowledge_index, cited_passage
 from arietta_voice.llm import ChatModel, build_chat_model
 from arietta_voice.logging_utils import EventLogger
 from arietta_voice.mcp_servers import (
@@ -30,13 +30,14 @@ from arietta_voice.mcp_servers import (
 )
 from arietta_voice.mcp_servers import probe as mcp_probe
 from arietta_voice.mcp_servers.servers import MAX_SERVERS, merge_secrets
+from arietta_voice.memory import MemoryStore
+from arietta_voice.memory_jobs import MemoryJobs
 from arietta_voice.private_config import update_private_section, write_private_text
 from arietta_voice.prompts import PromptManager
 from arietta_voice.runtime_status import read_runtime_status
 from arietta_voice.runtime_supervisor import RuntimeSupervisor
 from arietta_voice.timephrases import describe_when, parse_duration, parse_when
 from arietta_voice.timers import (
-    RINGING,
     TimerStore,
     alarm_name,
     reminder_parts,
@@ -83,6 +84,10 @@ class AriettaApiService:
         )
         self._llm: ChatModel | None = None
         self.worker = InferenceWorker(self.config)
+        self._memory_changed_ns = 0
+        self.memory_jobs = MemoryJobs(
+            self.worker, timeout_s=self.config.runtime.turn_timeout_s, log=self.event_logger.log
+        )
         self._worker_model_pid: int | None = None
         self._mcp_lock = threading.Lock()
         self._mcp_tests: dict[str, dict[str, Any]] = {}  # The last Test of each server.
@@ -368,6 +373,9 @@ class AriettaApiService:
             "content": path.read_text(encoding="utf-8"),
         }
 
+    def read_cited_passage(self, file_path: str, section_id: str):
+        return cited_passage(self.config.knowledge, Path(file_path), section_id)
+
     def write_knowledge_file(self, file_path: str, content: str) -> dict[str, Any]:
         path = _resolve_knowledge_file(self.config, file_path)
         created = not path.exists()
@@ -465,8 +473,14 @@ class AriettaApiService:
         }
 
     def update_settings(self, changes: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        previously_enabled = self.config.memory.enabled
         changed = settings_module.apply(self.config, self._base_config_path(), changes)
         if changed:
+            if self.config.memory.enabled != previously_enabled:
+                self._memory_changed_ns = time.time_ns()
+            if previously_enabled and not self.config.memory.enabled:
+                self.memory_jobs.suspend()
+                self.memory_jobs.discard_pending()
             # The console's own worker reads settings when it starts.
             self.worker.invalidate()
             self.event_logger.log("api_settings_changed", settings=changed)
@@ -484,20 +498,22 @@ class AriettaApiService:
     def _private_persona_path(self) -> Path:
         return self._base_config_path().parent / "SOUL.local.md"
 
+    def memory_store(self):
+        return MemoryStore(
+            self.config.prompts.memory_path,
+            self.config.memory.enabled,
+            self.config.memory.consolidate_every_turns,
+        )
+
     def persona(self) -> dict[str, Any]:
         path = Path(self.config.prompts.soul_path)
         default = self._default_persona_path()
-        memory = Path(self.config.prompts.memory_path)
         return {
             "file": str(path),
             "private": path.resolve() != default.resolve(),
             "content": path.read_text(encoding="utf-8") if path.is_file() else "",
             "default": default.read_text(encoding="utf-8") if default.is_file() else "",
-            "memory": {
-                "enabled": bool(self.config.memory.enabled),
-                "file": str(memory),
-                "content": memory.read_text(encoding="utf-8") if memory.is_file() else "",
-            },
+            "memory": self.memory_store().inspect(),
         }
 
     def save_persona(self, content: str) -> dict[str, Any]:
@@ -519,10 +535,16 @@ class AriettaApiService:
             raise FileNotFoundError("The default persona file is missing")
         return self.save_persona(default.read_text(encoding="utf-8"))
 
-    def save_memory(self, content: str) -> dict[str, Any]:
-        path = Path(self.config.prompts.memory_path)
-        write_private_text(path, content.strip() + "\n" if content.strip() else "")
+    def save_memory(self, content: str, revision=None) -> dict[str, Any]:
+        self.memory_store().edit(
+            content.strip() + "\n" if content.strip() else "", revision=revision
+        )
         self.event_logger.log("api_memory_saved", chars=len(content))
+        return self.persona()
+
+    def change_memory_entry(self, entry_id, revision, content=None):
+        self.memory_store().edit(content, revision=revision, entry_id=entry_id)
+        self.event_logger.log("api_memory_forgotten" if content is None else "api_memory_corrected")
         return self.persona()
 
     # Timers and reminders. The voice runtime announces them; the console lists,
@@ -574,10 +596,9 @@ class AriettaApiService:
             raise FileNotFoundError(alert_id)
         return {"cancelled": alert_id, **self.timers()}
 
-    def stop_ringing(self) -> dict[str, Any]:
+    def stop_ringing(self, alert_id: str | None = None) -> dict[str, Any]:
         store = TimerStore(self.config.timers.path)
-        ringing = [alert.id for alert in store.active() if alert.status == RINGING]
-        stopped = store.cancel(ringing, outcome="dismissed") if ringing else []
+        stopped = store.dismiss_ringing(alert_id)
         return {"stopped": [alert.id for alert in stopped], **self.timers()}
 
     # MCP servers. The file is read by the voice runtime's worker, which notices
@@ -738,10 +759,13 @@ class AriettaApiService:
             if self._active_chat is not None:
                 raise WorkerBusy("Inference is busy")
             self._active_chat = (request_id, token)
+        started_ns = time.time_ns()
         try:
+            self.memory_jobs.suspend()
             payload = request.model_dump(exclude={"request_id"})
             payload.update(
                 enabled_tools=tuple(enabled_tool_names(self.config)),
+                cite_notes=True,
             )
             response = self.worker.call(
                 "chat", payload, timeout_s=self.config.runtime.turn_timeout_s, cancellation=token
@@ -756,18 +780,14 @@ class AriettaApiService:
                 self._record_chat(
                     request.message,
                     result.response,
+                    started_ns=started_ns,
                     source=result.source,
                     used_tool=result.used_tool,
                     model_tool=result.model_tool,
                 )
-                self._retired_chat_ids.append(request_id)
-                self._active_chat = None
                 return result
         finally:
-            with self._chat_lock:
-                if self._active_chat is not None and self._active_chat[1] is token:
-                    self._retired_chat_ids.append(request_id)
-                    self._active_chat = None
+            self._finish_stream(request_id, token)
 
     def chat_stream(self, request: ChatRequest):
         """Start a chat turn and return an iterator of its events as they happen.
@@ -787,9 +807,10 @@ class AriettaApiService:
             self._active_chat = (request_id, token)
         deadline = time.monotonic() + self.config.runtime.turn_timeout_s
         payload = request.model_dump(exclude={"request_id"})
-        payload.update(enabled_tools=tuple(enabled_tool_names(self.config)))
+        payload.update(enabled_tools=tuple(enabled_tool_names(self.config)), cite_notes=True)
         stream = ChatStream(self, request, request_id, token, deadline)
         try:
+            self.memory_jobs.suspend()
             self.worker.call(
                 "chat_start",
                 payload,
@@ -801,7 +822,7 @@ class AriettaApiService:
             raise
         return stream
 
-    def _stream_events(self, request, token, deadline):
+    def _stream_events(self, request, token, deadline, started_ns):
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -821,6 +842,7 @@ class AriettaApiService:
             self._record_chat(
                 request.message,
                 result.response,
+                started_ns=started_ns,
                 source=result.source,
                 used_tool=result.used_tool,
                 model_tool=result.model_tool,
@@ -833,6 +855,8 @@ class AriettaApiService:
             if self._active_chat is not None and self._active_chat[1] is token:
                 self._retired_chat_ids.append(request_id)
                 self._active_chat = None
+                if self.config.memory.enabled:
+                    self.memory_jobs.allow_idle()
 
     def cancel_chat(self, request_id: str) -> bool:
         with self._chat_lock:
@@ -847,7 +871,9 @@ class AriettaApiService:
 
     def _chat_in_process(self, request: ChatRequest, *, record: bool = True) -> ChatResult:
         # In-process test/embedding entry point; production calls run in the worker.
-        result = self._conversation.chat(**request.model_dump(exclude={"request_id"}))
+        result = self._conversation.chat(
+            cite_notes=True, **request.model_dump(exclude={"request_id"})
+        )
         if record:
             self._record_chat(
                 request.message,
@@ -882,10 +908,19 @@ class AriettaApiService:
         response: str,
         *,
         source: str,
+        started_ns: int | None = None,
         used_tool: str | None,
         model_tool: str | None = None,
     ) -> None:
         self.chat_turns += 1
+        if (
+            self.config.memory.enabled
+            and started_ns is not None
+            and started_ns > self._memory_changed_ns
+        ):
+            self.memory_jobs.submit(
+                message, response, self.chat_turns, origin="chat", submitted_ns=started_ns
+            )
         self.last_chat_at = _now_iso()
         self.event_logger.log(
             "api_chat",
@@ -919,7 +954,7 @@ class ChatStream:
 
     def __init__(self, service, request, request_id, token, deadline) -> None:
         self.service, self.request_id, self.token = service, request_id, token
-        self._events = service._stream_events(request, token, deadline)
+        self._events = service._stream_events(request, token, deadline, time.time_ns())
         self._closed = False
         self._lock = threading.Lock()
 

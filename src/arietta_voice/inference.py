@@ -177,7 +177,12 @@ class InferenceEngine:
                     service._llm = build_chat_model(self.config.models)
                 model = service._llm
             self._memory = self._memory_store.prepare_update(
-                model, payload["user"], payload["assistant"], payload["turn_count"]
+                model,
+                payload["user"],
+                payload["assistant"],
+                payload["turn_count"],
+                origin=payload.get("origin", "voice"),
+                submitted_ns=payload.get("submitted_ns"),
             )
             return None
         if operation == "memory_next":
