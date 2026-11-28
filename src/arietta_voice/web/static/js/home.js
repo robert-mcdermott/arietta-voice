@@ -40,7 +40,7 @@ function describeRuntime(runtime, assistant) {
       return { orb: "starting", title: "Starting up…", sub: runtime.note };
     }
     const sub = runtime.lifecycle === "missing"
-      ? wakeEnabled ? `Once listening, say “${wake}” to begin.` : "Once listening, ask your question aloud."
+      ? "Open text chat to ask a question, or start listening to use your microphone."
       : runtime.note;
     return { orb: "offline", title: "Voice is stopped", sub };
   }

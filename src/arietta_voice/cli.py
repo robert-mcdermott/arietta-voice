@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import shlex
 import sys
 import warnings
 from pathlib import Path
@@ -204,7 +205,14 @@ def main() -> int:
                 saved = save_admin_credentials(
                     base_path, args.username, password, replace=args.replace
                 )
-                print(f"Admin credentials saved to {saved}. Restart the API to apply them.")
+                print(f"Admin credentials saved to {saved}.")
+                if args.replace:
+                    print("Restart the console to use the new credentials.")
+                else:
+                    command = ["uv", "run", "arietta-voice", "serve"]
+                    if args.config:
+                        command.extend(["--config", str(args.config)])
+                    print(f"Start the console with {shlex.join(command)}")
         except (EOFError, getpass.GetPassWarning):
             parser.error("Run admin-setup in an interactive terminal with hidden password input")
         except (ValueError, OSError) as exc:

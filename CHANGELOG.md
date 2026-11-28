@@ -5,6 +5,9 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- The install guide walks through the first console Chat answer. Credential
+  setup prints the command to start the console, and Chat enables Send when
+  the message contains text.
 - Home refreshes reminders when you return from Chat. Stopping a ringing
   reminder records it as “Stopped” in Earlier and leaves other reminders active.
 - With memory enabled, console Chat learns preferences during idle time. The
