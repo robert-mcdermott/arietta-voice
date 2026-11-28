@@ -254,7 +254,8 @@ disabled tools never execute; an interrupted action never runs twice.
    viewable, editable and deletable in the console. The existing Markdown store
    now exposes individual facts, their learning channel, and owner corrections.
    Dated episodic notes remain open.
-2. Persist conversation history across sessions and make it searchable.
+2. Console Chat now supports opt-in local history. A browser test searches and
+   continues a synthetic chat after a restart, deletes it, and checks a second restart.
 3. Knowledge retrieval: bounded chunks with stable source IDs, atomic index
    generations, and a 50-question synthetic recall set. Target recall@3 of at
    least 90% on answerable questions, with an explicit "I don't know" on
@@ -325,7 +326,7 @@ Done:
 - **Persona and memory** editors — done (the Persona page).
 - **Tools and integrations**: enable, configure and test tools and MCP servers —
   done (the Tools and Connections pages).
-- **Conversations**: searchable history.
+- **Conversations**: opt-in searchable history is available in Chat, with reopen and delete controls.
 - **Diagnostics**: logs, health checks and the audio counters, moved off Home.
 
 ## Repository layout

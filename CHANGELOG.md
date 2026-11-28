@@ -5,6 +5,9 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- Console Chat can save conversations locally when enabled in Settings. Search
+  questions and answers, reopen a chat after a restart, or delete it from history.
+
 - Keyword search finds more facts in the body of a note, including questions
   that use a regular singular or plural form such as “roller” and “rollers.”
 - Console Chat and voice pick up a completed knowledge index on their next search.

@@ -1115,10 +1115,20 @@ details.fold[open] > summary {
 
 /* ---------- Chat ---------- */
 
+.chat-archive { margin-bottom: 12px; padding: 12px 18px; }
+.chat-archive summary { cursor: pointer; font-weight: 600; }
+.chat-archive summary .hint { margin-inline-start: 8px; font-weight: 400; }
+.chat-archive input { flex: 1; min-width: 0; }
+.saved-chats { max-height: 16rem; overflow: auto; }
+.saved-chat { display: flex; align-items: center; gap: 8px; padding-block: 4px; }
+.saved-chat .open-chat { flex: 1; min-width: 0; display: block; text-align: start; overflow-wrap: anywhere; white-space: normal; }
+.saved-chat time { display: block; font-size: .82em; color: var(--muted); }
+
+
 .chat {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  height: calc(100vh - 150px);
+  height: calc(100vh - 210px);
   min-height: 420px;
   padding: 0;
   overflow: hidden;
@@ -1856,7 +1866,7 @@ progress::-moz-progress-bar {
   }
 
   .chat {
-    height: calc(100dvh - 190px);
+    height: calc(100dvh - 250px);
   }
 }
 

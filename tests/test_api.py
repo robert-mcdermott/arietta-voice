@@ -1144,3 +1144,44 @@ def test_memory_entry_controls_require_auth_and_reject_a_stale_edit(tmp_path):
     assert client.delete(url, auth=AUTH, params={"revision": memory["revision"]}).status_code == 409
     assert client.put("/api/memory", auth=AUTH, json=payload).status_code == 409
     assert client.get("/api/persona", auth=AUTH).json()["memory"] == updated
+
+
+def test_saved_chats_require_opt_in_and_auth_and_cannot_be_resurrected(tmp_path):
+    client, service, _ = _streaming_client(tmp_path)
+    search = "/api/chat/history/search"
+    request = {"message": "Strawberry rehearsal", "save_history": True}
+
+    def send(payload):
+        return _events(client.post("/api/chat/stream", auth=AUTH, json=payload))[-1]["result"]
+
+    assert client.post(search, json={}).status_code == 401
+    assert "conversation_id" not in send(request)
+    assert not service.chat_history.path.exists()
+    service.config.admin.save_chat_history = True
+    assert "conversation_id" not in send({"message": "Transient question"})
+    saved_id = send(request)["conversation_id"]
+    url = f"/api/chat/history/{saved_id}"
+    assert client.get(url).status_code == client.delete(url).status_code == 401
+    service.config.admin.save_chat_history = False
+    assert "conversation_id" not in send({**request, "conversation_id": saved_id})
+    assert len(client.get(url, auth=AUTH).json()["messages"]) == 2
+    assert (
+        client.post(search, auth=AUTH, json={"query": "STRAWBERRY"}).json()["items"][0]["id"]
+        == saved_id
+    )
+    assert client.delete(url, auth=AUTH).json()["deleted"]
+    service.config.admin.save_chat_history = True
+    result = send({**request, "conversation_id": saved_id})
+    assert "deleted" in result["history_warning"] and result["response"]
+    assert client.post(search, auth=AUTH, json={}).json()["items"] == []
+    assert client.get(url, auth=AUTH).status_code == 404
+
+
+def test_partial_stream_is_not_saved(tmp_path):
+    client, service, _ = _streaming_client(tmp_path, fail_at=2)
+    service.config.admin.save_chat_history = True
+    events = _events(
+        client.post("/api/chat/stream", auth=AUTH, json={"message": "Hello", "save_history": True})
+    )
+    assert [event["kind"] for event in events] == ["clause", "error"]
+    assert not service.chat_history.path.exists()

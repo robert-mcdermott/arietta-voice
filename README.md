@@ -315,8 +315,9 @@ The main config sections are:
 
 Relative paths in the TOML are resolved relative to the config file, not the current shell directory.
 
-`max_history_turns` counts complete user/assistant pairs; `0` disables conversation
-history. Invalid TOML types, unknown settings, and unsupported values fail at
+`max_history_turns` counts complete user/assistant pairs supplied to the model. Set it
+to `0` to omit earlier turns from prompts. Invalid TOML types, unknown settings,
+and unsupported values fail at
 startup with the setting name. The current audio pipeline requires 16,000 Hz
 input and 512-sample chunks.
 
@@ -477,6 +478,22 @@ pauses its producer within the shared turn deadline. Backend TTS chunks are
 validated and limited to 30 seconds before slicing; temporary allocations inside
 native models are outside these queue limits. These internal bounds need no new
 TOML settings.
+
+### Saved console chats
+
+To keep conversations across restarts, open **Settings → Memory and privacy**, turn on
+**Save console conversations on this Mac**, and click **Save**. The corresponding private
+TOML setting is `[admin].save_chat_history` and defaults to `false`.
+
+In **Chat → Saved chats**, search for words from a question or an answer and select
+a conversation to reopen and continue it. **New chat** starts a separate conversation.
+**Delete** removes the selected conversation from saved history. Turning saving off
+stops future saves and leaves existing chats available to search or delete.
+
+The console stores completed turns and their citation references in an owner-only
+SQLite file at `state/chat-history.sqlite3`. History uses the console's existing
+admin sign-in. Voice transcripts, event logging, and learned preferences have
+separate controls.
 
 ### Background memory
 

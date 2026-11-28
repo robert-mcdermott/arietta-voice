@@ -4,10 +4,15 @@ import { $, api, escapeHtml, guard, setError, streamEvents } from "./core.js";
 import { overview } from "./home.js";
 
 const chat = { history: [], pending: false, requestId: null };
+let conversationId = null;
+let historyBusy = false;
+let searchVersion = 0;
+let savedItems = [];
+let searchQuery = "";
 const IDLE_HINT = "Enter to send · Shift + Enter for a new line";
 
 export function chatPending() {
-  return chat.pending;
+  return chat.pending || historyBusy;
 }
 
 function assistantName() {
@@ -87,14 +92,14 @@ function setPending(pending) {
   $("#chat-stop").hidden = !pending;
   $("#chat-stop").disabled = false;
   updateComposer();
-  $("#chat-clear").disabled = pending;
+  $("#chat-clear").disabled = pending || historyBusy;
   $("#chat-message").disabled = pending;
 }
 
 function updateComposer() {
   const buttons = [...document.querySelectorAll("#chat-log [data-starter]")];
   const draft = $("#chat-message").value;
-  $("#chat-send").disabled = chat.pending || !draft.trim();
+  $("#chat-send").disabled = chatPending() || !draft.trim();
   const customDraft = draft.trim() && !buttons.some((button) => button.textContent === draft);
   for (const button of buttons) button.disabled = Boolean(customDraft);
 }
@@ -108,7 +113,7 @@ function autosize() {
 async function send() {
   const textarea = $("#chat-message");
   const message = textarea.value.trim();
-  if (!message || chat.pending) return;
+  if (!message || chatPending()) return;
   const history = chat.history.slice(-10).map(({ role, content, meta }) => {
     for (const source of meta?.sources || []) content = content.replaceAll(`[${source.label}]`, "");
     return { role, content };
@@ -130,7 +135,7 @@ async function send() {
     let result = null;
     await streamEvents(
       "/api/chat/stream",
-      { message, history, request_id: chat.requestId },
+      { message, history, request_id: chat.requestId, save_history: true, conversation_id: conversationId },
       (event) => {
         if (event.kind === "clause") {
           reply.content = reply.content ? `${reply.content} ${event.text}` : event.text;
@@ -157,8 +162,13 @@ async function send() {
       seconds: (performance.now() - started) / 1000,
       first: reply.firstAt ? (reply.firstAt - started) / 1000 : null,
     };
-    chat.history = chat.history.slice(-40);
-    $("#chat-status").textContent = IDLE_HINT;
+    if (result.conversation_id) conversationId = result.conversation_id;
+    if (!result.conversation_id && !result.history_warning) {
+      conversationId = null;
+      chat.history = chat.history.slice(-40);
+    }
+    $("#chat-status").textContent = result.history_warning || IDLE_HINT;
+    if ($("#chat-archive").open) guard(loadSaved)();
   } catch (error) {
     chat.history.pop(); // The partial answer.
     chat.history.pop();
@@ -191,18 +201,81 @@ async function stop() {
   }
 }
 
-export function showChat() {
+async function loadSaved(append = false) {
+  const version = ++searchVersion;
+  const result = await api("/api/chat/history/search", {
+    method: "POST", body: JSON.stringify({ query: searchQuery, offset: append ? savedItems.length : 0 }),
+  });
+  if (version !== searchVersion) return;
+  $("#chat-saving").textContent = result.enabled ? "Saving on" : "Saving off";
+  savedItems = append ? savedItems.concat(result.items) : result.items;
+  $("#chat-more").hidden = !result.has_more;
+  $("#chat-saved-list").innerHTML = savedItems.map((item) => {
+    const date = new Date(item.saved_at.replace(" ", "T") + "Z");
+    return `<div class="saved-chat">
+      <button type="button" class="btn quiet open-chat" data-open-chat="${escapeHtml(item.id)}">${escapeHtml(item.title)}
+        <time>${escapeHtml(date.toLocaleString())}</time></button>
+      <button type="button" class="btn small quiet" data-delete-chat="${escapeHtml(item.id)}" aria-label="Delete ${escapeHtml(item.title)}">Delete</button></div>`;
+  }).join("") || `<p class="hint">${searchQuery ? "No matching chats." : "No saved chats yet."}</p>`;
+}
+
+function newChat() {
+  conversationId = null;
+  chat.history = [];
+  $("#chat-status").textContent = IDLE_HINT;
+  render();
+}
+
+async function selectSaved(event) {
+  const button = event.target.closest("[data-open-chat], [data-delete-chat]");
+  if (!button || chatPending()) return;
+  const id = button.dataset.openChat || button.dataset.deleteChat;
+  const url = `/api/chat/history/${encodeURIComponent(id)}`;
+  historyBusy = true;
+  $("#chat-clear").disabled = true;
+  updateComposer();
+  try {
+    if (button.dataset.deleteChat) {
+      if (!window.confirm("Delete this saved conversation from this Mac?")) return;
+      await api(url, { method: "DELETE" });
+      if (conversationId === id) newChat();
+      await loadSaved();
+    } else {
+      const result = await api(url);
+      chat.history = result.messages;
+      conversationId = id;
+      $("#chat-archive").open = false;
+      $("#chat-status").textContent = IDLE_HINT;
+      render();
+      $("#chat-message").focus();
+    }
+  } finally {
+    historyBusy = false;
+    $("#chat-clear").disabled = false;
+    updateComposer();
+  }
+}
+
+export async function showChat() {
   render();
   $("#chat-message").focus();
+  await loadSaved();
 }
 
 export function initChat() {
   $("#chat-send").addEventListener("click", guard(send));
   $("#chat-stop").addEventListener("click", guard(stop));
-  $("#chat-clear").addEventListener("click", () => {
-    chat.history = [];
-    render();
-  });
+  $("#chat-clear").addEventListener("click", newChat);
+  $("#chat-archive").addEventListener("toggle", guard(async () => {
+    if ($("#chat-archive").open) await loadSaved();
+  }));
+  $("#chat-search-form").addEventListener("submit", guard(async (event) => {
+    event.preventDefault();
+    searchQuery = $("#chat-query").value.trim();
+    await loadSaved();
+  }));
+  $("#chat-more").addEventListener("click", guard(() => loadSaved(true)));
+  $("#chat-saved-list").addEventListener("click", guard(selectSaved));
   $("#chat-log").addEventListener("click", (event) => {
     const starter = event.target.closest("[data-starter]");
     if (starter) {
