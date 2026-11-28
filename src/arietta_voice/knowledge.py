@@ -52,28 +52,42 @@ STOPWORDS = {
     "are",
     "at",
     "be",
+    "by",
     "can",
+    "did",
     "do",
+    "does",
     "for",
+    "from",
     "get",
+    "have",
     "how",
     "i",
     "if",
     "in",
     "is",
+    "it",
     "me",
     "my",
     "of",
     "on",
     "or",
+    "re",
+    "should",
     "something",
     "tell",
     "the",
     "to",
+    "ve",
+    "was",
     "we",
+    "were",
     "what",
+    "when",
     "where",
+    "which",
     "who",
+    "with",
     "you",
     "your",
 }
@@ -715,6 +729,7 @@ def _split_long(text: str, limit: int) -> list[str]:
 
 def _score_section(section: _KnowledgeSection, query: str, query_tokens: tuple[str, ...]) -> float:
     matched_tokens: set[str] = set()
+    body_terms = set()
     score = 0.0
 
     for token in query_tokens:
@@ -727,8 +742,18 @@ def _score_section(section: _KnowledgeSection, query: str, query_tokens: tuple[s
             token_score += 4.5
         if section.path_tokens.get(token):
             token_score += 4.0
-        body_hits = section.body_tokens.get(token, 0)
+        body_term = token
+        if token not in section.body_tokens and len(token) >= 4 and token.isalpha():
+            # Allow a regular final -s in either direction (roller/rollers,
+            # leave/leaves). Keep exact matches for titles, names and tags.
+            if len(token) > 4 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
+                body_term = token[:-1]
+            else:
+                body_term = token + "s"
+        body_hits = section.body_tokens.get(body_term, 0)
         if body_hits:
+            if token not in STOPWORDS:
+                body_terms.add(body_term)
             token_score += min(body_hits, 3) * 1.5
         if token_score > 0:
             matched_tokens.add(token)
@@ -736,6 +761,11 @@ def _score_section(section: _KnowledgeSection, query: str, query_tokens: tuple[s
 
     if not matched_tokens:
         return 0.0
+
+    # Several distinct query terms in the same passage are stronger evidence
+    # than repeats of one word or a tag shared by every passage in the file.
+    if len(body_terms) >= 2:
+        score += 4.0
 
     normalized_query = _clean_text(query).lower()
     if normalized_query and normalized_query in section.searchable_text:

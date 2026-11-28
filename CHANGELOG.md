@@ -5,6 +5,8 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- Keyword search finds more facts in the body of a note, including questions
+  that use a regular singular or plural form such as “roller” and “rollers.”
 ## 0.3.0 — 2026-11-27
 
 A first-time user successfully installed Arietta. In clean-checkout tests,

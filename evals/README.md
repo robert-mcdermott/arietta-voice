@@ -125,6 +125,41 @@ wheel's dependency-free version smoke test, and synthetic report upload. No CI
 fix was needed. A future release must still pass CI on its exact release commit;
 these runs establish the Phase 1 gate, not an exemption for later changes.
 
+## Note section retrieval
+
+Run `uv run --locked pytest -q -s evals/test_recall.py` to see counts and
+missed questions. The evaluation searches seven synthetic notes with the
+shipped keyword settings (three matches, minimum score 6, 420-character
+chunks). It reads no personal notes or configuration.
+
+Of the 50 questions, 42 have an answer in the fixtures. Each names the
+acceptable file and Markdown heading. A question counts once if any of the
+first three returned passages matches an accepted section. A second check
+requires the answer text in that same passage, so a different chunk under
+the same heading cannot earn credit for supplying the answer. The other
+eight questions check whether unrelated notes are attached.
+
+| On the same 50 questions | v0.3.0 | Updated keyword search |
+| --- | ---: | ---: |
+| Correct section ranked first | 23/42 | 40/42 |
+| Correct section in the first three | 24/42 (57.1%) | 40/42 (95.2%) |
+| Answer-bearing passage from the correct section in the first three | 24/42 | 40/42 |
+| Controls with unrelated notes attached | 1/8 | 1/8 |
+
+The original scorer often ranked the correct passage first but dropped it
+below the minimum score. Queries about safety goggles and a repair log, for
+example, matched words in the body under a generic heading. Distinct body
+terms now earn a combined score bonus, and regular final-s variants can
+match in the body. The minimum score stays the same.
+
+Two questions still miss: where to leave the aprons after use, and where to
+meet before the walk. Both share little wording with the answer. The boiling
+point of water question still retrieves the household hot water note. On a
+separate check with the existing 40 general questions in
+[`answer_questions.json`](answer_questions.json), both versions attached
+notes to the same two questions. These figures measure retrieval on these
+fixtures. Generated answers and vector search have separate evaluations.
+
 ## Remaining release gates
 
 [The Phase 2 latency benchmark](LATENCY_BASELINE.md) records real local model

@@ -261,9 +261,11 @@ disabled tools never execute; an interrupted action never runs twice.
    unanswerable ones. Bounded chunks with stable IDs are done: long sections
    are split at sentence and list boundaries, so facts past the first 420
    characters can be found (on the owner's notes, questions about them went
-   from 10 to 16 of 20 right). The recall set has 14 answerable questions so
-   far, checked in CI with keyword search; atomic index generations are still
-   to do.
+   from 10 to 16 of 20 right). The 50-question synthetic set now runs in CI.
+   The default keyword retriever found a labeled, answer-bearing section in
+   its first three results for 40 of 42 answerable questions (95.2%). One of
+   eight controls retrieved an unrelated note. Atomic index generations
+   remain open. [Retrieval evaluation](evals/README.md#note-section-retrieval)
 4. Console Chat now links cited answers to the exact passage in the current note.
 
 **Done when:** the assistant recalls a fact stated in a previous session, the
