@@ -17,6 +17,7 @@ from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from arietta_voice.admin_auth import load_admin_credentials
+from arietta_voice.knowledge import IndexSourcesChanged
 from arietta_voice.memory import MemoryConflict
 from arietta_voice.web.schemas import (
     ChatRequest,
@@ -464,7 +465,10 @@ def create_app(
 
     @app.post("/api/knowledge/index")
     def api_knowledge_index(_user: str = Depends(require_admin)) -> dict[str, Any]:
-        return svc().build_index()
+        try:
+            return svc().build_index()
+        except IndexSourcesChanged as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     @app.get("/api/knowledge/files")
     def api_knowledge_files(_user: str = Depends(require_admin)) -> dict[str, Any]:

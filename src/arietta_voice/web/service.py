@@ -332,9 +332,6 @@ class AriettaApiService:
 
     def build_index(self) -> dict[str, Any]:
         payload = build_knowledge_index(self.config.knowledge)
-        self.worker.invalidate()
-        self.knowledge = KnowledgeRetriever(self.config.knowledge)
-        self.tool_admin.knowledge_retriever = self.knowledge
         self.event_logger.log("api_knowledge_index", **payload)
         return payload
 
@@ -380,10 +377,7 @@ class AriettaApiService:
         path = _resolve_knowledge_file(self.config, file_path)
         created = not path.exists()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-        self.worker.invalidate()
-        self.knowledge = KnowledgeRetriever(self.config.knowledge)
-        self.tool_admin.knowledge_retriever = self.knowledge
+        write_private_text(path, content)
         payload = {
             "path": path.relative_to(self.config.knowledge.directory).as_posix(),
             "created": created,
@@ -398,9 +392,6 @@ class AriettaApiService:
             raise FileNotFoundError(file_path)
         relative_path = path.relative_to(self.config.knowledge.directory).as_posix()
         path.unlink()
-        self.worker.invalidate()
-        self.knowledge = KnowledgeRetriever(self.config.knowledge)
-        self.tool_admin.knowledge_retriever = self.knowledge
         payload = {"path": relative_path, "deleted": True}
         self.event_logger.log("api_knowledge_file_deleted", **payload)
         return payload

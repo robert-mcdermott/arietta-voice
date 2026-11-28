@@ -264,8 +264,9 @@ disabled tools never execute; an interrupted action never runs twice.
    from 10 to 16 of 20 right). The 50-question synthetic set now runs in CI.
    The default keyword retriever found a labeled, answer-bearing section in
    its first three results for 40 of 42 answerable questions (95.2%). One of
-   eight controls retrieved an unrelated note. Atomic index generations
-   remain open. [Retrieval evaluation](evals/README.md#note-section-retrieval)
+   eight controls retrieved an unrelated note. Semantic index rebuilds now
+   validate and publish one complete generation while Chat stays available.
+   Synthetic tests cover edits, deletion, and an interrupted builder. [Retrieval evaluation](evals/README.md#note-section-retrieval)
 4. Console Chat now links cited answers to the exact passage in the current note.
 
 **Done when:** the assistant recalls a fact stated in a previous session, the

@@ -249,7 +249,10 @@ The embedding pipeline uses normalized CLS embeddings and index version 3,
 which stores long sections as chunks; older indexes are rejected even if the
 source articles are unchanged, and rebuilt at the next start. While an
 index is out of date, `hybrid` uses keyword matches and `vector` returns no
-matches. Restart a running runtime/API after rebuilding to reload its index.
+matches. Chat and voice pick up the completed index on their next search.
+You can keep using Chat during a rebuild. If another edit lands during the
+build, run it again to include that edit. Old Chat citations check the current
+passage and report when it has changed or disappeared.
 
 Each section of an article is searched on its own. A section longer than
 `snippet_char_limit` (420 characters) is split into chunks of at most that

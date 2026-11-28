@@ -138,8 +138,9 @@ async function rebuildIndex() {
   button.textContent = "Rebuilding…";
   try {
     const payload = await api("/api/knowledge/index", { method: "POST" });
-    const count = payload.chunk_count ?? payload.chunks ?? payload.sections;
-    toast(count == null ? "Index rebuilt" : `Index rebuilt · ${count} sections`, "ok");
+    const count = payload.section_count;
+    const status = payload.updated ? "Index rebuilt" : "Index is up to date";
+    toast(`${status} · ${count} section${count === 1 ? "" : "s"}`, "ok");
   } finally {
     button.disabled = false;
     button.textContent = "Rebuild index";

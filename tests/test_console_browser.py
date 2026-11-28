@@ -38,14 +38,15 @@ VIEWS = {
 }
 
 
-def _write_config(root: Path) -> Path:
+def _write_config(root: Path, *, indexed=False) -> Path:
     for name in ("config", "knowledge", "logs"):
         (root / name).mkdir()
     (root / "config" / "SOUL.md").write_text("You are a concise test assistant.")
     (root / "knowledge" / "food.md").write_text("# Food\nLunch is at the cafeteria.")
     config_path = root / "config" / "arietta_voice.toml"
+    backend = "hybrid" if indexed else "keyword"
     config_path.write_text(
-        """
+        f"""
 [assistant]
 name = "Browser Test"
 
@@ -61,7 +62,9 @@ directory = "../logs"
 events_file = "../logs/events.jsonl"
 
 [knowledge]
-backend = "keyword"
+backend = "{backend}"
+embedding_model = "synthetic-key"
+index_directory = "../index"
 directory = "../knowledge"
 
 [mcp]
@@ -88,7 +91,7 @@ def reminder_console(tmp_path_factory):
         yield url, root / "config" / "arietta_voice.toml"
 
 
-def _serve(root, *, memory=False):
+def _serve(root, *, memory=False, indexed=False):
     import uvicorn
 
     from arietta_voice.web.app import create_app
@@ -98,7 +101,7 @@ def _serve(root, *, memory=False):
     patch.setenv("ARIETTA_ADMIN_USERNAME", "admin")
     patch.setenv("ARIETTA_ADMIN_PASSWORD", PASSWORD)
     try:
-        config_path = _write_config(root)
+        config_path = _write_config(root, indexed=indexed)
         if memory:
             with config_path.open("a") as handle:
                 handle.write("\n[memory]\nenabled = true\n")
@@ -143,6 +146,8 @@ def _fixture_engine(config):
             yield ModelEvent("done")
 
     engine = InferenceEngine(config)
+    if config.knowledge.backend == "hybrid" and config.knowledge.embedding_model == "synthetic-key":
+        engine.service().knowledge.backend.vector_backend._embedder = _KeyEmbedder()
     engine.service()._llm = MemoryModel()
 
     def answer(messages, **kwargs):
@@ -320,21 +325,21 @@ def test_saving_one_editor_preserves_the_other_draft(console, page):
     assert page.problems == []
 
 
+def _ask_spare_key(page):
+    page.click("#chat-clear")
+    page.fill("#chat-message", "According to my notes, where is my spare key?")
+    page.click("#chat-send")
+    page.locator("#chat-log .assistant .msg-meta, #error-notice:visible").first.wait_for(
+        timeout=120000
+    )
+    assert page.locator("#error-notice").is_hidden(), page.locator("#error-notice").inner_text()
+    return page.locator("#chat-log .assistant .msg-body")
+
+
 def test_chat_cites_current_note_passage_after_edit_and_deletion(console, page):
     path = "household/entry & storage.md"
     url = f"{console}/api/knowledge/files/household/entry%20%26%20storage.md"
-    question = "According to my notes, where is my spare key?"
     page.goto(f"{console}/#/chat")
-
-    def ask():
-        page.click("#chat-clear")
-        page.fill("#chat-message", question)
-        page.click("#chat-send")
-        page.locator("#chat-log .assistant .msg-meta, #error-notice:visible").first.wait_for(
-            timeout=120000
-        )
-        assert page.locator("#error-notice").is_hidden(), page.locator("#error-notice").inner_text()
-        return page.locator("#chat-log .assistant .msg-body")
 
     old_link = None
     for location in ("blue drawer", "hall closet"):
@@ -343,7 +348,7 @@ def test_chat_cites_current_note_passage_after_edit_and_deletion(console, page):
             f"## Entry\nThe spare key is in the {location}.\n"
         )
         assert page.request.put(url, data={"content": note}).ok
-        reply = ask()
+        reply = _ask_spare_key(page)
         assert location in reply.inner_text().lower()
         link = reply.get_by_role("link", name=re.compile("House notes.*Entry"))
         with page.expect_popup() as opened:
@@ -358,13 +363,111 @@ def test_chat_cites_current_note_passage_after_edit_and_deletion(console, page):
         reader.close()
 
     assert page.request.delete(url).ok
-    reply = ask()
+    reply = _ask_spare_key(page)
     assert not reply.get_by_role("link").count()
     text = reply.inner_text().lower()
     assert "blue drawer" not in text and "hall closet" not in text
     assert re.search(r"not|couldn't|couldn’t|can't|can’t|no |don't|don’t|unable", text), text
     assert "notes" in text and "access" not in text, text
     assert page.request.get(old_link).status == 404
+    assert page.problems == []
+
+
+class _KeyEmbedder:
+    model_name = "synthetic-key"
+
+    def embed_query(self, text):
+        import numpy as np
+
+        return np.array([1.0, 0.0] if "key" in text.lower() else [0.0, 1.0], dtype=np.float32)
+
+    def embed_documents(self, texts):
+        import numpy as np
+
+        return np.stack([self.embed_query(text) for text in texts])
+
+
+@pytest.fixture
+def indexed_console(tmp_path):
+    yield from _serve(tmp_path, indexed=True)
+
+
+def test_chat_remains_available_during_rebuild_and_rejects_deleted_passage(
+    indexed_console, page, monkeypatch
+):
+    url = indexed_console
+    index_url = f"{url}/api/knowledge/index"
+    note_url = f"{url}/api/knowledge/files/key.md"
+    started, resume = threading.Event(), threading.Event()
+
+    class PausedEmbedder(_KeyEmbedder):
+        def embed_documents(self, texts):
+            started.set()
+            assert resume.wait(90), "test did not release the index builder"
+            return super().embed_documents(texts)
+
+    def save(location):
+        content = f"# Home\n\n## Entry\nThe spare key is in the {location}."
+        assert page.request.put(note_url, data={"content": content}).ok
+
+    def check_answer(location):
+        body = _ask_spare_key(page)
+        assert location in body.inner_text()
+        link = body.get_by_role("link", name=re.compile("Home.*Entry"))
+        passage = page.request.get(link.evaluate("a => a.href"))
+        assert passage.ok and f"The spare key is in the {location}." in passage.text()
+        return passage.url
+
+    monkeypatch.setattr(
+        "arietta_voice.knowledge._create_text_embedder", lambda config: _KeyEmbedder()
+    )
+    page.goto(f"{url}/#/chat")
+    save("blue drawer")
+    assert page.request.post(index_url).json()["updated"]
+    original = check_answer("blue drawer")
+    save("hall closet")
+    monkeypatch.setattr(
+        "arietta_voice.knowledge._create_text_embedder", lambda config: PausedEmbedder()
+    )
+    # A second tab starts a build while the first keeps chatting.
+    builder = page.context.new_page()
+    builder.goto(f"{url}/#/knowledge")
+    rebuild = builder.get_by_role("button", name="Rebuild index")
+
+    @contextmanager
+    def building():
+        started.clear()
+        resume.clear()
+        with builder.expect_response(index_url, timeout=120000) as response:
+            try:
+                rebuild.click()
+                assert started.wait(15)
+                yield response
+            finally:
+                resume.set()
+
+    with building() as build:
+        assert page.request.get(original).status == 404
+        edited = check_answer("hall closet")
+    assert build.value.json()["updated"]
+    sync_api.expect(builder.locator("#toasts")).to_contain_text("Index rebuilt · 2 sections")
+    assert check_answer("hall closet") == edited
+
+    # Another build has read the key note when the owner deletes it.
+    assert page.request.put(
+        f"{url}/api/knowledge/files/weather.md", data={"content": "# Weather\nRain today."}
+    ).ok
+    with building() as build:
+        assert page.request.delete(note_url).ok
+        assert page.request.get(edited).status == 404
+    assert build.value.status == 409
+    sync_api.expect(builder.locator("#error-message")).to_contain_text("Notes changed")
+    builder.close()
+    body = _ask_spare_key(page)
+    assert "couldn't find" in body.inner_text()
+    assert not body.get_by_role("link").count()
+    assert page.request.post(index_url).json()["updated"]
+    assert page.request.get(edited).status == 404
     assert page.problems == []
 
 
