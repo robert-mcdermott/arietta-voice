@@ -670,7 +670,7 @@ def test_opt_in_chat_history_survives_restart_and_deleted_chat_stays_gone(tmp_pa
         page.goto(f"{url}/#/settings")
         page.check("#setting-admin-save_chat_history")
         page.click('[data-save-group="privacy"]')
-        sync_api.expect(page.locator('[data-save-group="privacy"]')).to_be_disabled()
+        sync_api.expect(page.locator("#toasts")).to_contain_text("Memory and privacy saved")
         page.goto(f"{url}/#/chat")
         sync_api.expect(page.locator("#chat-saving")).to_have_text("Saving on")
         page.click("#chat-clear")
