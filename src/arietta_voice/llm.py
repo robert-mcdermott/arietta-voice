@@ -243,9 +243,10 @@ def _repeat_safe_prefix_state():
     class RepeatSafePromptCacheState(PromptCacheState):
         prompt_ids: list | None = None  # This generation's prompt, if it is stopped.
 
-        def find_prefix_length(self, new_ids: list) -> int:
+        def find_prefix_length(self, new_ids: list, **cache_options) -> int:
             self.prompt_ids = list(new_ids)
-            return min(super().find_prefix_length(new_ids), max(len(new_ids) - 1, 0))
+            shared = super().find_prefix_length(new_ids, **cache_options)
+            return min(shared, max(len(new_ids) - 1, 0))
 
     return RepeatSafePromptCacheState()
 
