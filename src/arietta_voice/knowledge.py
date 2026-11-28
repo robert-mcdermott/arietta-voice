@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
+import os
 import re
 import zipfile
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -20,8 +23,11 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 WHITESPACE_RE = re.compile(r"\s+")
 SUPPORTED_EXTENSIONS = {".md", ".markdown", ".txt"}
 IGNORED_FILENAMES = {"README.md"}
+type _SourceSignature = tuple[tuple[str, int, int], ...] | None
+
 INDEX_VERSION = 3  # 3: long sections are indexed in chunks.
 EMBEDDING_POOLING = "cls-normalized"
+INDEX_ARCHIVE_FILENAME = "current.zip"
 INDEX_MANIFEST_FILENAME = "manifest.json"
 INDEX_SECTIONS_FILENAME = "sections.jsonl"
 INDEX_VECTORS_FILENAME = "vectors.npy"
@@ -183,19 +189,20 @@ class _VectorSectionRecord:
 class KeywordKnowledgeBackend:
     def __init__(self, config: KnowledgeConfig) -> None:
         self.config = config
-        self._sections: list[_KnowledgeSection] = []
-        self._signature: tuple[tuple[str, int, int], ...] | None = None
+        self._cache: tuple[_SourceSignature, list[_KnowledgeSection]] = (
+            None,
+            [],
+        )
 
     def preload(self) -> None:
-        self._refresh_index()
+        self._current_sections()
 
     def is_loaded(self) -> bool:
-        return self._signature is not None
+        return self._cache[0] is not None
 
     def search(self, query: str) -> KnowledgeSearchResult | None:
         if not self.config.enabled:
             return None
-        self._refresh_index()
         matches = self.candidate_matches(
             query,
             max_matches=self.config.max_matches,
@@ -210,62 +217,71 @@ class KeywordKnowledgeBackend:
         max_matches: int,
         min_score: float,
     ) -> list[_ScoredKnowledgeSection]:
-        self._refresh_index()
-        if not self._sections:
-            return []
         return _keyword_candidates(
-            self._sections,
+            self._current_sections(),
             query,
             max_matches=max_matches,
             min_score=min_score,
         )
 
-    def _refresh_index(self) -> None:
+    def _current_sections(self) -> list[_KnowledgeSection]:
         signature = _directory_signature(self.config.directory)
-        if signature == self._signature:
-            return
-        self._sections = _load_sections(
-            self.config.directory,
-            snippet_char_limit=self.config.snippet_char_limit,
-        )
-        self._signature = signature
+        cached_signature, sections = self._cache
+        if signature != cached_signature:
+            sections = _load_sections(
+                self.config.directory,
+                snippet_char_limit=self.config.snippet_char_limit,
+            )
+            self._cache = (signature, sections)
+        return sections
+
+
+class IndexSourcesChanged(ValueError):
+    """The notes changed before a new index could be published."""
+
+
+@dataclass(frozen=True)
+class _VectorIndex:
+    sections: list[_VectorSectionRecord]
+    vectors: np.ndarray
+    source_signature: _SourceSignature
+    generation: tuple[int, int] | None
 
 
 class VectorKnowledgeBackend:
     def __init__(self, config: KnowledgeConfig) -> None:
         self.config = config
-        self._sections: list[_VectorSectionRecord] = []
-        self._vectors: np.ndarray | None = None
-        self._index_signature: tuple[tuple[str, int, int], ...] | None = None
+        self._index: _VectorIndex | None = None
         self._embedder: TextEmbedder | None = None
-        self._manifest_loaded = False
 
     def preload(self) -> None:
-        self._ensure_index_loaded(preload_embedder=True)
+        index = self._ensure_index_loaded()
+        if index is not None and index.vectors.size:
+            self._get_embedder()
 
     def is_loaded(self) -> bool:
-        return self._vectors is not None and self._manifest_loaded
+        return self._index is not None
 
     def search(self, query: str) -> KnowledgeSearchResult | None:
         if not self.config.enabled:
             return None
-        matches = [
-            match
-            for match in self.candidate_matches(query, max_matches=self.config.max_matches)
-            if match.score >= self.config.min_similarity
-        ]
+        candidates = self.candidate_matches(query, max_matches=self.config.max_matches)
+        matches = [match for match in candidates or [] if match.score >= self.config.min_similarity]
         return _knowledge_result(query, backend="vector", matches=matches)
 
-    def candidate_matches(self, query: str, *, max_matches: int) -> list[_ScoredKnowledgeSection]:
+    def candidate_matches(
+        self, query: str, *, max_matches: int
+    ) -> list[_ScoredKnowledgeSection] | None:
         if not self.config.enabled or not _should_attempt_semantic_search(query):
-            return []
-        if not self._ensure_index_loaded(preload_embedder=False):
-            return []
-        if self._vectors is None or not self._sections:
+            return None
+        snapshot = self._ensure_index_loaded()
+        if snapshot is None:
+            return None
+        if not snapshot.sections:
             return []
 
         query_vector = self._get_embedder().embed_query(query)
-        scores = np.asarray(self._vectors @ query_vector, dtype=np.float32)
+        scores = np.asarray(snapshot.vectors @ query_vector, dtype=np.float32)
         if scores.size == 0:
             return []
 
@@ -279,8 +295,8 @@ class VectorKnowledgeBackend:
             (int(index) for index in top_indices),
             key=lambda index: (
                 -float(scores[index]),
-                self._sections[index].source_path.as_posix(),
-                self._sections[index].section_title or "",
+                snapshot.sections[index].source_path.as_posix(),
+                snapshot.sections[index].section_title or "",
             ),
         )
 
@@ -289,7 +305,7 @@ class VectorKnowledgeBackend:
             score = float(scores[index])
             if score < self.config.min_vector_score:
                 continue
-            section = self._sections[index]
+            section = snapshot.sections[index]
             matches.append(
                 _ScoredKnowledgeSection(
                     section_id=section.section_id,
@@ -304,59 +320,26 @@ class VectorKnowledgeBackend:
                 break
         return matches
 
-    def _ensure_index_loaded(self, *, preload_embedder: bool) -> bool:
-        source_signature = _directory_signature(self.config.directory)
-        if (
-            self._manifest_loaded
-            and self._vectors is not None
-            and self._index_signature == source_signature
-        ):
-            if preload_embedder and self._vectors.size:
-                self._get_embedder()
-            return True
-
-        self._manifest_loaded = False
-        self._sections = []
-        self._vectors = None
-        self._index_signature = None
-
-        index_dir = self.config.index_directory
-        manifest_path = index_dir / INDEX_MANIFEST_FILENAME
-        sections_path = index_dir / INDEX_SECTIONS_FILENAME
-        vectors_path = index_dir / INDEX_VECTORS_FILENAME
-        if not (manifest_path.exists() and sections_path.exists() and vectors_path.exists()):
-            return False
-
-        # An incomplete/corrupt cache is disposable. Keep keyword retrieval
-        # available and let an explicit index build repair it. Model failures
-        # are deliberately outside this boundary and still reach turn recovery.
+    def _ensure_index_loaded(self) -> _VectorIndex | None:
+        signature = _directory_signature(self.config.directory)
+        directory = self.config.index_directory
+        archive = directory / INDEX_ARCHIVE_FILENAME
         try:
-            manifest = _read_manifest(manifest_path)
-            if manifest is None:
-                return False
-            sections = _load_vector_section_records(sections_path)
-            if not _manifest_matches(manifest, self.config, source_signature, len(sections)):
-                return False
-            source_paths = {item[0] for item in source_signature or ()}
-            if any(section.source_path.as_posix() not in source_paths for section in sections):
-                return False
-            if len({section.section_id for section in sections}) != len(sections):
-                return False
-            vectors = np.load(vectors_path, allow_pickle=False)
-            if not isinstance(vectors, np.ndarray):
-                vectors.close()  # Reject an npz archive disguised as the npy file.
-                return False
-            if (
-                vectors.ndim != 2
-                or vectors.shape != (len(sections), manifest.get("vector_dim"))
-                or (bool(sections) and vectors.shape[1] == 0)
-                or not np.issubdtype(vectors.dtype, np.floating)
-                or not np.isfinite(vectors).all()
-            ):
-                return False
-            vectors = vectors.astype(np.float32, copy=False)
-            if not np.isfinite(vectors).all():
-                return False
+            stat = archive.stat()
+        except FileNotFoundError:
+            generation = None  # Existing installations may still use the flat index.
+        except OSError:
+            self._index = None
+            return None
+        else:
+            generation = (stat.st_ino, stat.st_mtime_ns)
+        cached = self._index
+        if cached and cached.source_signature == signature and cached.generation == generation:
+            return cached
+
+        source = directory if generation is None else archive
+        try:
+            sections, vectors = _read_vector_index(source, self.config, signature)
         except (
             OSError,
             ValueError,
@@ -366,15 +349,11 @@ class VectorKnowledgeBackend:
             EOFError,
             zipfile.BadZipFile,
         ):
-            return False
-
-        self._sections = sections
-        self._vectors = vectors
-        self._index_signature = source_signature
-        self._manifest_loaded = True
-        if preload_embedder and self._vectors.size:
-            self._get_embedder()
-        return True
+            self._index = None
+            return None
+        snapshot = _VectorIndex(sections, vectors, signature, generation)
+        self._index = snapshot
+        return snapshot
 
     def _get_embedder(self) -> TextEmbedder:
         if self._embedder is None:
@@ -415,7 +394,7 @@ class HybridKnowledgeBackend:
         # meaning; keywords only rank. Without one, the keyword search's own bar
         # applies, as with the keyword backend, and also when the question was
         # not searched by meaning ("Hi, what's the Wi-Fi called?").
-        if _should_attempt_semantic_search(query) and self.vector_backend.is_loaded():
+        if vector_matches is not None:
             close = {
                 match.section_id
                 for match in vector_matches
@@ -424,6 +403,7 @@ class HybridKnowledgeBackend:
             vector_matches = [match for match in vector_matches if match.section_id in close]
             keyword_matches = [match for match in keyword_matches if match.section_id in close]
         else:
+            vector_matches = []
             keyword_matches = [
                 match for match in keyword_matches if match.score >= self.config.min_score
             ]
@@ -463,13 +443,13 @@ class KnowledgeRetriever:
     def build_index_if_needed(self) -> bool:
         """Build a missing or outdated index for hybrid or vector search.
 
-        Without one, those backends quietly search by keyword only. Called at
-        startup, never during a turn. Returns whether an index was built.
+        Called at startup, never during a turn. Hybrid search can use keywords
+        while the index is unavailable. Returns whether an index was built.
         """
         if not isinstance(self.backend, (HybridKnowledgeBackend, VectorKnowledgeBackend)):
             return False
         vector = getattr(self.backend, "vector_backend", self.backend)
-        if vector._ensure_index_loaded(preload_embedder=False):
+        if vector._ensure_index_loaded():
             return False
         try:
             payload = build_knowledge_index(self.config)
@@ -491,26 +471,33 @@ class KnowledgeRetriever:
 
 
 def build_knowledge_index(config: KnowledgeConfig) -> dict[str, Any]:
-    sections = _load_sections(config.directory, snippet_char_limit=config.snippet_char_limit)
-    signature = _directory_signature(config.directory)
     index_dir = config.index_directory
-    manifest_path = index_dir / INDEX_MANIFEST_FILENAME
-    sections_path = index_dir / INDEX_SECTIONS_FILENAME
-    vectors_path = index_dir / INDEX_VECTORS_FILENAME
-
-    cached = VectorKnowledgeBackend(config)
-    if cached._ensure_index_loaded(preload_embedder=False) and len(cached._sections) == len(
-        sections
-    ):
-        return {
-            "updated": False,
-            "backend": config.backend,
-            "embedding_model": config.embedding_model,
-            "index_directory": str(index_dir),
-            "section_count": len(sections),
-        }
-
     index_dir.mkdir(parents=True, exist_ok=True)
+    # Only builders take this lock. Queries keep reading the published generation.
+    with (index_dir / ".build.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        staging = index_dir / ".building.zip"
+        staging.unlink(missing_ok=True)  # A killed builder may leave a partial archive.
+        try:
+            return _build_locked(config, staging)
+        finally:
+            staging.unlink(missing_ok=True)
+
+
+def _build_locked(config: KnowledgeConfig, staging: Path) -> dict[str, Any]:
+    index_dir = config.index_directory
+    index = VectorKnowledgeBackend(config)._ensure_index_loaded()
+    result = {
+        "updated": False,
+        "backend": config.backend,
+        "embedding_model": config.embedding_model,
+        "index_directory": str(index_dir),
+    }
+    if index is not None:
+        return {**result, "section_count": len(index.sections)}
+
+    signature = _directory_signature(config.directory)
+    sections = _load_sections(config.directory, snippet_char_limit=config.snippet_char_limit)
     if sections:
         embedder = _create_text_embedder(config)
         vectors = embedder.embed_documents([section.content_text for section in sections])
@@ -519,8 +506,6 @@ def build_knowledge_index(config: KnowledgeConfig) -> dict[str, Any]:
         vectors = np.zeros((0, 0), dtype=np.float32)
         embedding_model = config.embedding_model
 
-    np.save(vectors_path, vectors.astype(np.float32, copy=False))
-    _write_vector_section_records(sections_path, sections)
     manifest = {
         "version": INDEX_VERSION,
         "embedding_model": embedding_model,
@@ -530,22 +515,80 @@ def build_knowledge_index(config: KnowledgeConfig) -> dict[str, Any]:
         "section_count": len(sections),
         "vector_dim": int(vectors.shape[1]) if vectors.ndim == 2 else 0,
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    return {
-        "updated": True,
-        "backend": config.backend,
-        "embedding_model": embedding_model,
-        "index_directory": str(index_dir),
-        "section_count": len(sections),
-    }
+    with os.fdopen(os.open(staging, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600), "w+b") as stream:
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr(INDEX_MANIFEST_FILENAME, json.dumps(manifest))
+            archive.writestr(INDEX_SECTIONS_FILENAME, _vector_section_records(sections))
+            with archive.open(INDEX_VECTORS_FILENAME, "w", force_zip64=True) as handle:
+                np.save(handle, vectors.astype(np.float32, copy=False), allow_pickle=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    del vectors  # Verification reads back the published representation.
+    _read_vector_index(staging, config, signature)
+    if signature != _directory_signature(config.directory):
+        raise IndexSourcesChanged(
+            "Notes changed during the index build. Rebuild to include the latest edits."
+        )
+    staging.replace(index_dir / INDEX_ARCHIVE_FILENAME)
+    for name in (INDEX_MANIFEST_FILENAME, INDEX_SECTIONS_FILENAME, INDEX_VECTORS_FILENAME):
+        (index_dir / name).unlink(missing_ok=True)
+    return {**result, "updated": True, "section_count": len(sections)}
 
 
-def _directory_signature(directory: Path) -> tuple[tuple[str, int, int], ...] | None:
+@contextmanager
+def _index_files(source: Path):
+    if source.is_dir():
+        yield source
+    else:
+        # Pin one open file even if another process replaces the archive.
+        with zipfile.ZipFile(source) as archive:
+            yield zipfile.Path(archive)
+
+
+def _read_vector_index(
+    source: Path, config: KnowledgeConfig, signature: _SourceSignature
+) -> tuple[list[_VectorSectionRecord], np.ndarray]:
+    with _index_files(source) as files:
+        manifest = json.loads((files / INDEX_MANIFEST_FILENAME).read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or not _manifest_matches(manifest, config, signature):
+            raise ValueError("Outdated index manifest")
+        sections = _load_vector_section_records(
+            (files / INDEX_SECTIONS_FILENAME).read_text(encoding="utf-8")
+        )
+        source_paths = {item[0] for item in signature or ()}
+        if (
+            len(sections) != manifest["section_count"]
+            or any(section.source_path.as_posix() not in source_paths for section in sections)
+            or len({section.section_id for section in sections}) != len(sections)
+        ):
+            raise ValueError("Invalid index sections")
+        with (files / INDEX_VECTORS_FILENAME).open("rb") as handle:
+            vectors = np.load(handle, allow_pickle=False)
+            if not isinstance(vectors, np.ndarray):
+                vectors.close()
+                raise ValueError("Expected a NumPy array")
+        if (
+            vectors.ndim != 2
+            or vectors.shape != (len(sections), manifest["vector_dim"])
+            or (sections and not vectors.shape[1])
+            or not np.issubdtype(vectors.dtype, np.floating)
+        ):
+            raise ValueError("Invalid index vectors")
+        vectors = vectors.astype(np.float32, copy=False)
+        if not np.isfinite(vectors).all():
+            raise ValueError("Non-finite index vectors")
+        return sections, vectors
+
+
+def _directory_signature(directory: Path) -> _SourceSignature:
     if not directory.exists():
         return None
     signature: list[tuple[str, int, int]] = []
     for path in _iter_knowledge_files(directory):
-        stat = path.stat()
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            continue
         signature.append(
             (str(path.relative_to(directory)), int(stat.st_mtime_ns), int(stat.st_size))
         )
@@ -609,7 +652,10 @@ def _parse_document(path: Path, *, root: Path, snippet_char_limit: int) -> list[
     resolved_path = path.resolve()
     if not resolved_path.is_relative_to(root.resolve()):
         return []
-    raw = resolved_path.read_text(encoding="utf-8")
+    try:
+        raw = resolved_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
     metadata, body = _split_front_matter(raw)
 
     title = metadata.get("title") or _first_heading(body) or _humanize_stem(path.stem)
@@ -899,36 +945,30 @@ def _merge_hybrid_matches(
 
 
 def _serialize_signature(
-    signature: tuple[tuple[str, int, int], ...] | None,
+    signature: _SourceSignature,
 ) -> list[list[Any]] | None:
     if signature is None:
         return None
     return [[path, modified_ns, size] for path, modified_ns, size in signature]
 
 
-def _read_manifest(path: Path) -> dict[str, Any] | None:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return payload if isinstance(payload, dict) else None
-
-
 def _manifest_matches(
     manifest: dict[str, Any],
     config: KnowledgeConfig,
-    source_signature: tuple[tuple[str, int, int], ...] | None,
-    section_count: int,
+    source_signature: _SourceSignature,
 ) -> bool:
     return (
         manifest.get("version") == INDEX_VERSION
         and manifest.get("embedding_model") == config.embedding_model
         and manifest.get("embedding_pooling") == EMBEDDING_POOLING
         and manifest.get("snippet_char_limit") == config.snippet_char_limit
-        and manifest.get("section_count") == section_count
+        and type(manifest.get("section_count")) is int
         and type(manifest.get("vector_dim")) is int
         and manifest.get("source_signature") == _serialize_signature(source_signature)
     )
 
 
-def _write_vector_section_records(path: Path, sections: list[_KnowledgeSection]) -> None:
+def _vector_section_records(sections: list[_KnowledgeSection]) -> str:
     lines = []
     for section in sections:
         payload = {
@@ -939,14 +979,12 @@ def _write_vector_section_records(path: Path, sections: list[_KnowledgeSection])
             "snippet": section.snippet,
         }
         lines.append(json.dumps(payload, ensure_ascii=True))
-    path.write_text("\n".join(lines), encoding="utf-8")
+    return "\n".join(lines)
 
 
-def _load_vector_section_records(path: Path) -> list[_VectorSectionRecord]:
+def _load_vector_section_records(text: str) -> list[_VectorSectionRecord]:
     records: list[_VectorSectionRecord] = []
-    if not path.exists():
-        return records
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if not line.strip():
             continue
         payload = json.loads(line)

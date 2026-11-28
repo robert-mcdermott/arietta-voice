@@ -259,9 +259,12 @@ def main() -> int:
         return 0
 
     if args.command == "knowledge-index":
-        from arietta_voice.knowledge import build_knowledge_index
+        from arietta_voice.knowledge import IndexSourcesChanged, build_knowledge_index
 
-        payload = build_knowledge_index(config.knowledge)
+        try:
+            payload = build_knowledge_index(config.knowledge)
+        except IndexSourcesChanged as exc:
+            parser.error(str(exc))
         print(json.dumps(payload, indent=2))
         return 0
 

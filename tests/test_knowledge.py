@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -154,6 +155,13 @@ def test_old_embedding_pipeline_is_rejected_and_rebuilt(tmp_path, monkeypatch, o
         embedding_model="fake-bge-small",
     )
     build_knowledge_index(config)
+    # Older installations have three flat files. They remain readable until
+    # a build needs to replace them.
+    archive_path = config.index_directory / "current.zip"
+    with zipfile.ZipFile(archive_path) as archive:
+        archive.extractall(config.index_directory)
+    archive_path.unlink()
+    assert KnowledgeRetriever(config).search("password reset") is not None
     manifest_path = config.index_directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest.update(outdated)
@@ -190,7 +198,8 @@ def test_retrieval_and_index_exclude_external_links_and_hidden_directories(
     assert len(result.matches) == 1
     assert result.matches[0].source_path == Path("access.md")
     assert build_knowledge_index(config)["section_count"] == 1
-    assert "PRIVATE" not in (config.index_directory / "sections.jsonl").read_text()
+    with zipfile.ZipFile(config.index_directory / "current.zip") as archive:
+        assert b"PRIVATE" not in archive.read("sections.jsonl")
 
 
 def test_build_knowledge_index_and_hybrid_search_use_semantic_matches(
@@ -243,9 +252,8 @@ There is a cafeteria and coffee bar nearby.
     result = retriever.search("I can't sign in to my account")
 
     assert payload["updated"] is True
-    assert (index_dir / "manifest.json").exists()
-    assert (index_dir / "sections.jsonl").exists()
-    assert (index_dir / "vectors.npy").exists()
+    with zipfile.ZipFile(index_dir / "current.zip") as archive:
+        assert set(archive.namelist()) == {"manifest.json", "sections.jsonl", "vectors.npy"}
     assert result is not None
     assert result.backend == "hybrid"
     assert result.matches[0].title == "Credential Recovery"

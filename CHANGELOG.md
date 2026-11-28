@@ -7,6 +7,10 @@ version policy and the release procedure.
 
 - Keyword search finds more facts in the body of a note, including questions
   that use a regular singular or plural form such as “roller” and “rollers.”
+- Console Chat and voice pick up a completed knowledge index on their next search.
+  You can edit notes and rebuild while chatting. An interrupted build leaves the
+  published index intact, and hybrid search can use the current notes during recovery.
+
 ## 0.3.0 — 2026-11-27
 
 A first-time user successfully installed Arietta. In clean-checkout tests,

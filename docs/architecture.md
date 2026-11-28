@@ -414,10 +414,18 @@ flowchart LR
     EMBED --> VECTORS["vectors.npy"]
     SECTIONS --> JSONL["sections.jsonl"]
     INDEXCMD --> MANIFEST["manifest.json<br/>signature + model + version"]
-    VECTORS --> STORE[".knowledge_index"]
+    VECTORS --> STORE[".knowledge_index/current.zip"]
     JSONL --> STORE
     MANIFEST --> STORE
 ```
+
+A builder holds a file lock while it writes a candidate archive in the index
+directory. It reads the candidate back, validates its records and vectors, checks
+the source signature again, and publishes it with an atomic rename. Each reader
+opens one generation and can finish reading it while a later build publishes.
+A running retriever checks the generation and source signature on the next
+search. Valid version 3 flat indexes remain readable until a rebuild replaces
+them. A subsequent builder discards any staging file left by a stopped process.
 
 ### 7.2 Knowledge runtime flow
 
