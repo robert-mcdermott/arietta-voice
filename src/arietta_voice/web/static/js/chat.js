@@ -56,12 +56,12 @@ function render() {
   const log = $("#chat-log");
   if (!chat.history.length && !chat.pending) {
     log.innerHTML = `<div class="chat-empty"><strong>Chat with ${escapeHtml(assistantName())}</strong>
-      <p>Ask a question, or start with one of these.</p>
+      <p>Type a question or choose one below, then press Send.</p>
       <div class="chat-starters">
         <button class="btn" type="button" data-starter>What time is it?</button>
         <button class="btn" type="button" data-starter>What is 17 times 23?</button>
       </div></div>`;
-    updateStarters();
+    updateComposer();
     return;
   }
   const last = chat.history[chat.history.length - 1];
@@ -86,14 +86,15 @@ function setPending(pending) {
   chat.pending = pending;
   $("#chat-stop").hidden = !pending;
   $("#chat-stop").disabled = false;
-  $("#chat-send").disabled = pending;
+  updateComposer();
   $("#chat-clear").disabled = pending;
   $("#chat-message").disabled = pending;
 }
 
-function updateStarters() {
+function updateComposer() {
   const buttons = [...document.querySelectorAll("#chat-log [data-starter]")];
   const draft = $("#chat-message").value;
+  $("#chat-send").disabled = chat.pending || !draft.trim();
   const customDraft = draft.trim() && !buttons.some((button) => button.textContent === draft);
   for (const button of buttons) button.disabled = Boolean(customDraft);
 }
@@ -207,6 +208,7 @@ export function initChat() {
     if (starter) {
       const input = $("#chat-message");
       input.value = starter.textContent;
+      updateComposer();
       autosize();
       input.focus();
       return;
@@ -218,7 +220,7 @@ export function initChat() {
   });
   $("#chat-message").addEventListener("input", () => {
     autosize();
-    updateStarters();
+    updateComposer();
   });
   $("#chat-message").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {

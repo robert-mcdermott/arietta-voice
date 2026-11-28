@@ -15,10 +15,11 @@ supports timers and reminders, arithmetic, answers from notes, optional weather
 and web search, and tools supplied by MCP servers. The console exposes nine
 views, including streamed text chat and private persona and memory editors.
 
-1. **Get a new owner to a useful answer.** Home now opens text chat directly.
-   Try the time or arithmetic example, send it, then navigate back. Repeat on
-   a phone-sized screen. Before release, have a first-time user try this from
-   the install instructions and record where they need help.
+1. **Get a new owner to a useful answer.** The README now takes a fresh clone
+   through installation, sign-in and the first Chat answer. In a clean setup,
+   Chrome at 1440 px and 375 px returned 391 for 17 × 23 with voice stopped
+   and model downloads disabled. Before release, have a first-time user follow
+   the guide unaided and record where they need help.
 2. **Source-backed console Chat is implemented on this branch.** In Chrome,
    the local model cited the right passage for a synthetic spare key, then
    cited the corrected location in a fresh chat. After deletion, Chat reported

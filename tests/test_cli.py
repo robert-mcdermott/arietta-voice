@@ -76,13 +76,15 @@ def test_runtime_failures_do_not_leak_prompt_text_by_default(
 def test_admin_setup_uses_hidden_prompts_and_never_prints_password(tmp_path, monkeypatch, capsys):
     from arietta_voice.admin_auth import load_admin_credentials
 
-    path = tmp_path / "app.toml"
+    path = tmp_path / "first run.toml"
     path.write_text("")
     monkeypatch.delenv("ARIETTA_ADMIN_PASSWORD", raising=False)
     monkeypatch.setattr(sys, "argv", ["arietta-voice", "admin-setup", "--config", str(path)])
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "synthetic-long-password")
     assert cli.main() == 0
-    assert "synthetic-long-password" not in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "synthetic-long-password" not in output
+    assert f"uv run arietta-voice serve --config '{path}'" in output
     assert load_admin_credentials(path).verify("admin", "synthetic-long-password")
 
 

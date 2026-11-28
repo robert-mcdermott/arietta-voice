@@ -262,10 +262,13 @@ def test_a_script_error_or_failed_request_is_caught(console, page):
     assert any("HTTP 404" in problem for problem in page.problems)
 
 
-def test_phone_navigation_and_first_chat(console, page):
-    page.set_viewport_size({"width": 375, "height": 800})
+@pytest.mark.parametrize("width", [375, 1440], ids=["phone", "desktop"])
+def test_navigation_and_first_chat(console, page, width):
+    page.set_viewport_size({"width": width, "height": 800})
     page.goto(console)
     page.get_by_role("button", name="Open text chat").click()
+    send = page.get_by_role("button", name="Send", exact=True)
+    sync_api.expect(send).to_be_disabled()
     page.get_by_role("button", name="What time is it?").click()
     composer = page.get_by_role("textbox", name="Message", exact=True)
     assert composer.input_value() == "What time is it?"
@@ -274,21 +277,26 @@ def test_phone_navigation_and_first_chat(console, page):
     assert composer.input_value() == "What is 17 times 23?"
     composer.fill("My unfinished question")
     sync_api.expect(arithmetic).to_be_disabled()
+    composer.fill("   ")
+    sync_api.expect(send).to_be_disabled()
     composer.fill("")
     page.get_by_role("button", name="What time is it?").click()
-    picker = page.get_by_role("combobox", name="Console section")
-    picker.select_option("settings")
+    if width == 375:
+        page.get_by_role("combobox", name="Console section").select_option("settings")
+    else:
+        page.get_by_role("button", name="Settings", exact=True).click()
     page.go_back()
-    sync_api.expect(picker).to_have_value("chat")
+    sync_api.expect(page).to_have_url(f"{console}/#/chat")
     page.go_forward()
-    sync_api.expect(picker).to_have_value("settings")
+    sync_api.expect(page).to_have_url(f"{console}/#/settings")
     page.go_back()
-    sync_api.expect(picker).to_have_value("chat")
+    sync_api.expect(page).to_have_url(f"{console}/#/chat")
     assert composer.input_value() == "What time is it?"
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     # Exercise the real instant tool through the streaming endpoint.
-    page.get_by_role("button", name="Send", exact=True).click()
+    send.click()
     page.locator("#chat-log .assistant .msg-meta").wait_for()
+    sync_api.expect(send).to_be_disabled()
     assert "time" in page.locator("#chat-log .assistant .msg-body").inner_text().lower() or (
         "local_time" in page.locator("#chat-log .assistant .msg-meta").inner_text()
     )

@@ -1,6 +1,7 @@
 # Getting Started With Arietta Voice Customization
 
-This guide walks through the main ways to customize Arietta Voice for your own use:
+For a new installation, follow [Get your first answer in console Chat](../README.md#get-your-first-answer-in-console-chat).
+Once you have an answer, use this guide to customize Arietta Voice:
 
 - add knowledge
 - choose a knowledge backend
@@ -8,8 +9,6 @@ This guide walks through the main ways to customize Arietta Voice for your own u
 - add tools
 - personalize the assistant's name, wake word, and `SOUL.md`
 - verify your changes
-
-If you want the short overview, start with [README.md](../README.md). If you want the practical customization walkthrough, this is the file to use.
 
 ## 1. Know Which Files Matter
 

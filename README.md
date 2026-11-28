@@ -11,11 +11,50 @@ The web console lets you type to the same assistant, see when a reminder is
 due, and edit the notes or persona it uses. You can also connect external
 tools for jobs such as checking the weather or controlling your home.
 
-The default assistant persona is named `Bridget`, and the default wake word is
-also `Bridget`. Both are easy to change in your private
-`config/arietta_voice.local.toml` after running `uv run arietta-voice config-init`.
+## Setup
 
-For a detailed customization walkthrough, see [docs/getting-started.md](docs/getting-started.md).
+### Get your first answer in console Chat
+
+On an Apple Silicon Mac, start in Terminal with Git and uv installed. If you
+use Homebrew, `brew install uv` installs uv. From a new directory, run:
+
+```bash
+git clone https://github.com/robert-mcdermott/arietta-voice.git
+cd arietta-voice
+uv sync --locked
+uv run arietta-voice admin-setup
+```
+
+If you already have a checkout, start with `uv sync --locked` in that directory.
+At the `admin-setup` prompt, enter a password of at least 12 printable ASCII
+characters twice. The prompt hides what you type. If you already set a console
+password, skip `admin-setup` and use your existing sign-in.
+
+```bash
+uv run arietta-voice serve
+```
+
+Leave that terminal running. Open [the console](http://127.0.0.1:8765/admin)
+on the same Mac and sign in as `admin` with the password you chose.
+If Terminal reports that the address is already in use, choose a free port.
+For example, run `uv run arietta-voice serve --port 18768` and open
+[the console on port 18768](http://127.0.0.1:18768/admin).
+
+On **Home**, choose **Open text chat**. Select **What is 17 times 23?** and
+press **Send**. You should see **391**. This example uses the built-in calculator
+and works with voice stopped, before any model download. In a narrow window,
+use the section picker at the top to return to Home. Press Ctrl-C in Terminal
+when you want to stop the console.
+
+### Try voice or customize your assistant
+
+For Kokoro speech on macOS, install `espeak-ng` with `brew install espeak-ng`.
+With the console running, choose **Start listening** on Home. The first voice
+start downloads the configured speech and model assets as needed.
+
+The default assistant name and wake word are both `Bridget`. To change them,
+run `uv run arietta-voice config-init` and edit `config/arietta_voice.local.toml`.
+See the [customization walkthrough](docs/getting-started.md).
 
 For planned improvements, see [ROADMAP.md](ROADMAP.md). The
 [release guide](docs/releasing.md) explains app versioning, and
@@ -51,22 +90,6 @@ It intentionally does not include:
 
 - webcam presence detection
 - camera and vision tools
-
-## Setup
-
-Install the project environment:
-
-```bash
-uv sync
-```
-
-Recommended on macOS for Kokoro:
-
-```bash
-brew install espeak-ng
-```
-
-First run downloads model assets as needed. Depending on your config, that can include Moonshine, Kokoro, Smart Turn, and the local MLX chat model.
 
 ## Commands
 
@@ -127,10 +150,6 @@ and list exact hostnames in comma-separated `ARIETTA_ADMIN_ALLOWED_HOSTS`;
 HTTP Basic credentials are not encrypted by HTTP itself. The API rejects
 untrusted Host headers and cross-origin browser mutations, and marks responses
 non-cacheable. These controls do not provide TLS or a multi-user permission model.
-
-For a first conversation, choose **Open text chat** on Home, select **What time
-is it?**, and press **Send**. To try voice, return to Home, choose **Start
-listening**, and wait for the wake-word prompt.
 
 Home also shows timers, reminders, alarms and the last spoken turn's timing.
 Use **Knowledge** for notes, **Persona** for personality and memory, **Tools**
