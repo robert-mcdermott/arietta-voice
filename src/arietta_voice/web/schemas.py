@@ -21,6 +21,16 @@ class ChatRequest(BaseModel):
     request_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
+class ConsoleChatRequest(ChatRequest):
+    save_history: bool = Field(default=False, exclude=True)
+    conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$", exclude=True)
+
+
+class HistorySearchRequest(BaseModel):
+    query: str = Field(default="", max_length=500)
+    offset: int = Field(default=0, ge=0, le=2147483647)
+
+
 class KnowledgeSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
 

@@ -184,6 +184,16 @@
 
         <!-- Chat -->
         <section id="chat" class="view">
+          <details class="card chat-archive" id="chat-archive">
+            <summary>Saved chats <span class="hint" id="chat-saving"></span></summary>
+            <p class="hint">Manage local saving in <a href="#/settings">Settings → Memory and privacy</a>.</p>
+            <form id="chat-search-form" class="row">
+              <input type="search" id="chat-query" placeholder="Search questions and answers" aria-label="Search saved chats" maxlength="500">
+              <button class="btn small" type="submit">Search</button>
+            </form>
+            <div id="chat-saved-list" class="saved-chats" aria-live="polite"></div>
+            <button class="btn small quiet" id="chat-more" type="button" hidden>Show more</button>
+          </details>
           <div class="card chat">
             <div id="chat-log" class="chat-log" aria-live="polite"></div>
             <div class="composer">
@@ -195,7 +205,7 @@
               </div>
               <div class="composer-foot">
                 <span id="chat-status" role="status">Enter to send · Shift + Enter for a new line</span>
-                <button class="btn small quiet" id="chat-clear" type="button">Clear conversation</button>
+                <button class="btn small quiet" id="chat-clear" type="button">New chat</button>
               </div>
             </div>
           </div>

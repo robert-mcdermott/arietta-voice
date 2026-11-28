@@ -49,6 +49,7 @@ from arietta_voice.tools.approvals import Approvals
 from arietta_voice.tools.registry import enabled_tool_names
 from arietta_voice.turns import CancellationToken
 from arietta_voice.web import settings as settings_module
+from arietta_voice.web.chat_history import ChatHistory
 from arietta_voice.web.schemas import (
     ChatRequest,
     McpServerRequest,
@@ -74,6 +75,7 @@ class AriettaApiService:
         self.started_at = _now_iso()
         self.started_monotonic = time.monotonic()
         self.event_logger = EventLogger.from_config(self.config.logging)
+        self.chat_history = ChatHistory(self.config.project_root / "state")
         self.prompt_manager = PromptManager(self.config)
         self.knowledge = KnowledgeRetriever(self.config.knowledge)
         self.runtime_supervisor = RuntimeSupervisor(self.config, config_path=self.config_path)
@@ -472,8 +474,9 @@ class AriettaApiService:
             if previously_enabled and not self.config.memory.enabled:
                 self.memory_jobs.suspend()
                 self.memory_jobs.discard_pending()
-            # The console's own worker reads settings when it starts.
-            self.worker.invalidate()
+            # Chat history is handled by the console, outside the inference worker.
+            if changed != ["admin.save_chat_history"]:
+                self.worker.invalidate()
             self.event_logger.log("api_settings_changed", settings=changed)
         return {"changed": changed, **self.settings()}
 

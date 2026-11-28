@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
@@ -19,8 +20,10 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from arietta_voice.admin_auth import load_admin_credentials
 from arietta_voice.knowledge import IndexSourcesChanged
 from arietta_voice.memory import MemoryConflict
+from arietta_voice.web.chat_history import PAGE_SIZE
 from arietta_voice.web.schemas import (
-    ChatRequest,
+    ConsoleChatRequest,
+    HistorySearchRequest,
     KnowledgeFileWriteRequest,
     KnowledgeSearchRequest,
     McpImportRequest,
@@ -513,6 +516,43 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    @app.post("/api/chat/history/search")
+    def search_chats(payload: HistorySearchRequest, _user: str = Depends(require_admin)):
+        items = svc().chat_history.search(payload.query.strip(), payload.offset)
+        return {
+            "enabled": svc().config.admin.save_chat_history,
+            "items": items[:PAGE_SIZE],
+            "has_more": len(items) > PAGE_SIZE,
+        }
+
+    @app.get("/api/chat/history/{conversation_id}")
+    def read_chat(conversation_id: str, _user: str = Depends(require_admin)):
+        try:
+            return {"messages": svc().chat_history.read(conversation_id)}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Saved conversation unavailable") from None
+
+    @app.delete("/api/chat/history/{conversation_id}")
+    def delete_chat(conversation_id: str, _user: str = Depends(require_admin)):
+        try:
+            svc().chat_history.delete(conversation_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Saved conversation unavailable") from None
+        return {"deleted": True}
+
+    def save_turn(payload, result):
+        if not svc().config.admin.save_chat_history:
+            return {"history_warning": "History is off. This turn was not saved."}
+        try:
+            saved = svc().chat_history.append(payload.conversation_id, payload.message, result)
+            return {"conversation_id": saved}
+        except KeyError:
+            return {
+                "history_warning": "This conversation was deleted. Start a new chat to save future turns."
+            }
+        except (OSError, sqlite3.Error):
+            return {"history_warning": "The answer could not be saved to local history."}
+
     @app.post("/api/chat/{request_id}/cancel")
     def cancel_api_chat(
         request_id: str = ApiPath(pattern=r"^[A-Za-z0-9_-]{1,64}$"),
@@ -537,9 +577,10 @@ def create_app(
         return 502, "The model or tool failed. The next request will use a fresh worker."
 
     @app.post("/api/chat/stream")
-    def api_chat_stream(payload: ChatRequest, _user: str = Depends(require_admin)):
+    def api_chat_stream(payload: ConsoleChatRequest, _user: str = Depends(require_admin)):
         """The answer as server-sent events: ``clause`` events, then ``done`` or ``error``."""
         try:
+            save = payload.save_history and svc().config.admin.save_chat_history
             events = svc().chat_stream(payload)
         except Exception as exc:
             code, detail = chat_failure(exc, "/api/chat/stream")
@@ -548,6 +589,8 @@ def create_app(
         def sse():
             try:
                 for event in events:
+                    if save and event["kind"] == "done":
+                        event["result"].update(save_turn(payload, event["result"]))
                     yield f"data: {json.dumps(event)}\n\n"
             except Exception as exc:
                 code, detail = chat_failure(exc, "/api/chat/stream")
@@ -565,13 +608,16 @@ def create_app(
         )
 
     @app.post("/api/chat")
-    def api_chat(payload: ChatRequest, _user: str = Depends(require_admin)) -> dict[str, Any]:
+    def api_chat(
+        payload: ConsoleChatRequest, _user: str = Depends(require_admin)
+    ) -> dict[str, Any]:
         try:
+            save = payload.save_history and svc().config.admin.save_chat_history
             result = svc().chat(payload)
         except Exception as exc:
             code, detail = chat_failure(exc, "/api/chat")
             raise HTTPException(status_code=code, detail=detail) from exc
-        return {
+        response = {
             "response": result.response,
             "source": result.source,
             "used_tool": result.used_tool,
@@ -580,6 +626,9 @@ def create_app(
             "smarter": result.smarter,
             "sources": result.sources,
         }
+        if save:
+            response.update(save_turn(payload, response))
+        return response
 
     @app.get("/admin/knowledge/passage", response_class=HTMLResponse, include_in_schema=False)
     def note_passage(

@@ -123,6 +123,8 @@ GROUPS: list[tuple[str, str, list[Field]]] = [
         "privacy",
         "Memory and privacy",
         [
+            Field("admin", "save_chat_history", "Save console conversations on this Mac", "boolean",
+                  "Search and reopen saved chats. Turning this off stops new saves; existing chats stay available until deleted."),
             Field("memory", "enabled", "Remember facts between conversations", "boolean",
                   "Keeps a short memory file of things you tell it."),
             Field("logging", "content_enabled", "Log conversation text", "boolean",

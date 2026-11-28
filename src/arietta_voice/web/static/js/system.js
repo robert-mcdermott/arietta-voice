@@ -285,7 +285,9 @@ async function saveGroup(name) {
     });
     replaceGroup(payload, name);
     toast(`${group.title} saved`, "ok");
-    $("#settings-restart").hidden = !payload.runtime_running;
+    if (payload.changed.some((key) => key !== "admin.save_chat_history")) {
+      $("#settings-restart").hidden = !payload.runtime_running;
+    }
   } catch (error) {
     toast(error.message.replace(/ \(400\)$/, ""), "bad");
   } finally {

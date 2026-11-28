@@ -297,6 +297,7 @@ class ModelToolsConfig:
 @dataclass(slots=True)
 class AdminConfig:
     allow_source_editing: bool = False
+    save_chat_history: bool = False
 
 
 @dataclass(slots=True)
@@ -482,7 +483,10 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     config = AppConfig(
         project_root=base.project_root,
-        admin=AdminConfig(allow_source_editing=admin.get("allow_source_editing", False)),
+        admin=AdminConfig(
+            allow_source_editing=admin.get("allow_source_editing", False),
+            save_chat_history=admin.get("save_chat_history", False),
+        ),
         runtime=RuntimeConfig(**runtime),
         assistant=AssistantProfile(
             name=assistant.get("name", base.assistant.name),

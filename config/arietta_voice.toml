@@ -1,5 +1,7 @@
 [admin]
 allow_source_editing = false
+# Save completed console Chat turns on this computer.
+save_chat_history = false
 
 [assistant]
 name = "Bridget"

@@ -44,7 +44,7 @@ let viewLoading = false;
 
 async function loadView(view) {
   if (view === "home") await loadOverview();
-  if (view === "chat") showChat();
+  if (view === "chat") await showChat();
   if (view === "knowledge") await loadKnowledgeFiles();
   if (view === "persona") await loadPersona();
   if (view === "tools") await loadTools();

@@ -91,7 +91,7 @@ def reminder_console(tmp_path_factory):
         yield url, root / "config" / "arietta_voice.toml"
 
 
-def _serve(root, *, memory=False, indexed=False):
+def _serve(root, *, memory=False, indexed=False, config_path=None):
     import uvicorn
 
     from arietta_voice.web.app import create_app
@@ -101,7 +101,7 @@ def _serve(root, *, memory=False, indexed=False):
     patch.setenv("ARIETTA_ADMIN_USERNAME", "admin")
     patch.setenv("ARIETTA_ADMIN_PASSWORD", PASSWORD)
     try:
-        config_path = _write_config(root, indexed=indexed)
+        config_path = config_path or _write_config(root, indexed=indexed)
         if memory:
             with config_path.open("a") as handle:
                 handle.write("\n[memory]\nenabled = true\n")
@@ -125,9 +125,12 @@ def _serve(root, *, memory=False, indexed=False):
         if time.monotonic() > deadline or not thread.is_alive():
             pytest.fail("The console server did not start")
         time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(10)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(10)
+        assert not thread.is_alive()
 
 
 def _fixture_engine(config):
@@ -151,6 +154,17 @@ def _fixture_engine(config):
     engine.service()._llm = MemoryModel()
 
     def answer(messages, **kwargs):
+        if messages[-1]["content"] == "Which name did we choose for the rehearsal?":
+            return "The rehearsal is called Amber Lantern."
+        if messages[-1]["content"] == "Repeat that name.":
+            return next(
+                (
+                    m["content"]
+                    for m in messages
+                    if m["role"] == "assistant" and "Amber Lantern" in m["content"]
+                ),
+                "I do not remember.",
+            )
         if messages[-1]["content"] == "I prefer jasmine tea.":
             return "Understood."
         if messages[-1]["content"] == "Which tea do I prefer?":
@@ -617,3 +631,80 @@ def test_chat_reminder_fires_once_and_stays_dismissed_across_restarts(reminder_c
             1,
         )
     assert page.problems == []
+
+
+def test_opt_in_chat_history_survives_restart_and_deleted_chat_stays_gone(tmp_path, browser):
+    config = _write_config(tmp_path)
+    db = tmp_path / "state" / "chat-history.sqlite3"
+    question = "Which name did we choose for the rehearsal?"
+
+    @contextmanager
+    def fresh_console():
+        with (
+            contextmanager(_serve)(tmp_path, config_path=config) as url,
+            browser.new_context(
+                http_credentials={"username": "admin", "password": PASSWORD}
+            ) as context,
+        ):
+            page = context.new_page()
+            page.goto(f"{url}/#/chat")
+            yield page, url
+
+    def ask(page, message, answer="The rehearsal is called Amber Lantern."):
+        page.fill("#chat-message", message)
+        page.click("#chat-send")
+        sync_api.expect(page.locator("#chat-log .assistant .msg-body").last).to_have_text(
+            answer, timeout=30000
+        )
+        sync_api.expect(page.locator("#chat-message")).to_be_enabled()
+
+    def search(page):
+        page.locator("#chat-archive summary").click()
+        page.get_by_role("searchbox").fill("AMBER LANTERN")
+        page.locator("#chat-search-form").get_by_role("button", name="Search").click()
+
+    with fresh_console() as (page, url):
+        sync_api.expect(page.locator("#chat-saving")).to_have_text("Saving off")
+        ask(page, question)
+        assert not db.exists()
+        page.goto(f"{url}/#/settings")
+        page.check("#setting-admin-save_chat_history")
+        page.click('[data-save-group="privacy"]')
+        sync_api.expect(page.locator("#toasts")).to_contain_text("Memory and privacy saved")
+        page.goto(f"{url}/#/chat")
+        sync_api.expect(page.locator("#chat-saving")).to_have_text("Saving on")
+        page.click("#chat-clear")
+        ask(page, question)
+        assert db.stat().st_mode & 0o777 == 0o600
+        page.click("#chat-clear")
+        ask(page, "I prefer jasmine tea.", "Understood.")
+
+    with fresh_console() as (page, url):
+        assert page.locator("#chat-log .msg").count() == 0
+        search(page)
+        found = page.get_by_role("button", name=question, exact=False).filter(
+            has=page.locator("time")
+        )
+        sync_api.expect(found).to_have_count(1)
+        sync_api.expect(page.locator("[data-open-chat]")).to_have_count(1)
+        saved_id = found.get_attribute("data-open-chat")
+        found.click()
+        sync_api.expect(page.locator("#chat-log .user")).to_have_text(question)
+        sync_api.expect(page.locator("#chat-log .assistant")).to_contain_text("Amber Lantern")
+        ask(page, "Repeat that name.")
+        saved = page.request.get(f"{url}/api/chat/history/{saved_id}").json()
+        assert len(saved["messages"]) == 4
+        search(page)
+        page.once("dialog", lambda dialog: dialog.accept())
+        page.get_by_role("button", name=f"Delete {question}").click()
+        sync_api.expect(page.locator("#chat-saved-list")).to_have_text("No matching chats.")
+        assert page.locator("#chat-log .msg").count() == 0
+
+    with fresh_console() as (page, url):
+        search(page)
+        sync_api.expect(page.locator("#chat-saved-list")).to_have_text("No matching chats.")
+        assert page.request.get(f"{url}/api/chat/history/{saved_id}").status == 404
+        page.get_by_role("searchbox").fill("")
+        page.locator("#chat-search-form").get_by_role("button", name="Search").click()
+        sync_api.expect(page.locator("[data-open-chat]")).to_have_count(1)
+        sync_api.expect(page.locator("[data-open-chat]")).to_contain_text("jasmine tea")
