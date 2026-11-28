@@ -33,6 +33,7 @@ from arietta_voice.devices import (
 )
 from arietta_voice.diagnostics import run_startup_diagnostics
 from arietta_voice.logging_utils import EventLogger
+from arietta_voice.memory import requested_memory
 from arietta_voice.memory_jobs import MemoryJobs
 from arietta_voice.models import AssistantState, ConversationTurn, SessionContext, UtteranceResult
 from arietta_voice.prompts import sanitize_for_speech
@@ -338,6 +339,7 @@ class AriettaVoiceRuntime:
     def _chat_request(self, user_text):
         return {
             "message": user_text,
+            "memory_origin": "voice",
             "history": [asdict(turn) for turn in self.session.history],
             "use_tools": True,
             "enabled_tools": tuple(enabled_tool_names(self.config)),
@@ -693,6 +695,19 @@ class AriettaVoiceRuntime:
         self.set_state(AssistantState.THINKING)
         self._start_thinking_chime()
         self.last_user_transcript = transcript
+
+        # A speaker may continue or retract a provisional transcript. Wait for the
+        # ordinary silence window before letting a save command write to disk.
+        watch = self._resume_watch
+        if watch is not None and requested_memory(transcript) is not None:
+            while watch.active:
+                self._inference_wait()
+                self._check_resumed()
+                if self._turn_token is not None:
+                    self._turn_token.check()
+                self._remaining_time()
+                if watch.active:
+                    time.sleep(0.01)
 
         end_session_requested = False
         delivered = False

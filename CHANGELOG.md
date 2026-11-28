@@ -5,6 +5,9 @@ version policy and the release procedure.
 
 ## Unreleased
 
+- With memory enabled, “Remember that…” saves a dated entry by voice or in
+  Chat. Persona shows its save date and source and offers Edit and Forget.
+
 - Console Chat can save conversations locally when enabled in Settings. Search
   questions and answers, reopen a chat after a restart, or delete it from history.
 

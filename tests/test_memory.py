@@ -221,3 +221,44 @@ def test_consolidation_preserves_corrected_fact_and_its_origin(tmp_path):
     assert "oolong" not in str(model.generate.call_args)
     fixed = next(entry for entry in store.inspect()["entries"] if entry["edited"])
     assert (fixed["text"], fixed["origin"]) == ("Prefers oolong tea.", "chat")
+
+
+def test_dated_save_preserves_freeform_and_same_text_on_other_dates(tmp_path):
+    from datetime import date
+
+    from arietta_voice.memory import prompt_memory
+
+    store = MemoryStore(tmp_path / "MEMORY.md", True, 1)
+    value = "The review is in the west hall."
+    original = (
+        f"# Memory\r\n- {value} <!-- arietta-memory:voice:saved=2000-03-14 -->\r\n"
+        "\r\nHandwritten notes.\r\n```\r\n- an unfinished example"
+    ).encode()
+    store.path.write_bytes(original)
+    store.save_dated(value, origin="chat")
+    store.save_dated(value, origin="chat")
+    memory = store.inspect()
+    today, older = memory["entries"]
+    assert (today["saved_on"], today["origin"]) == (date.today().isoformat(), "chat")
+    assert older["saved_on"] == "2000-03-14"
+    assert today["saved_on"] in prompt_memory(memory["content"])
+    assert value not in prompt_memory(memory["content"], include_dated=False)
+    store.edit(None, entry_id=today["id"], revision=memory["revision"])
+    assert store.path.read_bytes() == original
+    assert [entry["saved_on"] for entry in store.inspect()["entries"]] == ["2000-03-14"]
+
+
+def test_consolidation_preserves_explicit_memories(tmp_path):
+    store = MemoryStore(tmp_path / "MEMORY.md", True, 1)
+    store.edit("# Memory\n- Grows herbs.\n")
+    store.save_dated("The decision was violet.", origin="voice")
+    before = next(e for e in store.inspect()["entries"] if e["saved_on"])
+    model = Mock(generate=Mock(return_value="# Memory\n- Grows basil."))
+    assert store.maybe_consolidate(model, 1)
+    assert "violet" not in str(model.generate.call_args)
+    after = next(e for e in store.inspect()["entries"] if e["saved_on"])
+    assert (after["text"], after["saved_on"], after["origin"]) == (
+        before["text"],
+        before["saved_on"],
+        "voice",
+    )

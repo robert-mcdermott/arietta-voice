@@ -253,7 +253,8 @@ disabled tools never execute; an interrupted action never runs twice.
    of durable facts plus dated episodic notes, each with provenance, all
    viewable, editable and deletable in the console. The existing Markdown store
    now exposes individual facts, their learning channel, and owner corrections.
-   Dated episodic notes remain open.
+   Owners can explicitly save a dated decision by voice or in Chat, recall it
+   in a fresh session, and correct or forget it in Persona with Chat history off.
 2. Console Chat now supports opt-in local history. A browser test searches and
    continues a synthetic chat after a restart, deletes it, and checks a second restart.
 3. Knowledge retrieval: bounded chunks with stable source IDs, atomic index

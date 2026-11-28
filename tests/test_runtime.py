@@ -1029,3 +1029,19 @@ def test_with_follow_ups_off_the_next_request_needs_the_wake_word(
     expected = "waiting_for_wake" if needs_wake else "listening"
     assert runtime._idle_state().value == expected
     assert runtime.session.active  # The conversation itself is kept.
+
+
+def test_resumed_voice_request_does_not_save_partial_decision(runtime, monkeypatch):
+    from arietta_voice.resume import ResumeWatch, TurnResumed
+
+    runtime.config.memory.enabled = True
+    runtime._turn_microphone = Mock()
+    runtime._turn_microphone.get_nowait.side_effect = [np.ones(512), np.ones(512)]
+    runtime.vad.probability.return_value = 1
+    runtime._resume_watch = ResumeWatch(runtime.vad, window_end=time.monotonic() + 1)
+    respond = Mock()
+    monkeypatch.setattr(runtime, "_respond", respond)
+    with pytest.raises(TurnResumed):
+        runtime._handle_active_turn("Remember that we chose red", runtime._turn_microphone, Mock())
+    respond.assert_not_called()
+    assert not runtime.config.prompts.memory_path.exists()

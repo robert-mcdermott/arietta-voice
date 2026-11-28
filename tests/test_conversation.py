@@ -324,3 +324,34 @@ def test_an_empty_tool_result_lets_general_questions_be_answered(tmp_path) -> No
     content, result = _run_for_model(Empty(), "search_knowledge", {"query": "spiders"})
     assert "general knowledge, answer from what you know" in content
     assert result is not None
+
+
+def test_only_explicit_save_commands_create_dated_memories(tmp_path):
+    from arietta_voice.memory import MemoryStore, requested_memory
+
+    config = default_config(tmp_path)
+    service = ConversationService(
+        config, generate=Mock(side_effect=AssertionError("Unexpected model call"))
+    )
+    text = "The rehearsal is in the east hall."
+    request = f"Remember that {text}"
+    assert "Memory is off" in service.chat(message=request).response
+    assert not config.prompts.memory_path.exists()
+    config.memory.enabled = True
+    assert service.chat(message="Remember that.").response.startswith("Tell me")
+    assert "one plain" in service.chat(message="Remember that red\n- blue").response
+    assert not config.prompts.memory_path.exists()
+    for message in (
+        "Do you remember that decision?",
+        "Don't remember that we chose red.",
+        "She said 'remember that it is blue'.",
+        "Remind me to book the hall tomorrow.",
+        "Remember that time we danced?",
+    ):
+        assert requested_memory(message) is None
+    assert (
+        service.chat(message=f"Save a dated memory: {text}", memory_origin="voice").source
+        == "memory"
+    )
+    (entry,) = MemoryStore(config.prompts.memory_path, True, 1).inspect()["entries"]
+    assert (entry["text"], entry["origin"]) == (text, "voice")

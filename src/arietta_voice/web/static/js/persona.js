@@ -21,7 +21,7 @@ function render(payload) {
   }
   if (!persona.edit && $("#memory-entries").dataset.revision !== memory.revision) renderEntries(memory);
   $("#memory-file").textContent = memory.enabled
-    ? `Memory is on. The assistant adds facts here as you talk: ${memory.file}`
+    ? `Memory is on. Say “Remember that…” to save a dated entry here. ${memory.file}`
     : `Memory is off in Settings, so this file is not used. ${memory.file}`;
   setButtons();
 }
@@ -33,13 +33,15 @@ function renderEntries(memory) {
   list.dataset.revision = memory.revision;
   if (!memory.entries.length) {
     const empty = !memory.content.trim() || memory.content.trim() === "# Memory";
-    list.innerHTML = empty ? '<p class="hint">No saved facts yet.</p>'
+    list.innerHTML = empty ? '<p class="hint">No saved facts or dated memories yet.</p>'
       : '<p class="hint">Open the full memory file to review its free-form text.</p>';
     return;
   }
   list.innerHTML = memory.entries.map((entry) => `<div class="result-card" data-entry="${entry.id}">
     <div class="memory-value">${escapeHtml(entry.text)}</div>
-    <div class="row"><span class="hint">${origins[entry.origin]}${entry.edited ? " · corrected" : ""}</span>
+    <div class="row"><span class="hint">${entry.saved_on
+      ? `Saved ${escapeHtml(entry.saved_on)} · ${entry.origin === "voice" ? "By voice" : "In Chat"}`
+      : origins[entry.origin]}${entry.edited ? " · corrected" : ""}</span>
     <button type="button" class="btn small quiet" data-memory-action="edit">Edit</button>
     <button type="button" class="btn small quiet" data-memory-action="forget">Forget</button></div></div>`).join("");
 }
@@ -53,7 +55,7 @@ async function entryAction(event) {
   if (action === "edit") {
     delete $("#memory-entries").dataset.revision;
     persona.edit = { id: entry.id, revision: persona.payload.memory.revision };
-    row.innerHTML = `<label class="field">Correct saved fact<input data-edit-value value="${escapeHtml(entry.text)}"></label>
+    row.innerHTML = `<label class="field">Correct saved ${entry.saved_on ? "memory" : "fact"}<input data-edit-value value="${escapeHtml(entry.text)}"></label>
       <div class="row"><button type="button" class="btn small primary" data-memory-action="apply">Save correction</button>
       <button type="button" class="btn small quiet" data-memory-action="cancel">Cancel</button></div>`;
     row.querySelector("input").focus();
@@ -65,7 +67,7 @@ async function entryAction(event) {
     render(persona.payload);
     return;
   }
-  if (action === "forget" && !confirm("Forget this fact in future conversations?")) return;
+  if (action === "forget" && !confirm("Forget this memory in future conversations?")) return;
   const revision = persona.edit?.revision ?? persona.payload.memory.revision;
   const id = persona.edit?.id ?? entry.id;
   const url = `/api/memory/entries/${id}`;
@@ -79,7 +81,7 @@ async function entryAction(event) {
       : await api(url, { method: "PUT", body: JSON.stringify({ revision, content: input.value }) });
     persona.edit = null;
     render(payload);
-    toast(action === "forget" ? "Fact forgotten" : "Correction saved", "ok");
+    toast(action === "forget" ? "Memory forgotten" : "Correction saved", "ok");
   } finally {
     persona.saving = false;
     setButtons();

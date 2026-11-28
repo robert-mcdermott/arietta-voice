@@ -495,6 +495,19 @@ SQLite file at `state/chat-history.sqlite3`. History uses the console's existing
 admin sign-in. Voice transcripts, event logging, and learned preferences have
 separate controls.
 
+### Save a dated memory
+
+With **Settings → Memory and privacy → Remember facts between conversations** on,
+say or type “Remember that we chose the east hall for the rehearsal.” Arietta
+saves your statement in the private memory file before acknowledging it. The
+entry records the local date you saved it and whether you used voice or Chat.
+You can leave **Save console conversations on this Mac** off.
+
+Ask “Which hall did we choose for the rehearsal?” in a fresh chat. In
+**Persona → Memory**, use **Edit** to correct the decision or **Forget** to
+remove it from future conversations. A correction keeps the original date and
+source. Background consolidation preserves these entries.
+
 ### Background memory
 
 When `[memory].enabled` is true, completed voice and console Chat turns can
