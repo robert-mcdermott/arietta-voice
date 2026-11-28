@@ -14,6 +14,7 @@ from arietta_voice.clauses import RESPONSE_CHARS, SpeechClauses
 from arietta_voice.confirmations import confirmation_reply
 from arietta_voice.knowledge import NOTES_HEADING, KnowledgeMatch, KnowledgeRetriever
 from arietta_voice.llm import ModelEvent, build_chat_model
+from arietta_voice.memory import MemoryStore, requested_memory
 from arietta_voice.model_tooling import (
     NATIVE_CALL_START,
     parse_model_tool_request,
@@ -235,8 +236,31 @@ class ConversationService:
         max_tokens=None,
         temperature=None,
         cite_notes=False,
+        memory_origin="chat",
     ):
         message = message.strip()
+        decision = requested_memory(message)
+        if decision is not None:
+            self._pending = self._asked = None
+            store = MemoryStore(
+                self.config.prompts.memory_path,
+                self.config.memory.enabled,
+                self.config.memory.consolidate_every_turns,
+            )
+            try:
+                store.save_dated(decision, origin=memory_origin)
+                reply = "Saved that as a dated memory."
+            except ValueError as exc:
+                reply = str(exc)
+            except OSError:
+                reply = "I couldn't write the memory file. Check the file in Persona and try again."
+            yield from self._speech_events(
+                iter([ModelEvent("text", reply), ModelEvent("done")]),
+                source="memory",
+                used_tool=None,
+                model_tool=None,
+            )
+            return
         history = [
             ConversationTurn(role=t["role"], content=t["content"].strip())
             for t in history

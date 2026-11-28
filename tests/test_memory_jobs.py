@@ -160,3 +160,12 @@ def test_background_deadline_terminates_native_work_without_retry():
     finally:
         jobs.close()
         worker.close()
+
+
+def test_explicit_saves_are_not_relearned_by_an_idle_job():
+    jobs = make_jobs(CooperativeWorker())
+    try:
+        assert not jobs.submit("Remember that we chose violet.", "Saved that as a dated memory.", 1)
+        assert jobs.snapshot()["queued"] == 0
+    finally:
+        jobs.close()

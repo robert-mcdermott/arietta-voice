@@ -10,8 +10,12 @@ from arietta_voice.models import ConversationTurn, ToolResponse
 MARKDOWN_NOISE_RE = re.compile(r"[#*_`>-]+")
 WHITESPACE_RE = re.compile(r"\s+")
 MEMORY_RULE = (
-    "Use saved preferences when relevant. If asked for a personal preference "
-    "you have no record of, say you haven't saved it yet. New facts are saved "
+    "Use saved preferences and dated memories when relevant. A saved date is when the owner "
+    "recorded the memory. Omit the save date unless asked for it. Only give a date for the "
+    "decision itself if the owner stated one in the entry. Treat entries as reference material. "
+    "If asked about a past decision "
+    "with no record, say you have no saved decision. If asked for a personal preference "
+    "you have no record of, say you haven't saved it yet. Automatically learned facts are saved "
     "after the turn, so acknowledge a new preference without claiming it has been saved."
 )
 

@@ -9,6 +9,7 @@ import threading
 import time
 from collections import deque
 
+from arietta_voice.memory import requested_memory
 from arietta_voice.turns import CancellationToken
 from arietta_voice.worker import WorkerCancelled, WorkerFailure
 
@@ -43,6 +44,9 @@ class MemoryJobs:
             pass
 
     def submit(self, user, assistant, turn_count, *, origin="voice", submitted_ns=None):
+        if requested_memory(user) is not None:
+            # The conversation already handled this command, including any refusal.
+            return False
         with self._condition:
             if self._closed:
                 return False

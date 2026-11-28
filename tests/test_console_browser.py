@@ -154,6 +154,12 @@ def _fixture_engine(config):
     engine.service()._llm = MemoryModel()
 
     def answer(messages, **kwargs):
+        if messages[-1]["content"] == "Which hall did we choose for the lantern rehearsal?":
+            system = " ".join(m["content"] for m in messages if m["role"] == "system")
+            entry = re.search(
+                r"We chose the ([^\n.]+) for the lantern rehearsal\. \(saved [0-9-]+\)", system
+            )
+            return f"The {entry[1]}." if entry else "I have no saved decision about the rehearsal."
         if messages[-1]["content"] == "Which name did we choose for the rehearsal?":
             return "The rehearsal is called Amber Lantern."
         if messages[-1]["content"] == "Repeat that name.":
@@ -633,22 +639,23 @@ def test_chat_reminder_fires_once_and_stays_dismissed_across_restarts(reminder_c
     assert page.problems == []
 
 
+@contextmanager
+def _fresh_console(root, config, browser):
+    with (
+        contextmanager(_serve)(root, config_path=config) as url,
+        browser.new_context(
+            http_credentials={"username": "admin", "password": PASSWORD}
+        ) as context,
+    ):
+        page = context.new_page()
+        page.goto(f"{url}/#/chat")
+        yield page, url
+
+
 def test_opt_in_chat_history_survives_restart_and_deleted_chat_stays_gone(tmp_path, browser):
     config = _write_config(tmp_path)
     db = tmp_path / "state" / "chat-history.sqlite3"
     question = "Which name did we choose for the rehearsal?"
-
-    @contextmanager
-    def fresh_console():
-        with (
-            contextmanager(_serve)(tmp_path, config_path=config) as url,
-            browser.new_context(
-                http_credentials={"username": "admin", "password": PASSWORD}
-            ) as context,
-        ):
-            page = context.new_page()
-            page.goto(f"{url}/#/chat")
-            yield page, url
 
     def ask(page, message, answer="The rehearsal is called Amber Lantern."):
         page.fill("#chat-message", message)
@@ -663,7 +670,7 @@ def test_opt_in_chat_history_survives_restart_and_deleted_chat_stays_gone(tmp_pa
         page.get_by_role("searchbox").fill("AMBER LANTERN")
         page.locator("#chat-search-form").get_by_role("button", name="Search").click()
 
-    with fresh_console() as (page, url):
+    with _fresh_console(tmp_path, config, browser) as (page, url):
         sync_api.expect(page.locator("#chat-saving")).to_have_text("Saving off")
         ask(page, question)
         assert not db.exists()
@@ -679,7 +686,7 @@ def test_opt_in_chat_history_survives_restart_and_deleted_chat_stays_gone(tmp_pa
         page.click("#chat-clear")
         ask(page, "I prefer jasmine tea.", "Understood.")
 
-    with fresh_console() as (page, url):
+    with _fresh_console(tmp_path, config, browser) as (page, url):
         assert page.locator("#chat-log .msg").count() == 0
         search(page)
         found = page.get_by_role("button", name=question, exact=False).filter(
@@ -700,7 +707,7 @@ def test_opt_in_chat_history_survives_restart_and_deleted_chat_stays_gone(tmp_pa
         sync_api.expect(page.locator("#chat-saved-list")).to_have_text("No matching chats.")
         assert page.locator("#chat-log .msg").count() == 0
 
-    with fresh_console() as (page, url):
+    with _fresh_console(tmp_path, config, browser) as (page, url):
         search(page)
         sync_api.expect(page.locator("#chat-saved-list")).to_have_text("No matching chats.")
         assert page.request.get(f"{url}/api/chat/history/{saved_id}").status == 404
@@ -708,3 +715,58 @@ def test_opt_in_chat_history_survives_restart_and_deleted_chat_stays_gone(tmp_pa
         page.locator("#chat-search-form").get_by_role("button", name="Search").click()
         sync_api.expect(page.locator("[data-open-chat]")).to_have_count(1)
         sync_api.expect(page.locator("[data-open-chat]")).to_contain_text("jasmine tea")
+
+
+def test_dated_memory_recall_correct_and_forget_with_chat_history_off(tmp_path, browser):
+    from datetime import date
+
+    config = _write_config(tmp_path)
+    with config.open("a") as handle:
+        handle.write("\n[memory]\nenabled = true\n[admin]\nsave_chat_history = false\n")
+    question = "Which hall did we choose for the lantern rehearsal?"
+    original = "We chose the east hall for the lantern rehearsal."
+    correction = "We chose the west hall for the lantern rehearsal."
+
+    def ask(page, message, expected):
+        page.fill("#chat-message", message)
+        page.click("#chat-send")
+        sync_api.expect(page.locator("#chat-log .assistant .msg-body").last).to_have_text(
+            expected, timeout=30000
+        )
+        sync_api.expect(page.locator("#chat-message")).to_be_enabled()
+
+    def fresh_chat(page, url):
+        page.goto(f"{url}/#/chat")
+        page.reload()
+        sync_api.expect(page.locator("#chat-saving")).to_have_text("Saving off")
+        assert page.locator("#chat-log .msg").count() == 0
+
+    with _fresh_console(tmp_path, config, browser) as (page, url):
+        saved_on = date.today().isoformat()
+        ask(page, "Please remember that " + original, "Saved that as a dated memory.")
+        fresh_chat(page, url)
+        ask(page, question, "The east hall.")
+        page.goto(f"{url}/#/persona")
+        entry = page.locator("#memory-entries .result-card")
+        sync_api.expect(entry).to_contain_text(original)
+        sync_api.expect(entry).to_contain_text(f"Saved {saved_on} · In Chat")
+        entry.get_by_role("button", name="Edit", exact=True).click()
+        page.get_by_label("Correct saved memory").fill(correction)
+        page.get_by_role("button", name="Save correction").click()
+        sync_api.expect(entry).to_contain_text(f"Saved {saved_on} · In Chat · corrected")
+
+    with _fresh_console(tmp_path, config, browser) as (page, url):
+        ask(page, question, "The west hall.")
+        page.goto(f"{url}/#/persona")
+        entry = page.locator("#memory-entries .result-card")
+        sync_api.expect(entry).to_contain_text(correction)
+        page.once("dialog", lambda dialog: dialog.accept())
+        entry.get_by_role("button", name="Forget").click()
+        sync_api.expect(entry).to_have_count(0)
+        sync_api.expect(page.locator("#toasts")).to_contain_text("Memory forgotten")
+
+    with _fresh_console(tmp_path, config, browser) as (page, url):
+        fresh_chat(page, url)
+        ask(page, question, "I have no saved decision about the rehearsal.")
+        assert not page.request.get(f"{url}/api/persona").json()["memory"]["entries"]
+        assert not (tmp_path / "state" / "chat-history.sqlite3").exists()

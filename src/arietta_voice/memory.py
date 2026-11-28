@@ -6,6 +6,8 @@ import os
 import re
 import time
 from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path
 from typing import Protocol
 
@@ -13,7 +15,16 @@ from arietta_voice.private_config import write_private_text
 
 # Provenance travels with the fact in the one private memory file. There is no
 # second store to reconcile or to purge when the owner forgets something.
-ORIGIN = re.compile(r" <!-- arietta-memory:(chat|voice|consolidated|file)(:edited)? -->$")
+ORIGIN = re.compile(
+    r" <!-- arietta-memory:(?P<origin>chat|voice|consolidated|file)"
+    r"(?::saved=(?P<saved_on>[0-9]{4}-[0-9]{2}-[0-9]{2}))?(?P<edited>:edited)? -->$"
+)
+SAVE_REQUEST = re.compile(
+    r"^(?:please\s+)?(?:remember that|remember this (?:decision|memory)|remember(?: this)?(?=\s*:)"
+    r"|save (?:a dated memory|this (?:decision|memory)|this (?:as a dated memory|to memory)))"
+    r"(?=\s|[:,.!]|$)\s*[:,]?\s*(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
 FACT = re.compile(r"^[-*] +(.+)$")
 EXTRACT = (
     "Record only durable facts or preferences the user explicitly stated about themselves. "
@@ -26,8 +37,39 @@ class MemoryConflict(ValueError):
     pass
 
 
-def prompt_memory(text: str) -> str:
-    return "\n".join(ORIGIN.sub("", line) for line in text.split("\n"))
+def requested_memory(message: str) -> str | None:
+    """Only direct save commands in the current user's message create dated entries."""
+    message = message.strip()
+    match = SAVE_REQUEST.fullmatch(message)
+    if match is None or message.endswith("?"):
+        return None
+    value = match[1].strip()
+    return value if value.strip(".,!:") else ""
+
+
+@dataclass(frozen=True)
+class _Entry:
+    id: int
+    text: str
+    origin: str
+    edited: bool
+    saved_on: str | None
+
+    @property
+    def key(self):
+        return self.saved_on, self.text.casefold()
+
+
+def prompt_memory(text: str, *, include_dated: bool = True) -> str:
+    lines = []
+    for line in text.splitlines():
+        mark = ORIGIN.search(line)
+        if mark and mark["saved_on"]:
+            if include_dated:
+                lines.append(f"{line[: mark.start()]} (saved {mark['saved_on']})")
+        else:
+            lines.append(ORIGIN.sub("", line))
+    return "\n".join(lines)
 
 
 def _revision(text):
@@ -50,26 +92,35 @@ def _fact_lines(text):
         fact = FACT.fullmatch(line)
         if not fact:
             continue
+        origin = ORIGIN.search(fact[1])
         if (
-            i + 1 < len(lines)
+            not (origin and origin["saved_on"])
+            and i + 1 < len(lines)
             and lines[i + 1].strip()
             and not lines[i + 1].startswith(("- ", "* ", "#"))
         ):
             continue
-        origin = ORIGIN.search(fact[1])
         value = ORIGIN.sub("", fact[1]).strip()
         if value:
-            yield i, value, origin[1] if origin else "file", bool(origin and origin[2])
+            yield _Entry(
+                i,
+                value,
+                origin["origin"] if origin else "file",
+                bool(origin and origin["edited"]),
+                origin["saved_on"] if origin else None,
+            )
 
 
 def _consolidation_prompt(text):
     # The model can consolidate simple facts. Only the owner edits free-form
     # Markdown and facts they have explicitly corrected.
-    entries = {i: (value, edited) for i, value, _, edited in _fact_lines(text)}
+    entries = {entry.id: entry for entry in _fact_lines(text)}
     for i, line in enumerate(text.splitlines()):
         if i not in entries and line.strip() not in ("", "# Memory"):
             return None
-    facts = [f"- {value}" for value, edited in entries.values() if not edited]
+    facts = [
+        f"- {entry.text}" for entry in entries.values() if not entry.edited and not entry.saved_on
+    ]
     if not facts:
         return None
     return (
@@ -84,10 +135,11 @@ def _consolidated_text(result, previous, *, annotate):
     lines = result.splitlines()
     if not lines or lines[0].strip() != "# Memory":
         return None
-    origins = {
-        value.casefold(): (origin, edited) for _, value, origin, edited in _fact_lines(previous)
-    }
-    fixed = [line for line in previous.splitlines() if (mark := ORIGIN.search(line)) and mark[2]]
+    entries = list(_fact_lines(previous))
+    origins = {entry.text.casefold(): entry.origin for entry in entries}
+    protected = {entry.text.casefold() for entry in entries if entry.edited or entry.saved_on}
+    old_lines = previous.splitlines()
+    fixed = [old_lines[entry.id] for entry in entries if entry.edited or entry.saved_on]
     cleaned = ["# Memory"]
     for line in lines[1:]:
         if not line.strip():
@@ -96,8 +148,8 @@ def _consolidated_text(result, previous, *, annotate):
         if not match or "<!--" in line:
             return None
         value = match[1].strip()
-        source, edited = origins.get(value.casefold(), ("consolidated", False))
-        if not edited:
+        source = origins.get(value.casefold(), "consolidated")
+        if value.casefold() not in protected:
             tag = f" <!-- arietta-memory:{source} -->" if annotate else ""
             cleaned.append(f"- {value}{tag}")
     return "\n".join([*cleaned, *fixed]) + "\n"
@@ -138,13 +190,47 @@ class MemoryStore:
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield lock
 
+    def save_dated(self, value: str, *, origin: str) -> None:
+        if not self.enabled:
+            raise ValueError("Memory is off. Turn on memory in Settings to save a dated memory.")
+        value = value.strip()
+        if not value or len(value.splitlines()) != 1 or "<!--" in value:
+            raise ValueError("Tell me the decision to remember in one plain-text statement.")
+        if origin not in ("chat", "voice"):
+            raise ValueError("Unknown memory source.")
+        day = date.today().isoformat()
+        with self._locked():
+            try:
+                with self.path.open(encoding="utf-8", newline="") as handle:
+                    current = handle.read(128_001)
+            except FileNotFoundError:
+                current = "# Memory\n"
+            if len(current) > 128_000:
+                raise ValueError(
+                    "The memory file is full. Review it in Persona before saving more."
+                )
+            if any(entry.key == (day, value.casefold()) for entry in _fact_lines(current)):
+                return
+            newline = "\r\n" if "\r\n" in current else "\n"
+            record = f"- {value} <!-- arietta-memory:{origin}:saved={day} -->{newline}"
+            # Insert outside any free-form Markdown or unclosed fence in an owner's file.
+            header = re.match(r"^# Memory(?:\r\n|\n|$)", current)
+            start = header.end() if header else 0
+            prefix = current[:start]
+            if prefix and not prefix.endswith("\n"):
+                prefix += newline
+            updated = prefix + record + current[start:]
+            if len(updated) > 128_000:
+                raise ValueError(
+                    "The memory file is full. Review it in Persona before saving more."
+                )
+            write_private_text(self.path, updated)
+
     def inspect(self):
         text = self.path.read_text(encoding="utf-8") if self.path.is_file() else ""
         entries = {}
-        for i, value, origin, edited in _fact_lines(text):
-            entries.setdefault(
-                value.casefold(), dict(id=i, text=value, origin=origin, edited=edited)
-            )
+        for entry in _fact_lines(text):
+            entries.setdefault(entry.key, asdict(entry))
         return dict(
             enabled=self.enabled,
             file=str(self.path),
@@ -166,7 +252,7 @@ class MemoryStore:
                 raise MemoryConflict("Memory changed. Reload it and review the latest facts.")
             if entry_id is not None:
                 entries = list(_fact_lines(current))
-                selected = next((row for row in entries if row[0] == entry_id), None)
+                selected = next((row for row in entries if row.id == entry_id), None)
                 if selected is None:
                     raise MemoryConflict("This fact is no longer available. Reload memory.")
                 lines = current.splitlines(keepends=True)
@@ -174,11 +260,13 @@ class MemoryStore:
                     content = content.strip()
                     if not content or len(content.splitlines()) != 1 or "<!--" in content:
                         raise ValueError("Enter a fact on one line.")
-                for i, value, origin, _ in entries:
-                    if value.casefold() == selected[1].casefold():
+                for entry in entries:
+                    if entry.key == selected.key:
+                        i = entry.id
+                        saved = f":saved={entry.saved_on}" if entry.saved_on else ""
                         end = lines[i][len(lines[i].rstrip("\r\n")) :]
                         lines[i] = (
-                            f"- {content} <!-- arietta-memory:{origin}:edited -->{end}"
+                            f"- {content} <!-- arietta-memory:{entry.origin}{saved}:edited -->{end}"
                             if i == entry_id and content is not None
                             else ""
                         )
@@ -201,7 +289,7 @@ class MemoryStore:
 
         expected = self._background_snapshot()
         prompt = (
-            f"Current memory:\n{prompt_memory(expected or '# Memory')}\n\n"
+            f"Current memory:\n{prompt_memory(expected or '# Memory', include_dated=False)}\n\n"
             f"User said: {user_text}\n"
             f"Assistant said: {assistant_text}\n\n" + EXTRACT
         )
@@ -213,7 +301,11 @@ class MemoryStore:
         if not result or result.upper() == "NONE":
             return 0
 
-        lines = [line.strip() for line in result.splitlines() if line.strip().startswith("-")]
+        lines = [
+            line.strip()
+            for line in result.splitlines()
+            if line.strip().startswith("-") and "<!--" not in line
+        ]
         if not lines:
             return 0
 
@@ -286,21 +378,25 @@ class MemoryStore:
                 stream.close()
 
         result = yield from generate(
-            f"Current memory:\n{prompt_memory(current)}\n\nUser said: {user_text}\nAssistant said: {assistant_text}\n\n"
+            f"Current memory:\n{prompt_memory(current, include_dated=False)}\n\nUser said: {user_text}\nAssistant said: {assistant_text}\n\n"
             + EXTRACT,
             80,
         )
         facts = (
             []
             if not result or result.upper() == "NONE"
-            else [line.strip() for line in result.splitlines() if line.strip().startswith("-")]
+            else [
+                line.strip()
+                for line in result.splitlines()
+                if line.strip().startswith("-") and "<!--" not in line
+            ]
         )
         if origin in ("voice", "chat"):
-            known = {value.casefold() for _, value, _, _ in _fact_lines(current)}
+            known = {entry.text.casefold() for entry in _fact_lines(current)}
             new = []
             for fact in facts:
                 value = fact[1:].strip()
-                if value and "<!--" not in value and value.casefold() not in known:
+                if value and value.casefold() not in known:
                     new.append(f"- {value} <!-- arietta-memory:{origin} -->")
                     known.add(value.casefold())
             facts = new
