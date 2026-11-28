@@ -87,8 +87,8 @@ def _fake_mlx(monkeypatch, chunks, calls):
         # As in mlx-vlm: how many leading tokens match the last prompt and answer.
         token_ids = None
 
-        def find_prefix_length(self, new_ids):
-            if self.token_ids is None:
+        def find_prefix_length(self, new_ids, *, video_timing=()):
+            if self.token_ids is None or video_timing != ():
                 return 0
             shared = 0
             for cached, new in zip(self.token_ids, new_ids, strict=False):
@@ -278,6 +278,8 @@ def test_a_repeated_prompt_still_reuses_the_cache(monkeypatch):
     assert state.find_prefix_length([1, 2, 3]) == 0  # Nothing cached yet.
     state.token_ids = [1, 2, 3, 4, 5, 6]  # The last prompt, then its answer.
     assert state.find_prefix_length([1, 2, 3, 4]) == 3  # The same prompt again.
+    assert state.find_prefix_length([1, 2, 3, 4], video_timing=()) == 3
+    assert state.find_prefix_length([1, 2, 3, 4], video_timing=(1.0,)) == 0
     assert state.find_prefix_length([1, 2, 3, 4, 5, 6]) == 5
     assert state.find_prefix_length([1, 2, 9, 9]) == 2  # Diverges: unchanged.
     assert state.find_prefix_length([1, 2, 3, 4, 5, 6, 7, 8]) == 6  # Longer: unchanged.

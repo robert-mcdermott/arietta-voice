@@ -10,7 +10,7 @@ things, remembers its owner, and is pleasant to run and configure.
 
 ## Release priorities · November 27, 2026
 
-The stable release is `0.2.0`. The current candidate, `0.3.0rc1`, already
+The stable release is `0.3.0`. It
 supports timers and reminders, arithmetic, answers from notes, optional weather
 and web search, and tools supplied by MCP servers. The console exposes nine
 views, including streamed text chat and private persona and memory editors.
@@ -18,9 +18,9 @@ views, including streamed text chat and private persona and memory editors.
 1. **Get a new owner to a useful answer.** The README now takes a fresh clone
    through installation, sign-in and the first Chat answer. In a clean setup,
    Chrome at 1440 px and 375 px returned 391 for 17 × 23 with voice stopped
-   and model downloads disabled. Before release, have a first-time user follow
-   the guide unaided and record where they need help.
-2. **Source-backed console Chat is implemented on this branch.** In Chrome,
+   and model downloads disabled. A first-time user also successfully installed
+   the app.
+2. **Console Chat cites sources.** In Chrome,
    the local model cited the right passage for a synthetic spare key, then
    cited the corrected location in a fresh chat. After deletion, Chat reported
    that it couldn't find the fact. Old links reported the missing passage.
@@ -70,7 +70,7 @@ decision based on live performance.
 | Milestone | Version | Outcome |
 | --- | --- | --- |
 | 0 Close out | `0.2.0` | October work released; repository tidy; experiments parked |
-| 1 Feels instant | `0.3.0` | About one second from end of speech to first audio |
+| 1 Voice and console | `0.3.0` | Source-backed Chat, editable memory and persistent reminders. Voice latency target deferred. |
 | 2 Does things | `0.4.0` | Real tools: timers, weather, web, calendar, home control |
 | 3 Knows you | `0.5.0` | Durable, inspectable memory and grounded answers |
 | 4 Always there | `0.6.0` | Acoustic wake word, one-command install, talk from any device |
@@ -94,9 +94,9 @@ The console track below runs alongside milestones 0–3.
 **Done when:** `0.2.0` is tagged, the root holds only the standard project
 files, and CI enforces formatting.
 
-## Milestone 1 — Feels instant (`0.3.0`)
+## Milestone 1 — Voice and console (`0.3.0`)
 
-**Target on the M4/32 GB reference Mac, default local stack, warm:** end of
+**Deferred performance target on the M4/32 GB reference Mac, default local stack, warm:** end of
 speech to first audio at or below **1.0 s median and 1.6 s p95**; barge-in to
 silence at or below 300 ms p95.
 
@@ -183,9 +183,9 @@ first chunk cannot fix that; MLX produces the first chunk in about 190 ms.
 
 `0.3.0rc1` (November 14) carries the work above for the owner's live checks.
 
-**Done when:** the standing benchmark meets the target over 100 warm turns with
-no increase in false cutoffs, and interruption latency has been measured
-acoustically at least once.
+Voice timing work is deferred beyond `0.3.0`. When it resumes, use the
+standing 100-turn benchmark, check for false cutoffs, and measure acoustic
+interruption latency. The November 27 measurements above remain the baseline.
 
 ## Milestone 2 — Does things (`0.4.0`)
 

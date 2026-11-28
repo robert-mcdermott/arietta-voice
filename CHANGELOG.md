@@ -5,6 +5,14 @@ version policy and the release procedure.
 
 ## Unreleased
 
+## 0.3.0 — 2026-11-27
+
+A first-time user successfully installed Arietta. In clean-checkout tests,
+console Chat answered the starter arithmetic question at desktop and phone
+widths with voice stopped and model downloads disabled.
+
+### Console and first-run improvements
+
 - The install guide walks through the first console Chat answer. Credential
   setup prints the command to start the console, and Chat enables Send when
   the message contains text.
@@ -23,6 +31,21 @@ version policy and the release procedure.
   picker with all nine pages.
 - Saving persona or memory preserves unfinished edits in the other editor and
   text typed while a save is in progress.
+
+### Voice and upgrade notes
+
+- This stable release includes the candidate's improved retrieval from long
+  notes, prompt reuse after interruption, and optional wake word on each turn.
+- ONNX Kokoro remains the default. On the reference Mac the November 27
+  100-turn run measured 3.36 seconds median and 11.35 seconds p95 to the
+  first non-silent speaker write. The one-second median target is deferred.
+- The refreshed lockfile includes MLX VLM 0.8.1, Transformers 5.24.1 and
+  Silero VAD 6.3. The default model identifiers stay the same.
+- From a source checkout at the release tag, run `uv sync --locked`.
+  Existing private config, persona and notes carry forward. When upgrading
+  from `0.2.0`, the voice runtime rebuilds an older semantic index in
+  format 3 on startup. To return to the
+  previous stable code, check out `v0.2.0` and sync its lockfile.
 
 ## 0.3.0rc1 — 2026-11-14
 
